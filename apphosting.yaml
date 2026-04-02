@@ -1,4 +1,5 @@
-# Settings for Backend (on Cloud Run).
+# Unused for this project: we ship a static PWA via Firebase Hosting (`npm run build` → `firebase deploy --only hosting`).
+# App Hosting triggers Cloud Build + Cloud Run; remove `apphosting` from firebase.json unless you need that stack.
 # See https://firebase.google.com/docs/app-hosting/configure#cloud-run
 runConfig:
   minInstances: 0
