@@ -1,0 +1,12 @@
+diff --git a/node_modules/skinview3d/libs/viewer.js b/node_modules/skinview3d/libs/viewer.js
+index 3a85215..df169ef 100644
+--- a/node_modules/skinview3d/libs/viewer.js
++++ b/node_modules/skinview3d/libs/viewer.js
+@@ -256,6 +256,7 @@ export class SkinViewer {
+         ColorManagement.enabled = false;
+         this.renderer = new WebGLRenderer({
+             canvas: this.canvas,
++            alpha: true,
+             preserveDrawingBuffer: options.preserveDrawingBuffer === true, // default: false
+         });
+         this.onDevicePixelRatioChange = () => {

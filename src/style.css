@@ -1,0 +1,180 @@
+@import url('https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;600;700;800;900&display=swap');
+@import "tailwindcss";
+
+/* ── Runtime accent color ─────────────────────────────────────────────────── */
+:root {
+  --accent:     #f97316;
+  --accent-rgb: 249, 115, 22;
+}
+
+@theme {
+  --font-sans: 'Nunito', sans-serif;
+
+  /* ── Override violet → orange (default accent, static fallback) ─────────── */
+  --color-violet-50:   #fff7ed;
+  --color-violet-100:  #ffedd5;
+  --color-violet-200:  #fed7aa;
+  --color-violet-300:  #fdba74;
+  --color-violet-400:  #fb923c;
+  --color-violet-500:  #f97316;
+  --color-violet-600:  #ea580c;
+  --color-violet-700:  #c2410c;
+  --color-violet-800:  #9a3412;
+  --color-violet-900:  #7c2d12;
+  --color-violet-950:  #431407;
+
+  /* ── Pure dark backgrounds ───────────────────────────────────────────────── */
+  --color-game-bg:       #0f0f0f;
+  --color-game-surface:  #141414;
+  --color-game-card:     #1c1c1c;
+  --color-game-border:   rgba(255, 255, 255, 0.07);
+  --color-game-elevated: #242424;
+
+  /* ── Game currency colors (fixed, not tied to accent) ────────────────────── */
+  --color-coin:       #f59e0b;
+  --color-coin-light: #fde68a;
+  --color-xp:         #34d399;
+  --color-xp-light:   #6ee7b7;
+
+  /* ── Rarity ──────────────────────────────────────────────────────────────── */
+  --color-common:    #94a3b8;
+  --color-rare:      #60a5fa;
+  --color-epic:      #c084fc;
+  --color-legendary: #fbbf24;
+}
+
+/* ── Base ─────────────────────────────────────────────────────────────────── */
+*, *::before, *::after {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html { height: 100%; }
+
+body {
+  font-family: 'Nunito', sans-serif;
+  background: #0f0f0f;
+  color: #f5f5f5;
+  overflow-x: hidden;
+  height: 100%;
+  -webkit-font-smoothing: antialiased;
+  min-height: 100dvh;
+}
+
+#app { min-height: 100vh; min-height: 100dvh; }
+
+/* ── Scrollbar ────────────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 3px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 99px; }
+
+/* ── Card surface ─────────────────────────────────────────────────────────── */
+.glass-card {
+  background: #1c1c1c;
+  border-radius: 1.25rem;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.07), 0 4px 20px rgba(0, 0, 0, 0.45);
+}
+
+/* ── Accent utilities (runtime-responsive) ────────────────────────────────── */
+.text-accent   { color: var(--accent); }
+.bg-accent     { background-color: var(--accent); }
+.border-accent { border-color: var(--accent); }
+.bg-accent-subtle { background-color: rgba(var(--accent-rgb), 0.12); }
+.shadow-accent { box-shadow: 0 4px 20px rgba(var(--accent-rgb), 0.35); }
+
+/* ── Primary button ───────────────────────────────────────────────────────── */
+.btn-primary {
+  background: var(--accent);
+  color: #fff;
+  box-shadow: 0 4px 18px rgba(var(--accent-rgb), 0.38);
+}
+.btn-primary:hover { filter: brightness(1.10); }
+.btn-primary:active { filter: brightness(0.95); }
+
+/* ── Headings ─────────────────────────────────────────────────────────────── */
+.gradient-heading { color: var(--accent); }
+
+/* ── Active tab / pill ────────────────────────────────────────────────────── */
+.tab-active {
+  background: var(--accent);
+  color: #fff;
+  box-shadow: 0 2px 12px rgba(var(--accent-rgb), 0.35);
+}
+
+/* ── Glow effects ─────────────────────────────────────────────────────────── */
+.glow-coin      { box-shadow: 0 0 20px rgba(245,158,11,0.45),  inset 0 0 0 1px rgba(245,158,11,0.25); }
+.glow-xp        { box-shadow: 0 0 20px rgba(52,211,153,0.4),   inset 0 0 0 1px rgba(52,211,153,0.2);  }
+.glow-primary   { box-shadow: 0 0 24px rgba(var(--accent-rgb),0.5), inset 0 0 0 1px rgba(var(--accent-rgb),0.3); }
+.glow-rare      { box-shadow: 0 0 20px rgba(96,165,250,0.4),   inset 0 0 0 1px rgba(96,165,250,0.2);  }
+.glow-epic      { box-shadow: 0 0 32px rgba(192,132,252,0.5),  inset 0 0 0 1px rgba(192,132,252,0.25);}
+.glow-legendary { box-shadow: 0 0 40px rgba(251,191,36,0.55),  0 0 80px rgba(251,191,36,0.2), inset 0 0 0 1px rgba(251,191,36,0.25); }
+
+/* ── Rarity borders ───────────────────────────────────────────────────────── */
+.border-common    { box-shadow: inset 0 0 0 1px rgba(148,163,184,0.25); }
+.border-rare      { box-shadow: inset 0 0 0 1px rgba(96,165,250,0.35);  }
+.border-epic      { box-shadow: inset 0 0 0 1px rgba(192,132,252,0.35); }
+.border-legendary { box-shadow: inset 0 0 0 1px rgba(251,191,36,0.35);  }
+
+/* ── Gradient gold text (legend/coins) ────────────────────────────────────── */
+.gradient-gold {
+  background: linear-gradient(135deg, #fbbf24, #f59e0b);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* ── Legendary animated text ─────────────────────────────────────────────── */
+.legendary-gradient {
+  background: linear-gradient(135deg, #fbbf24, #f97316, #fbbf24);
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  animation: shine 3s linear infinite;
+}
+
+/* ── Animations ───────────────────────────────────────────────────────────── */
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(28px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes bounce-in {
+  0%   { opacity: 0; transform: scale(0.90) translateY(12px); }
+  60%  { transform: scale(1.03); }
+  100% { opacity: 1; transform: scale(1) translateY(0); }
+}
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50%       { transform: translateY(-6px); }
+}
+@keyframes pulse-glow {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.5; }
+}
+@keyframes spin-slow {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+@keyframes shine {
+  from { background-position: 0% center; }
+  to   { background-position: 200% center; }
+}
+@keyframes scale-in {
+  from { opacity: 0; transform: scale(0.93); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+.animate-fade-in    { animation: fade-in   0.3s ease both; }
+.animate-slide-up   { animation: slide-up  0.35s cubic-bezier(0.34, 1.56, 0.64, 1) both; }
+.animate-bounce-in  { animation: bounce-in 0.4s  cubic-bezier(0.34, 1.56, 0.64, 1) both; }
+.animate-float      { animation: float     3s ease-in-out infinite; }
+.animate-pulse-glow { animation: pulse-glow 2s ease-in-out infinite; }
+.animate-spin-slow  { animation: spin-slow 8s linear infinite; }
+.animate-scale-in   { animation: scale-in  0.25s ease both; }
+
+/* ── Safe area ────────────────────────────────────────────────────────────── */
+.pb-safe { padding-bottom: calc(4.5rem + env(safe-area-inset-bottom)); }

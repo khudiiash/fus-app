@@ -1,0 +1,39 @@
+{
+  "name": "fus",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "postinstall": "patch-package",
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "generate-icons": "node scripts/generate-icons.js",
+    "firebase:deploy": "firebase deploy",
+    "set-storage-claim": "node scripts/set-storage-admin-claim.mjs",
+    "functions:install": "npm install --prefix functions",
+    "storage:cors": "node scripts/apply-storage-cors.mjs"
+  },
+  "dependencies": {
+    "@vueuse/core": "^14.2.1",
+    "firebase": "^12.11.0",
+    "flag-icons": "^7.5.0",
+    "gsap": "^3.14.2",
+    "lucide-vue-next": "^1.0.0",
+    "pinia": "^3.0.4",
+    "skinview3d": "^3.4.1",
+    "three": "^0.183.2",
+    "vue": "^3.5.30",
+    "vue-router": "^4.6.4"
+  },
+  "devDependencies": {
+    "firebase-admin": "^13.0.0",
+    "@tailwindcss/vite": "^4.2.2",
+    "@vitejs/plugin-vue": "^6.0.5",
+    "patch-package": "^8.0.1",
+    "sharp": "^0.34.5",
+    "tailwindcss": "^4.2.2",
+    "vite": "^8.0.1",
+    "vite-plugin-pwa": "^1.2.0"
+  }
+}

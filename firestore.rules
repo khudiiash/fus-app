@@ -1,0 +1,141 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions
+    function isAuth() {
+      return request.auth != null;
+    }
+
+    function userDoc() {
+      return /databases/$(database)/documents/users/$(request.auth.uid);
+    }
+
+    function isAdmin() {
+      return isAuth()
+        && exists(userDoc())
+        && get(userDoc()).data.role == 'admin';
+    }
+
+    function isTeacher() {
+      return isAuth()
+        && exists(userDoc())
+        && get(userDoc()).data.role == 'teacher';
+    }
+
+    function isOwner(uid) {
+      return isAuth() && request.auth.uid == uid;
+    }
+
+    // Access codes — public read so unauthenticated users can look up their code before login
+    match /accessCodes/{code} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Users
+    match /users/{uid} {
+      allow read: if isAuth();
+      // allow self-create so a manually bootstrapped account can write its own profile
+      allow create: if isAdmin() || (isAuth() && request.auth.uid == uid);
+      allow update: if isOwner(uid) || isAdmin() || isTeacher()
+        // Trade execution writes coins/inventory/xp for both parties atomically;
+        // limit this broader permission to only those fields.
+        || (isAuth() && request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['coins', 'inventory', 'xp', 'level']));
+      allow delete: if isAdmin();
+    }
+
+    // Classes
+    match /classes/{classId} {
+      allow read: if isAuth();
+      allow create, update, delete: if isAdmin();
+    }
+
+    // Shop items — students may only decrease stock by exactly 1 (purchase / loot box).
+    // Dropped `is int` (int64). Require changedKeys == {stock} only (size ≥ 1 so {} ≠ hasOnly(['stock'])),
+    // and no keys added/removed — works with transform-only commits (empty updateMask).
+    match /items/{itemId} {
+      allow read: if isAuth();
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin()
+        || (
+          isAuth()
+          && 'stock' in resource.data
+          && resource.data.stock > 0
+          && request.resource.data.stock == resource.data.stock - 1
+          && request.resource.data.diff(resource.data).addedKeys().size() == 0
+          && request.resource.data.diff(resource.data).removedKeys().size() == 0
+          && request.resource.data.diff(resource.data).changedKeys().size() >= 1
+          && request.resource.data.diff(resource.data).changedKeys().hasOnly(['stock'])
+        );
+    }
+
+    // Subjects
+    match /subjects/{subjectId} {
+      allow read: if isAuth();
+      allow write: if isAdmin();
+    }
+
+    // Trade offers — no get() calls in read so query listeners work reliably
+    match /tradeOffers/{offerId} {
+      allow read: if isAuth() && (
+        resource.data.fromUid == request.auth.uid ||
+        resource.data.toUid == request.auth.uid
+      );
+      allow create: if isAuth()
+        && request.resource.data.fromUid == request.auth.uid;
+      allow update: if isAuth() && (
+        resource.data.fromUid == request.auth.uid ||
+        resource.data.toUid == request.auth.uid
+      );
+      allow delete: if isAuth() && resource.data.fromUid == request.auth.uid;
+    }
+
+    // Transactions / award history
+    match /transactions/{txId} {
+      allow read: if isAuth() && (
+        resource.data.fromUid == request.auth.uid ||
+        resource.data.toUid == request.auth.uid
+      );
+      allow create: if isAuth();
+      allow update, delete: if isAdmin();
+    }
+
+    // Achievements definitions
+    match /achievements/{achId} {
+      allow read: if isAuth();
+      allow write: if isAdmin();
+    }
+
+    // Per-user daily quests — document IDs are "{uid}_{date}", so we can't use
+    // the {uid} wildcard directly; match by checking the doc ID prefix instead.
+    match /dailyQuests/{questDoc} {
+      allow read:  if isAuth() && questDoc.matches(request.auth.uid + '_.+');
+      allow write: if isAuth() && questDoc.matches(request.auth.uid + '_.+');
+    }
+
+    // Teacher-created quests — readable by any authenticated user (students need
+    // to see quests assigned to them); only teachers/admins can create or modify.
+    match /quests/{questId} {
+      allow read: if isAuth();
+      allow create: if isAdmin() || isTeacher();
+      allow update: if isAdmin() || isTeacher();
+      allow delete: if isAdmin();
+    }
+
+    // Quest completion proofs — students create their own submissions;
+    // teachers/admins can update (approve/reject) any submission.
+    match /questCompletions/{completionId} {
+      allow read: if isAuth() && (
+        isAdmin() || isTeacher() ||
+        resource.data.studentId == request.auth.uid
+      );
+      allow create: if isAuth()
+        && request.resource.data.studentId == request.auth.uid;
+      allow update: if isAdmin() || isTeacher();
+      allow delete: if isAdmin();
+    }
+  }
+}
