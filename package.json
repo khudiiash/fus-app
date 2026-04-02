@@ -17,7 +17,6 @@
   "dependencies": {
     "@vueuse/core": "^14.2.1",
     "firebase": "^12.11.0",
-    "flag-icons": "^7.5.0",
     "gsap": "^3.14.2",
     "lucide-vue-next": "^1.0.0",
     "pinia": "^3.0.4",

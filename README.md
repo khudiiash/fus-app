@@ -48,32 +48,34 @@ firebase deploy --only firestore:rules,firestore:indexes
 ### 4. Create Admin Account
 
 In Firebase Console → Authentication → Add User manually:
-- Email: `admin@fus.ua`
-- Password: `ADMIN-0001` (your admin access code)
+- Email: your admin address (e.g. `admin@your-school.example`)
+- Password: a **strong password** (only in Firebase Auth — not the same thing as the login access code below)
 
-Then in Firestore, create `users/{uid}` with:
+Then in Firestore, create `users/{uid}` with (example access code `ADMIN-1000` — pick your own in production):
 ```json
 {
   "displayName": "Admin",
-  "email": "admin@fus.ua",
+  "email": "admin@your-school.example",
   "role": "admin",
-  "accessCode": "ADMIN-0001",
+  "accessCode": "ADMIN-1000",
   "coins": 0, "xp": 0, "level": 1, "streak": 0,
   "avatar": { "skinId": "default", "backgroundId": "default", "frameId": "none", "accessories": [] },
   "inventory": [], "badges": []
 }
 ```
 
-And in `accessCodes/ADMIN-0001`:
+And a matching document `accessCodes/ADMIN-1000`:
 ```json
 {
-  "email": "admin@fus.ua",
+  "email": "admin@your-school.example",
   "uid": "<admin uid>",
   "displayName": "Admin",
   "role": "admin",
   "isActive": true
 }
 ```
+
+If you ever published a different admin access code, **rotate it in Firestore**: update `accessCode` on the admin user, create the new `accessCodes/{CODE}` document, delete the old `accessCodes` document, and do not commit real codes to git.
 
 ### 5. Install & Run
 
@@ -91,7 +93,7 @@ Log in as admin → Dashboard → click **"Seed Now"** to populate shop items an
 ## User Flows
 
 ### Admin
-- Login with `ADMIN-0001` code
+- Login with your admin access code (example in setup above: `ADMIN-1000`)
 - Create classes, students, teachers
 - Manage shop items (add/edit/delete)
 - See overview stats and top students

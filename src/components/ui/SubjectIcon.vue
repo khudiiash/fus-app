@@ -1,6 +1,6 @@
 <script setup>
 import { computed } from 'vue'
-import 'flag-icons/css/flag-icons.min.css'
+import '@/styles/flag-icons-subset.css'
 
 const props = defineProps({
   icon: { type: String, default: '📖' },
@@ -24,16 +24,22 @@ function toCountryCode(emoji) {
     .toLowerCase()
 }
 
-const countryCode = computed(() => isFlagEmoji(props.icon) ? toCountryCode(props.icon) : null)
+/** Only these ship in the bundle (see flag-icons-subset.css). Others use native emoji. */
+const CSS_FLAG_CODES = new Set(['pl', 'ua', 'gb'])
+
+const cssFlagCode = computed(() => {
+  if (!isFlagEmoji(props.icon)) return null
+  const code = toCountryCode(props.icon)
+  return CSS_FLAG_CODES.has(code) ? code : null
+})
 </script>
 
 <template>
-  <!-- CSS-based flag from the bundled flag-icons package -->
+  <!-- CSS flags: PL / UA / GB only (small bundle); other flag emojis render natively -->
   <span
-    v-if="countryCode"
-    :class="`fi fi-${countryCode}`"
+    v-if="cssFlagCode"
+    :class="`fi fi-${cssFlagCode}`"
     :style="{ fontSize: size, lineHeight: 1, display: 'inline-block', verticalAlign: 'middle', borderRadius: '2px' }"
   />
-  <!-- Regular emoji -->
   <span v-else :style="{ fontSize: size, lineHeight: 1 }">{{ icon }}</span>
 </template>

@@ -1,0 +1,37 @@
+/* Subset of flag-icons: only PL, UA, GB (UK). Keeps Vite build small. */
+.fib,
+.fi {
+  background-size: contain;
+  background-position: 50%;
+  background-repeat: no-repeat;
+}
+.fi {
+  position: relative;
+  display: inline-block;
+  width: 1.333333em;
+  line-height: 1em;
+}
+.fi::before {
+  content: '\00a0';
+}
+.fi.fis {
+  width: 1em;
+}
+.fi-pl {
+  background-image: url('../assets/flags/pl.svg');
+}
+.fi-pl.fis {
+  background-image: url('../assets/flags/pl.svg');
+}
+.fi-ua {
+  background-image: url('../assets/flags/ua.svg');
+}
+.fi-ua.fis {
+  background-image: url('../assets/flags/ua.svg');
+}
+.fi-gb {
+  background-image: url('../assets/flags/gb.svg');
+}
+.fi-gb.fis {
+  background-image: url('../assets/flags/gb.svg');
+}

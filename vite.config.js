@@ -54,8 +54,7 @@ export default defineConfig({
       workbox: {
         skipWaiting: true,
         clientsClaim: true,
-        // Omit *.svg in assets (hundreds of flag-icons) — they bloat install/activate (~5MB+).
-        // They still load from network/cache on demand when SubjectIcon is used.
+        // Precache omits hashed *.svg in /assets (SubjectIcon uses only pl/ua/gb — a few small files).
         globPatterns: ['**/*.{js,css,html,png,woff2,ico}', '**/manifest.webmanifest', 'icons/*.png', 'icons/*.svg'],
         globIgnores: ['**/*.map'],
         runtimeCaching: [
