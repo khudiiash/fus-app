@@ -2,6 +2,7 @@
 import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import { useUserStore } from '@/stores/user'
 import { watchClass, getUsersByClass, awardCoins, fineStudent, checkAndGrantAchievements, getAllSubjects, getTeacherBudgetInfo } from '@/firebase/collections'
 import { getSubjectIcon } from '@/composables/useSubjectIcon'
 import AppCard from '@/components/ui/AppCard.vue'
@@ -17,7 +18,8 @@ import { Coins, Wallet, Flame, LayoutDashboard, Gavel } from 'lucide-vue-next'
 
 const route  = useRoute()
 const router = useRouter()
-const auth   = useAuthStore()
+const auth      = useAuthStore()
+const userStore = useUserStore()
 const { success, error } = useToast()
 const { coin: hapticCoin } = useHaptic()
 
@@ -41,6 +43,7 @@ let unsubClass = null
 onMounted(async () => {
   const classId = route.params.id
   unsubClass = watchClass(classId, data => { classData.value = data })
+  if (!userStore.items.length) await userStore.fetchItems()
   students.value = await getUsersByClass(classId)
 
   // Load subjects and filter to only those the teacher teaches
@@ -185,8 +188,8 @@ async function doFine() {
           </div>
           <p class="text-slate-400 text-sm mt-1">{{ students.length }} учнів</p>
         </div>
-        <AppButton variant="coin" @click="openBulkAward">
-          <Coins :size="14" :stroke-width="2" /> Нарахувати класу
+        <AppButton variant="coin" size="md" class="shrink-0" @click="openBulkAward">
+          <Coins :size="16" :stroke-width="2" /> Нарахувати класу
         </AppButton>
       </div>
 
@@ -227,48 +230,81 @@ async function doFine() {
       <div
         v-for="(s, i) in sortedStudents"
         :key="s.id"
-        class="glass-card flex items-center gap-3 p-4 cursor-pointer hover:border-violet-500/40 transition-all"
-        @click="router.push(`/room/${s.id}`)"
+        class="glass-card flex flex-col gap-3 p-4 rounded-2xl border border-white/[0.06] hover:border-violet-500/35 transition-all"
       >
-        <!-- Rank -->
-        <div class="w-7 text-center font-extrabold text-sm flex-shrink-0"
-          :class="i === 0 ? 'text-amber-400' : i === 1 ? 'text-slate-300' : i === 2 ? 'text-amber-700' : 'text-slate-500'">
-          {{ i + 1 }}
-        </div>
-
-        <AvatarDisplay :avatar="s.avatar" :display-name="s.displayName" size="sm" />
-
-        <div class="flex-1 min-w-0">
-          <div class="font-bold truncate">{{ s.displayName }}</div>
-          <div class="flex items-center gap-1 text-xs text-slate-400">
-            Рів.{{ s.level }}
-            <span class="flex items-center gap-0.5 ml-1">
-              <Flame :size="11" :stroke-width="2" class="text-orange-400" />{{ s.streak }}
-            </span>
+        <!-- Identity: rank + avatar + name + stats (tap name/avatar → room) -->
+        <div class="flex gap-3 items-start min-w-0">
+          <div
+            class="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-sm font-black tabular-nums"
+            :class="
+              i === 0
+                ? 'bg-amber-500/15 text-amber-400 ring-1 ring-amber-500/25'
+                : i === 1
+                  ? 'bg-slate-400/10 text-slate-300 ring-1 ring-slate-400/20'
+                  : i === 2
+                    ? 'bg-amber-800/20 text-amber-600 ring-1 ring-amber-700/25'
+                    : 'bg-white/[0.04] text-slate-500'
+            "
+          >
+            {{ i + 1 }}
           </div>
+
+          <button
+            type="button"
+            class="flex min-w-0 flex-1 gap-3 rounded-xl text-left transition-colors hover:bg-white/[0.03] -m-1 p-1"
+            @click="router.push(`/room/${s.id}`)"
+          >
+            <AvatarDisplay
+              circle-only
+              :avatar="s.avatar"
+              :display-name="s.displayName || ''"
+              :items="userStore.items"
+              size="md"
+              class="shrink-0"
+            />
+            <div class="min-w-0 flex-1 pt-0.5">
+              <div
+                class="font-extrabold text-[15px] leading-snug text-white [overflow-wrap:anywhere] line-clamp-2"
+              >
+                {{ s.displayName }}
+              </div>
+              <div
+                class="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs font-semibold text-slate-400"
+              >
+                <span>Рів. {{ s.level ?? 1 }}</span>
+                <span class="inline-flex items-center gap-1 text-orange-300/90">
+                  <Flame :size="12" :stroke-width="2" class="shrink-0" />
+                  {{ s.streak ?? 0 }}
+                </span>
+                <CoinDisplay :amount="s.coins || 0" size="sm" />
+              </div>
+            </div>
+          </button>
         </div>
 
-        <CoinDisplay :amount="s.coins || 0" size="sm" />
-
-        <button
-          class="flex items-center justify-center w-8 h-8 rounded-xl text-violet-400 hover:text-violet-300 hover:bg-violet-500/10 transition-all"
-          title="Переглянути кімнату"
-          @click.stop="router.push(`/room/${s.id}`)"
+        <!-- Actions: full-width, labeled, touch-friendly -->
+        <div
+          class="grid grid-cols-1 gap-2 border-t border-white/[0.06] pt-3 min-[360px]:grid-cols-3"
         >
-          <LayoutDashboard :size="15" :stroke-width="1.8" />
-        </button>
-
-        <AppButton variant="coin" size="sm" @click.stop="openAward(s)" title="Нарахувати монети">
-          <Coins :size="13" :stroke-width="2.2" />
-        </AppButton>
-
-        <button
-          class="flex items-center justify-center w-8 h-8 rounded-xl text-red-400/70 hover:text-red-400 hover:bg-red-500/10 transition-all flex-shrink-0"
-          title="Штраф"
-          @click.stop="openFine(s)"
-        >
-          <Gavel :size="14" :stroke-width="2" />
-        </button>
+          <AppButton variant="secondary" size="md" block @click="router.push(`/room/${s.id}`)">
+            <LayoutDashboard :size="16" :stroke-width="2" />
+            Кімната
+          </AppButton>
+          <AppButton variant="coin" size="md" block @click="openAward(s)">
+            <Coins :size="16" :stroke-width="2" />
+            Монети
+          </AppButton>
+          <AppButton
+            variant="ghost"
+            size="md"
+            block
+            class="!text-red-300 hover:!bg-red-500/10 hover:!text-red-200"
+            @click="openFine(s)"
+          >
+            <Gavel :size="16" :stroke-width="2" />
+            Штраф
+          </AppButton>
+        </div>
       </div>
     </div>
 

@@ -54,10 +54,10 @@ onMounted(async () => {
         <div class="flex items-center gap-2 shrink-0">
           <span class="hidden sm:inline text-[11px] font-bold text-amber-400/90 whitespace-nowrap">Монети</span>
           <span
-            class="inline-flex items-center gap-1 rounded-xl px-2.5 py-2 text-[11px] font-extrabold text-slate-900 tab-active"
+            class="inline-flex items-center gap-1 rounded-xl px-2.5 py-2 text-[11px] font-extrabold text-white tab-active"
           >
             <span class="max-[380px]:hidden">Нарахувати</span>
-            <ChevronRight :size="16" :stroke-width="2.5" class="text-slate-900 opacity-90" />
+            <ChevronRight :size="16" :stroke-width="2.5" class="text-white opacity-95 shrink-0" />
           </span>
         </div>
       </button>
