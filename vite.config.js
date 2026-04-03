@@ -35,14 +35,33 @@ firebase.initializeApp(${cfgJson});
 var messaging = firebase.messaging();
 messaging.onBackgroundMessage(function (payload) {
   var n = payload.notification || {};
-  var title = n.title || (payload.data && payload.data.title) || 'FUSAPP';
-  var body = n.body || (payload.data && payload.data.body) || '';
-  return self.registration.showNotification(title, {
+  var d = payload.data || {};
+  var title = n.title || d.title || 'FUSAPP';
+  var body = n.body || d.body || '';
+  var tag = (d.tag && String(d.tag)) || ('fusapp-' + (d.type || 'msg'));
+  var options = {
     body: body,
     icon: '/icons/icon-192.png',
     badge: '/icons/icon-192.png',
     vibrate: [200, 100, 200],
-  });
+    tag: tag,
+    renotify: true,
+    silent: false,
+    requireInteraction: false,
+  };
+  return self.registration.showNotification(title, options);
+});
+self.addEventListener('notificationclick', function (event) {
+  event.notification.close();
+  event.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function (clientList) {
+      for (var i = 0; i < clientList.length; i++) {
+        var c = clientList[i];
+        if ('focus' in c) return c.focus();
+      }
+      if (clients.openWindow) return clients.openWindow('/');
+    }),
+  );
 });
 `
       this.emitFile({ type: 'asset', fileName: 'fcm-sw-compat.js', source })

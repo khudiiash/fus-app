@@ -32,12 +32,21 @@ function registerTradeOfferTriggers(region, exportsObj) {
       ),
     }
 
+    /**
+     * Лише data (без top-level notification): інакше Chrome у фоні сам показує «тихе»
+     * повідомлення в шторку без звуку/heads-up. Тоді onBackgroundMessage у SW
+     * або не викликається, або дублюється. Усі поля — рядки (вимога FCM data).
+     */
     const messaging = getMessaging()
     const res = await messaging.sendEachForMulticast({
       tokens,
-      notification: { title, body },
       data: stringData,
+      android: { priority: 'high' },
       webpush: {
+        headers: {
+          Urgency: 'high',
+          TTL: '86400',
+        },
         fcmOptions: { link: '/' },
       },
     })
