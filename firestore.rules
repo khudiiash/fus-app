@@ -24,6 +24,17 @@ service cloud.firestore {
         && get(userDoc()).data.role == 'teacher';
     }
 
+    /** Вчитель може оновлювати dailyQuests учня свого класу (напр. прогрес «отримати монети» після нагороди). */
+    function teacherTouchesStudentDailyQuestOwner(ownerUid) {
+      return isTeacher()
+        && exists(/databases/$(database)/documents/users/$(ownerUid))
+        && get(/databases/$(database)/documents/users/$(ownerUid)).data.classId is string
+        && get(userDoc()).data.classIds is list
+        && get(userDoc()).data.classIds.hasAny([
+          get(/databases/$(database)/documents/users/$(ownerUid)).data.classId
+        ]);
+    }
+
     function isOwner(uid) {
       return isAuth() && request.auth.uid == uid;
     }
@@ -111,8 +122,29 @@ service cloud.firestore {
     // Per-user daily quests — document IDs are "{uid}_{date}", so we can't use
     // the {uid} wildcard directly; match by checking the doc ID prefix instead.
     match /dailyQuests/{questDoc} {
-      allow read:  if isAuth() && questDoc.matches(request.auth.uid + '_.+');
-      allow write: if isAuth() && questDoc.matches(request.auth.uid + '_.+');
+      allow read: if isAuth() && (
+        questDoc.matches(request.auth.uid + '_.+')
+        || isAdmin()
+        || (
+          resource != null
+          && resource.data.ownerUid is string
+          && teacherTouchesStudentDailyQuestOwner(resource.data.ownerUid)
+        )
+      );
+      allow create: if isAuth()
+        && request.resource.data.ownerUid == request.auth.uid
+        && questDoc.matches(request.auth.uid + '_.+');
+      allow update: if isAuth() && (
+        questDoc.matches(request.auth.uid + '_.+')
+        || isAdmin()
+        || (
+          resource != null
+          && resource.data.ownerUid is string
+          && teacherTouchesStudentDailyQuestOwner(resource.data.ownerUid)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['quests'])
+        )
+      );
+      allow delete: if isAdmin();
     }
 
     // Teacher-created quests — readable by any authenticated user (students need

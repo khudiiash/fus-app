@@ -852,9 +852,15 @@ export async function getDailyQuests(uid) {
   const today = new Date().toISOString().split('T')[0]
   const ref = doc(db, 'dailyQuests', `${uid}_${today}`)
   const snap = await getDoc(ref)
-  if (snap.exists()) return snap.data().quests
+  if (snap.exists()) {
+    const d = snap.data()
+    if (d.ownerUid == null || d.ownerUid !== uid) {
+      await updateDoc(ref, { ownerUid: uid })
+    }
+    return d.quests
+  }
   const quests = generateDailyQuests()
-  await setDoc(ref, { quests, createdAt: serverTimestamp() })
+  await setDoc(ref, { ownerUid: uid, quests, createdAt: serverTimestamp() })
   return quests
 }
 
