@@ -18,7 +18,17 @@ const deleting        = ref(false)
 
 const form = ref({ name: '', icon: '🏫' })
 
-const CLASS_ICONS = ['🏫', '📚', '🔬', '🎨', '🏃', '🎵', '🌍', '💻', '📐', '🧬', '📝', '🎭', '⭐', '🚀', '🌱', '🔑']
+/** Те, про що йшлося: візуально молодша / середня / старша школа */
+const CLASS_LEVEL_ICONS = [
+  { emoji: '🧒', hint: '1–4 клас' },
+  { emoji: '🧑‍🎓', hint: '5–8 клас' },
+  { emoji: '🎓', hint: '9+ клас' },
+]
+
+/** Додаткові іконки (без «бігуна» — для молодших класів краще 🧒 зверху) */
+const CLASS_ICONS_EXTRA = [
+  '🏫', '📚', '🔬', '🎨', '🎵', '🌍', '💻', '📐', '🧬', '📝', '🎭', '⭐', '🚀', '🌱', '🔑',
+]
 
 // ── Sorting helpers ───────────────────────────────────────────────────────────
 function classNumber(name = '') {
@@ -254,10 +264,25 @@ async function hardDelete(cls) {
       <div class="flex flex-col gap-4">
         <AppInput v-model="form.name" label="Назва класу" placeholder="напр. 10А, 11Б, 9В" />
         <div>
-          <label class="text-sm font-bold text-slate-300 block mb-2">Іконка</label>
+          <label class="text-sm font-bold text-slate-300 block mb-1">Іконка</label>
+          <p class="text-xs text-slate-500 mb-2">За рівнем школи (молодші / середні / старші):</p>
+          <div class="flex flex-wrap gap-2 mb-4">
+            <button
+              v-for="row in CLASS_LEVEL_ICONS" :key="row.emoji"
+              type="button"
+              class="flex flex-col items-center gap-0.5 px-3 py-2 rounded-xl min-w-[4.5rem] transition-all border border-transparent"
+              :class="form.icon === row.emoji ? 'ring-2 ring-accent/80 bg-accent/15 border-accent/30' : 'bg-game-card hover:bg-game-elevated'"
+              @click="form.icon = row.emoji"
+            >
+              <span class="text-2xl leading-none">{{ row.emoji }}</span>
+              <span class="text-[10px] font-semibold text-slate-500 leading-tight text-center">{{ row.hint }}</span>
+            </button>
+          </div>
+          <p class="text-xs text-slate-500 mb-2">Інші варіанти:</p>
           <div class="flex flex-wrap gap-2">
             <button
-              v-for="icon in CLASS_ICONS" :key="icon"
+              v-for="icon in CLASS_ICONS_EXTRA" :key="icon"
+              type="button"
               class="text-xl p-2 rounded-lg transition-all"
               :class="form.icon === icon ? 'ring-2 ring-white/50 scale-110 tab-active' : 'bg-game-card hover:bg-game-elevated'"
               @click="form.icon = icon"

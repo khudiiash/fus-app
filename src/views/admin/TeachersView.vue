@@ -13,7 +13,9 @@ import SubjectIcon from '@/components/ui/SubjectIcon.vue'
 import { useToast } from '@/composables/useToast'
 import { nameToEmail } from '@/composables/useNameToEmail'
 import { getSubjectIcon } from '@/composables/useSubjectIcon'
-import { Trash2, Copy, GraduationCap, Pencil, Search, X, Coins } from 'lucide-vue-next'
+import { Trash2, Copy, GraduationCap, Pencil, Search, X, Coins, Bell } from 'lucide-vue-next'
+import { gradeFromClassName as gradeFromName, schoolTierEmojiForClassName } from '@/utils/schoolTier'
+import { adminBroadcastToTeachers } from '@/firebase/adminPush'
 
 const authStore = useAuthStore()
 const { success, error, info } = useToast()
@@ -35,11 +37,13 @@ onMounted(async () => {
   subjects.value = s
 })
 
+const teachersSorted = computed(() =>
+  [...teachers.value].sort((a, b) => a.displayName?.localeCompare(b.displayName, 'uk') ?? 0),
+)
+
 const filtered = computed(() => {
   const q = search.value.trim().toLowerCase()
-  const list = [...teachers.value].sort((a, b) =>
-    a.displayName?.localeCompare(b.displayName, 'uk') ?? 0
-  )
+  const list = teachersSorted.value
   if (!q) return list
   return list.filter(t =>
     t.displayName?.toLowerCase().includes(q) ||
@@ -47,19 +51,18 @@ const filtered = computed(() => {
   )
 })
 
-function gradeFromClassName(name) {
-  const m = String(name || '').trim().match(/^(\d+)/)
-  return m ? parseInt(m[1], 10) : 1000
-}
-
 function compareClassesByGrade(a, b) {
-  const ga = gradeFromClassName(a.name)
-  const gb = gradeFromClassName(b.name)
+  const ga = gradeFromName(a.name) ?? 1000
+  const gb = gradeFromName(b.name) ?? 1000
   if (ga !== gb) return ga - gb
   return String(a.name).localeCompare(String(b.name), 'uk')
 }
 
 const classesByGrade = computed(() => [...classes.value].sort(compareClassesByGrade))
+
+const subjectsByName = computed(() =>
+  [...subjects.value].sort((a, b) => (a.name || '').localeCompare(b.name || '', 'uk')),
+)
 
 function generateCode() {
   const adjs = ['TEACH', 'PROF', 'GUIDE', 'TUTOR', 'COACH', 'MENTOR']
@@ -125,10 +128,6 @@ function toggleSubject(id) {
   if (idx >= 0) { form.value.subjectIds.splice(idx, 1) } else { form.value.subjectIds.push(id) }
 }
 
-function classNames(ids) {
-  return (ids || []).map(id => classes.value.find(c => c.id === id)?.name || '').filter(Boolean).join(', ') || '—'
-}
-
 function subjectIconsFor(ids) {
   return (ids || []).map(id => {
     const s = subjects.value.find(s => s.id === id)
@@ -142,7 +141,11 @@ function copyCode(code) {
 }
 
 function openModal() {
-  form.value = { displayName: '', classIds: [], subjectIds: [] }
+  form.value = {
+    displayName: '',
+    classIds: classes.value.map((c) => c.id),
+    subjectIds: [],
+  }
   showModal.value = true
 }
 
@@ -222,6 +225,62 @@ function toggleEditSubject(id) {
   else editForm.value.subjectIds.push(id)
 }
 
+// ─── Push вчителям ────────────────────────────────────────────────────────────
+const showPushModal = ref(false)
+const pushTitle = ref('')
+const pushBody = ref('')
+const pushSelectedIds = ref([])
+const pushing = ref(false)
+
+function openPushModal() {
+  pushTitle.value = ''
+  pushBody.value = ''
+  pushSelectedIds.value = teachers.value.map((t) => t.id)
+  showPushModal.value = true
+}
+
+function togglePushTeacher(id) {
+  const set = new Set(pushSelectedIds.value)
+  if (set.has(id)) set.delete(id)
+  else set.add(id)
+  pushSelectedIds.value = [...set]
+}
+
+function selectAllTeachersPush() {
+  pushSelectedIds.value = teachers.value.map((t) => t.id)
+}
+
+function clearTeachersPush() {
+  pushSelectedIds.value = []
+}
+
+async function sendTeachersPush() {
+  const title = pushTitle.value.trim()
+  const body = pushBody.value.trim()
+  if (!title || !body) {
+    error('Заповніть заголовок і текст повідомлення')
+    return
+  }
+  if (!pushSelectedIds.value.length) {
+    error('Оберіть хоча б одного вчителя')
+    return
+  }
+  pushing.value = true
+  try {
+    const r = await adminBroadcastToTeachers({
+      title,
+      body,
+      teacherUids: pushSelectedIds.value,
+    })
+    success(`Надіслано push: ${r.sent} з ${r.total ?? r.sent}`)
+    showPushModal.value = false
+  } catch (e) {
+    error(e.message || String(e))
+  } finally {
+    pushing.value = false
+  }
+}
+
 async function saveEditTeacher() {
   if (!editingTeacher.value) return
   savingEdit.value = true
@@ -258,7 +317,13 @@ async function saveEditTeacher() {
         </div>
         <p class="text-slate-400 text-sm mt-1">{{ teachers.length }} вчителів</p>
       </div>
-      <AppButton variant="primary" size="sm" @click="openModal">+ Новий вчитель</AppButton>
+      <div class="flex items-center gap-2">
+        <AppButton variant="secondary" size="sm" class="!gap-1.5" @click="openPushModal">
+          <Bell :size="14" :stroke-width="2" />
+          Push
+        </AppButton>
+        <AppButton variant="primary" size="sm" @click="openModal">+ Новий вчитель</AppButton>
+      </div>
     </div>
 
     <!-- Search -->
@@ -292,8 +357,16 @@ async function saveEditTeacher() {
         class="flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-white/[0.04] transition-colors group"
       >
         <!-- Avatar -->
-        <div class="w-8 h-8 rounded-full bg-accent/15 flex items-center justify-center text-xs font-extrabold flex-shrink-0 text-accent">
-          {{ initials(t.displayName) }}
+        <div
+          class="w-8 h-8 rounded-full overflow-hidden flex-shrink-0 ring-1 ring-white/10 bg-accent/15 flex items-center justify-center text-xs font-extrabold text-accent"
+        >
+          <img
+            v-if="t.avatar?.photoUrl"
+            :src="t.avatar.photoUrl"
+            alt=""
+            class="w-full h-full object-cover"
+          />
+          <span v-else>{{ initials(t.displayName) }}</span>
         </div>
 
         <!-- Info -->
@@ -310,8 +383,6 @@ async function saveEditTeacher() {
               />
               <span v-if="!t.subjectIds?.length" class="text-xs text-slate-600">—</span>
             </div>
-            <span class="text-slate-700 text-xs">·</span>
-            <span class="text-xs text-slate-500 truncate">{{ classNames(t.classIds) }}</span>
             <span class="text-slate-700 text-xs">·</span>
             <button
               class="flex items-center gap-0.5 font-mono text-xs text-slate-500 hover:text-slate-300 transition-colors"
@@ -377,7 +448,7 @@ async function saveEditTeacher() {
           </div>
           <div v-else class="flex flex-col gap-1 max-h-48 overflow-y-auto">
             <label
-              v-for="s in subjects" :key="s.id"
+              v-for="s in subjectsByName" :key="s.id"
               class="flex items-center gap-3 px-3 py-2 rounded-xl cursor-pointer hover:bg-white/[0.04] transition-colors"
             >
               <input type="checkbox" :checked="form.subjectIds.includes(s.id)" @change="toggleSubject(s.id)" class="accent-violet-500 w-4 h-4 flex-shrink-0" />
@@ -398,7 +469,7 @@ async function saveEditTeacher() {
               class="flex items-center gap-3 px-3 py-2 rounded-xl cursor-pointer hover:bg-white/[0.04] transition-colors"
             >
               <input type="checkbox" :checked="form.classIds.includes(c.id)" @change="toggleClass(c.id)" class="accent-violet-500 w-4 h-4 flex-shrink-0" />
-              <span class="text-sm font-semibold">{{ c.icon || '🏫' }} {{ c.name }}</span>
+              <span class="text-sm font-semibold">{{ schoolTierEmojiForClassName(c.name) }} {{ c.name }}</span>
             </label>
           </div>
         </div>
@@ -421,7 +492,7 @@ async function saveEditTeacher() {
           </div>
           <div v-else class="flex flex-col gap-1 max-h-48 overflow-y-auto">
             <label
-              v-for="s in subjects" :key="s.id"
+              v-for="s in subjectsByName" :key="s.id"
               class="flex items-center gap-3 px-3 py-2 rounded-xl cursor-pointer hover:bg-white/[0.04] transition-colors"
             >
               <input
@@ -452,12 +523,50 @@ async function saveEditTeacher() {
                 class="accent-violet-500 w-4 h-4 flex-shrink-0"
                 @change="toggleEditClass(c.id)"
               />
-              <span class="text-sm font-semibold">{{ c.icon || '🏫' }} {{ c.name }}</span>
+              <span class="text-sm font-semibold">{{ schoolTierEmojiForClassName(c.name) }} {{ c.name }}</span>
             </label>
           </div>
         </div>
 
         <AppButton variant="primary" block :loading="savingEdit" @click="saveEditTeacher">Зберегти</AppButton>
+      </div>
+    </AppModal>
+
+    <!-- Push вчителям -->
+    <AppModal v-model="showPushModal" title="Push вчителям">
+      <div class="flex flex-col gap-4">
+        <p class="text-xs text-slate-500">
+          Потрібні збережені FCM-токени у вчителів (увійшли в застосунок і дозволили сповіщення). Обраним надсилається однаковий текст.
+        </p>
+        <AppInput v-model="pushTitle" label="Заголовок" placeholder="напр. Нагадування" />
+        <div>
+          <label class="text-sm font-bold text-slate-300 block mb-1.5">Текст</label>
+          <textarea
+            v-model="pushBody"
+            rows="3"
+            class="w-full bg-game-bg border border-white/[0.07] rounded-xl px-4 py-3 text-sm text-slate-200 placeholder-slate-500 outline-none focus:border-white/20 resize-y min-h-[5rem]"
+            placeholder="Короткий текст повідомлення…"
+          />
+        </div>
+        <div class="flex gap-2">
+          <AppButton variant="ghost" size="sm" @click="selectAllTeachersPush">Усі</AppButton>
+          <AppButton variant="ghost" size="sm" @click="clearTeachersPush">Зняти все</AppButton>
+        </div>
+        <div class="max-h-48 overflow-y-auto flex flex-col gap-1 rounded-xl border border-white/[0.06] p-2">
+          <label
+            v-for="t in teachersSorted" :key="t.id"
+            class="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-white/[0.04] cursor-pointer text-sm"
+          >
+            <input
+              type="checkbox"
+              class="accent-violet-500 w-4 h-4 flex-shrink-0"
+              :checked="pushSelectedIds.includes(t.id)"
+              @change="togglePushTeacher(t.id)"
+            />
+            <span class="truncate text-slate-300">{{ t.displayName }}</span>
+          </label>
+        </div>
+        <AppButton variant="primary" block :loading="pushing" @click="sendTeachersPush">Надіслати</AppButton>
       </div>
     </AppModal>
 

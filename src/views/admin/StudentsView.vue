@@ -13,7 +13,9 @@ import AppButton from '@/components/ui/AppButton.vue'
 import AppModal from '@/components/ui/AppModal.vue'
 import AppInput from '@/components/ui/AppInput.vue'
 import { useToast } from '@/composables/useToast'
-import { Trash2, UserX, Copy, Users, Search, X, Pencil } from 'lucide-vue-next'
+import { Trash2, UserX, Copy, Users, Search, X, Pencil, Bell } from 'lucide-vue-next'
+import { adminBroadcastToStudents } from '@/firebase/adminPush'
+import { gradeFromClassName as gradeFromName, schoolTierEmojiForClassName } from '@/utils/schoolTier'
 
 const authStore  = useAuthStore()
 const { success, error, info } = useToast()
@@ -37,20 +39,18 @@ onMounted(async () => {
 async function fetchStudents() { students.value = await getAllStudents() }
 async function fetchClasses()  { classes.value  = await getAllClasses()  }
 
-/** Паралель з назви класу (на початку цифра): «1-А» → 1, «10-Б» → 10; без цифри — в кінець списку */
-function gradeFromClassName(name) {
-  const m = String(name || '').trim().match(/^(\d+)/)
-  return m ? parseInt(m[1], 10) : 1000
-}
-
 function compareClassesByGrade(a, b) {
-  const ga = gradeFromClassName(a.name)
-  const gb = gradeFromClassName(b.name)
+  const ga = gradeFromName(a.name) ?? 1000
+  const gb = gradeFromName(b.name) ?? 1000
   if (ga !== gb) return ga - gb
   return String(a.name).localeCompare(String(b.name), 'uk')
 }
 
 const isFiltering = computed(() => search.value.trim().length > 0 || filterClass.value !== '')
+
+const studentsSorted = computed(() =>
+  [...students.value].sort((a, b) => a.displayName?.localeCompare(b.displayName, 'uk') ?? 0),
+)
 
 const filtered = computed(() => {
   let list = [...students.value]
@@ -66,8 +66,8 @@ const filtered = computed(() => {
   list.sort((a, b) => {
     const ca = classById(a.classId)
     const cb = classById(b.classId)
-    const ga = ca ? gradeFromClassName(ca.name) : 1000
-    const gb = cb ? gradeFromClassName(cb.name) : 1000
+    const ga = ca ? (gradeFromName(ca.name) ?? 1000) : 1000
+    const gb = cb ? (gradeFromName(cb.name) ?? 1000) : 1000
     if (ga !== gb) return ga - gb
     const na = ca?.name || ''
     const nb = cb?.name || ''
@@ -202,6 +202,62 @@ function initials(name) {
   return (name || '?').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
 }
 
+// ─── Push учням ───────────────────────────────────────────────────────────────
+const showPushModal = ref(false)
+const pushTitle = ref('')
+const pushBody = ref('')
+const pushSelectedIds = ref([])
+const pushing = ref(false)
+
+function openPushModal() {
+  pushTitle.value = ''
+  pushBody.value = ''
+  pushSelectedIds.value = students.value.map((s) => s.id)
+  showPushModal.value = true
+}
+
+function togglePushStudent(id) {
+  const set = new Set(pushSelectedIds.value)
+  if (set.has(id)) set.delete(id)
+  else set.add(id)
+  pushSelectedIds.value = [...set]
+}
+
+function selectAllStudentsPush() {
+  pushSelectedIds.value = students.value.map((s) => s.id)
+}
+
+function clearStudentsPush() {
+  pushSelectedIds.value = []
+}
+
+async function sendStudentsPush() {
+  const title = pushTitle.value.trim()
+  const body = pushBody.value.trim()
+  if (!title || !body) {
+    error('Заповніть заголовок і текст повідомлення')
+    return
+  }
+  if (!pushSelectedIds.value.length) {
+    error('Оберіть хоча б одного учня')
+    return
+  }
+  pushing.value = true
+  try {
+    const r = await adminBroadcastToStudents({
+      title,
+      body,
+      studentUids: pushSelectedIds.value,
+    })
+    success(`Надіслано push: ${r.sent} з ${r.total ?? r.sent}`)
+    showPushModal.value = false
+  } catch (e) {
+    error(e.message || String(e))
+  } finally {
+    pushing.value = false
+  }
+}
+
 // ─── Edit student ─────────────────────────────────────────────────────────────
 const showEditModal  = ref(false)
 const editingStudent = ref(null)
@@ -260,7 +316,13 @@ async function saveEditStudent() {
         </div>
         <p class="text-slate-400 text-sm mt-1">{{ students.length }} учнів зареєстровано</p>
       </div>
-      <AppButton variant="primary" size="sm" @click="openCreate">+ Новий учень</AppButton>
+      <div class="flex items-center gap-2">
+        <AppButton variant="secondary" size="sm" class="!gap-1.5" @click="openPushModal">
+          <Bell :size="14" :stroke-width="2" />
+          Push
+        </AppButton>
+        <AppButton variant="primary" size="sm" @click="openCreate">+ Новий учень</AppButton>
+      </div>
     </div>
 
     <!-- Search + class filter -->
@@ -281,7 +343,9 @@ async function saveEditStudent() {
         class="bg-game-card border border-white/[0.07] rounded-xl px-3 py-2.5 text-sm text-slate-300 outline-none focus:border-white/20 transition-colors"
       >
         <option value="">Всі класи</option>
-        <option v-for="c in classesByGrade" :key="c.id" :value="c.id">{{ c.name }}</option>
+        <option v-for="c in classesByGrade" :key="c.id" :value="c.id">
+          {{ schoolTierEmojiForClassName(c.name) }} {{ c.name }}
+        </option>
       </select>
     </div>
 
@@ -303,9 +367,17 @@ async function saveEditStudent() {
         class="flex items-center gap-3 px-3 py-2 rounded-xl hover:bg-white/[0.04] transition-colors group"
       >
         <div
-          class="w-7 h-7 rounded-full flex items-center justify-center text-xs font-extrabold flex-shrink-0"
+          class="w-7 h-7 rounded-full overflow-hidden flex-shrink-0 ring-1 ring-white/10 flex items-center justify-center text-xs font-extrabold"
           :class="s.isActive === false ? 'bg-white/[0.05] text-slate-600' : 'bg-accent/20 text-accent'"
-        >{{ initials(s.displayName) }}</div>
+        >
+          <img
+            v-if="s.avatar?.photoUrl"
+            :src="s.avatar.photoUrl"
+            alt=""
+            class="w-full h-full object-cover"
+          />
+          <span v-else>{{ initials(s.displayName) }}</span>
+        </div>
         <div class="flex-1 min-w-0">
           <div class="flex items-center gap-1.5">
             <span class="text-sm font-semibold text-slate-200 truncate">{{ s.displayName }}</span>
@@ -351,6 +423,7 @@ async function saveEditStudent() {
     <div v-else class="flex flex-col gap-5">
       <div v-for="group in grouped" :key="group.id">
         <div class="flex items-center gap-2 mb-2 px-1">
+          <span class="text-base leading-none" :title="group.name">{{ schoolTierEmojiForClassName(group.name) }}</span>
           <span class="text-sm font-extrabold text-slate-300 uppercase tracking-wide">{{ group.name }}</span>
           <span class="text-xs text-slate-600 font-bold">{{ group.students.length }}</span>
           <div class="flex-1 h-px bg-white/[0.06] ml-1" />
@@ -362,9 +435,17 @@ async function saveEditStudent() {
           >
             <!-- Avatar bubble -->
             <div
-              class="w-7 h-7 rounded-full flex items-center justify-center text-xs font-extrabold flex-shrink-0"
+              class="w-7 h-7 rounded-full overflow-hidden flex-shrink-0 ring-1 ring-white/10 flex items-center justify-center text-xs font-extrabold"
               :class="s.isActive === false ? 'bg-white/[0.05] text-slate-600' : 'bg-accent/20 text-accent'"
-            >{{ initials(s.displayName) }}</div>
+            >
+              <img
+                v-if="s.avatar?.photoUrl"
+                :src="s.avatar.photoUrl"
+                alt=""
+                class="w-full h-full object-cover"
+              />
+              <span v-else>{{ initials(s.displayName) }}</span>
+            </div>
 
             <!-- Info -->
             <div class="flex-1 min-w-0">
@@ -427,6 +508,44 @@ async function saveEditStudent() {
       </div>
     </div>
 
+    <!-- Push учням -->
+    <AppModal v-model="showPushModal" title="Push учням">
+      <div class="flex flex-col gap-4">
+        <p class="text-xs text-slate-500">
+          Учні мають увійти в застосунок і дозволити сповіщення. Можна обрати конкретних або всіх.
+        </p>
+        <AppInput v-model="pushTitle" label="Заголовок" placeholder="напр. Оголошення" />
+        <div>
+          <label class="text-sm font-bold text-slate-300 block mb-1.5">Текст</label>
+          <textarea
+            v-model="pushBody"
+            rows="3"
+            class="w-full bg-game-bg border border-white/[0.07] rounded-xl px-4 py-3 text-sm text-slate-200 placeholder-slate-500 outline-none focus:border-white/20 resize-y min-h-[5rem]"
+            placeholder="Короткий текст повідомлення…"
+          />
+        </div>
+        <div class="flex gap-2">
+          <AppButton variant="ghost" size="sm" @click="selectAllStudentsPush">Усі</AppButton>
+          <AppButton variant="ghost" size="sm" @click="clearStudentsPush">Зняти все</AppButton>
+        </div>
+        <div class="max-h-48 overflow-y-auto flex flex-col gap-1 rounded-xl border border-white/[0.06] p-2">
+          <label
+            v-for="s in studentsSorted" :key="s.id"
+            class="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-white/[0.04] cursor-pointer text-sm"
+          >
+            <input
+              type="checkbox"
+              class="accent-violet-500 w-4 h-4 flex-shrink-0"
+              :checked="pushSelectedIds.includes(s.id)"
+              @change="togglePushStudent(s.id)"
+            />
+            <span class="truncate text-slate-300">{{ s.displayName }}</span>
+          </label>
+        </div>
+        <AppButton variant="primary" block :loading="pushing" @click="sendStudentsPush">Надіслати</AppButton>
+      </div>
+    </AppModal>
+
     <!-- Edit student -->
     <AppModal v-model="showEditModal" title="Редагувати учня">
       <div v-if="editingStudent" class="flex flex-col gap-4">
@@ -438,7 +557,9 @@ async function saveEditStudent() {
             class="w-full bg-game-bg border border-white/[0.07] rounded-xl px-4 py-3 text-white font-semibold focus:outline-none"
           >
             <option value="">Без класу</option>
-            <option v-for="c in classesByGrade" :key="c.id" :value="c.id">{{ c.name }}</option>
+            <option v-for="c in classesByGrade" :key="c.id" :value="c.id">
+              {{ schoolTierEmojiForClassName(c.name) }} {{ c.name }}
+            </option>
           </select>
         </div>
         <p class="text-xs text-slate-500">
@@ -459,7 +580,9 @@ async function saveEditStudent() {
             class="w-full bg-game-bg border border-white/[0.07] rounded-xl px-4 py-3 text-white font-semibold focus:outline-none"
           >
             <option value="">Без класу</option>
-            <option v-for="c in classesByGrade" :key="c.id" :value="c.id">{{ c.name }}</option>
+            <option v-for="c in classesByGrade" :key="c.id" :value="c.id">
+              {{ schoolTierEmojiForClassName(c.name) }} {{ c.name }}
+            </option>
           </select>
         </div>
         <div class="rounded-xl p-3 text-xs text-slate-400" style="background:rgba(255,255,255,0.04)">

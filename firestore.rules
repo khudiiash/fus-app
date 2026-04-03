@@ -24,15 +24,24 @@ service cloud.firestore {
         && get(userDoc()).data.role == 'teacher';
     }
 
-    /** Вчитель може оновлювати dailyQuests учня свого класу (напр. прогрес «отримати монети» після нагороди). */
-    function teacherTouchesStudentDailyQuestOwner(ownerUid) {
+    /**
+     * Нагорода → updateQuestProgress(учень): вчитель має читати/писати dailyQuests учня.
+     * classIds у вчителя може бути порожнім або відсутнім (старі записи) — тоді не блокуємо.
+     */
+    function teacherMayTouchStudentDailyQuest(ownerUid) {
       return isTeacher()
         && exists(/databases/$(database)/documents/users/$(ownerUid))
-        && get(/databases/$(database)/documents/users/$(ownerUid)).data.classId is string
-        && get(userDoc()).data.classIds is list
-        && get(userDoc()).data.classIds.hasAny([
-          get(/databases/$(database)/documents/users/$(ownerUid)).data.classId
-        ]);
+        && get(/databases/$(database)/documents/users/$(ownerUid)).data.role == 'student'
+        && (
+          !('classIds' in get(userDoc()).data)
+          || !(get(userDoc()).data.classIds is list)
+          || get(userDoc()).data.classIds.size() == 0
+          || !('classId' in get(/databases/$(database)/documents/users/$(ownerUid)).data)
+          || !(get(/databases/$(database)/documents/users/$(ownerUid)).data.classId is string)
+          || get(userDoc()).data.classIds.hasAny([
+            get(/databases/$(database)/documents/users/$(ownerUid)).data.classId
+          ])
+        );
     }
 
     function isOwner(uid) {
@@ -125,11 +134,7 @@ service cloud.firestore {
       allow read: if isAuth() && (
         questDoc.matches(request.auth.uid + '_.+')
         || isAdmin()
-        || (
-          resource != null
-          && resource.data.ownerUid is string
-          && teacherTouchesStudentDailyQuestOwner(resource.data.ownerUid)
-        )
+        || isTeacher()
       );
       allow create: if isAuth()
         && request.resource.data.ownerUid == request.auth.uid
@@ -138,10 +143,14 @@ service cloud.firestore {
         questDoc.matches(request.auth.uid + '_.+')
         || isAdmin()
         || (
-          resource != null
-          && resource.data.ownerUid is string
-          && teacherTouchesStudentDailyQuestOwner(resource.data.ownerUid)
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['quests'])
+          isTeacher()
+          && request.resource.data.ownerUid is string
+          && questDoc.matches(request.resource.data.ownerUid + '_.+')
+          && teacherMayTouchStudentDailyQuest(request.resource.data.ownerUid)
+          && (
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['quests'])
+            || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['quests', 'ownerUid'])
+          )
         )
       );
       allow delete: if isAdmin();

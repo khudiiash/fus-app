@@ -875,7 +875,7 @@ export async function updateQuestProgress(uid, questType, amount = 1) {
     const newProgress = Math.min(q.progress + amount, q.target)
     return { ...q, progress: newProgress, completed: newProgress >= q.target }
   })
-  await updateDoc(ref, { quests })
+  await updateDoc(ref, { ownerUid: uid, quests })
   return quests
 }
 
