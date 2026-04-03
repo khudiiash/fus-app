@@ -79,11 +79,14 @@ async function buyItem() {
   if (!selectedItem.value) return
   buying.value = true
   try {
-    await shop.buy(selectedItem.value.id)
+    const boughtId = selectedItem.value.id
+    await shop.buy(boughtId)
     await checkAndGrantAchievements(auth.profile.id)
     hapticCoin()
-    if (selectedItem.value.category === 'mystery_box') {
-      success(`Коробку «${selectedItem.value.name}» куплено! Відкрий у Профіль → вкладка з подарунком.`)
+    const fresh = shop.items.find((i) => i.id === boughtId)
+    if (fresh && selectedItem.value) selectedItem.value = fresh
+    if (selectedItem.value?.category === 'mystery_box') {
+      success(`Коробку «${selectedItem.value.name}» куплено! Натисни «Відкрити коробку» нижче.`)
     } else {
       success(`🎉 ${selectedItem.value.name} розблоковано!`)
       selectedItem.value = null
@@ -304,11 +307,11 @@ const THUMB_GLB_H = 176
           />
           <div
             v-else-if="selectedItem.category === 'mystery_box'"
-            class="flex flex-col items-center justify-center py-8 gap-2"
+            class="flex flex-col items-center justify-center py-4 gap-1.5"
           >
-            <MysteryBoxSprite :rarity="selectedItem.rarity || 'common'" :size="140" />
-            <p class="text-[11px] text-slate-500 text-center px-4 max-w-[260px] leading-relaxed">
-              Випадкові монети (до ~1,5× ціни коробки) та шанс на предмети з магазину за рідкістю коробки.
+            <MysteryBoxSprite :rarity="selectedItem.rarity || 'common'" :size="100" />
+            <p class="text-[10px] text-slate-500 text-center px-2 max-w-[280px] leading-snug">
+              Монети та шанс на предмети за рідкістю коробки.
             </p>
           </div>
           <div v-else class="opacity-20 py-4">
@@ -353,39 +356,34 @@ const THUMB_GLB_H = 176
         <template v-if="selectedItem.category === 'mystery_box'">
           <div
             v-if="boxCount(selectedItem.id) > 0"
-            class="flex flex-col gap-1 rounded-2xl p-3"
+            class="flex flex-col gap-0.5 rounded-xl p-2.5"
             style="background:rgba(251,191,36,0.08)"
           >
-            <div class="text-amber-400 font-extrabold text-sm">У тебе коробок: {{ boxCount(selectedItem.id) }}</div>
-            <div class="text-xs text-slate-500">Відкрий зараз або купи ще в запас.</div>
+            <div class="text-amber-400 font-extrabold text-xs">Коробок: {{ boxCount(selectedItem.id) }}</div>
+            <div class="text-[11px] text-slate-500 leading-snug">Натисни «Відкрити» нижче.</div>
           </div>
-          <AppButton
-            v-if="boxCount(selectedItem.id) > 0"
-            variant="primary"
-            size="lg"
-            block
-            :loading="openingBox"
-            @click="openMysteryBoxAction"
-          >
-            Відкрити коробку
-          </AppButton>
-          <AppButton
-            v-if="!isSoldOut(selectedItem)"
-            variant="coin"
-            size="lg"
-            block
-            :loading="buying"
-            :disabled="!canAfford(selectedItem)"
-            @click="buyItem"
-          >
-            {{ canAfford(selectedItem) ? `Купити за ${selectedItem.price}` : `Не вистачає ${selectedItem.price - (auth.profile?.coins || 0)}` }}
-          </AppButton>
-          <div
-            v-else-if="boxCount(selectedItem.id) === 0"
-            class="flex items-center justify-center gap-1.5 rounded-2xl p-3"
-            style="background:rgba(100,100,100,0.1)"
-          >
-            <div class="text-sm text-slate-500 font-bold">Розпродано</div>
+          <div class="grid grid-cols-1 gap-2">
+            <AppButton
+              v-if="boxCount(selectedItem.id) > 0"
+              variant="primary"
+              size="md"
+              block
+              :loading="openingBox"
+              @click="openMysteryBoxAction"
+            >
+              Відкрити коробку
+            </AppButton>
+            <AppButton
+              v-if="!isSoldOut(selectedItem)"
+              variant="coin"
+              size="md"
+              block
+              :loading="buying"
+              :disabled="!canAfford(selectedItem)"
+              @click="buyItem"
+            >
+              {{ canAfford(selectedItem) ? `Купити · ${selectedItem.price} 🪙` : `Не вистачає ${selectedItem.price - (auth.profile?.coins || 0)}` }}
+            </AppButton>
           </div>
         </template>
 

@@ -6,6 +6,7 @@ import { useUserStore } from '@/stores/user'
 import { useToast } from '@/composables/useToast'
 import { useHaptic } from '@/composables/useHaptic'
 import { checkAndGrantAchievements, updateQuestProgress, getAllClasses } from '@/firebase/collections'
+import { trySystemNotify } from '@/utils/systemNotify'
 import AppCard from '@/components/ui/AppCard.vue'
 import AppButton from '@/components/ui/AppButton.vue'
 import AppModal from '@/components/ui/AppModal.vue'
@@ -76,6 +77,38 @@ const filteredStudents = computed(() => {
   )
 })
 
+/** Унікальні записи з обох сторін (вхідні/вихідні історія), нові зверху */
+const tradeHistoryMerged = computed(() => {
+  const map = new Map()
+  for (const o of [...trade.historyIncoming, ...trade.historyOutgoing]) {
+    map.set(o.id, o)
+  }
+  const rows = [...map.values()]
+  rows.sort((a, b) => {
+    const ta = a.createdAt?.toMillis?.() ?? (a.createdAt?.seconds ? a.createdAt.seconds * 1000 : 0)
+    const tb = b.createdAt?.toMillis?.() ?? (b.createdAt?.seconds ? b.createdAt.seconds * 1000 : 0)
+    return tb - ta
+  })
+  return rows
+})
+
+function historyPartnerUid(offer) {
+  if (!auth.profile?.id) return null
+  return offer.fromUid === auth.profile.id ? offer.toUid : offer.fromUid
+}
+
+function formatCreated(ts) {
+  if (!ts) return ''
+  const d = ts.toDate ? ts.toDate() : new Date((ts.seconds ?? 0) * 1000)
+  return d.toLocaleString('uk-UA', { dateStyle: 'short', timeStyle: 'short' })
+}
+
+function tradeStatusLabel(status) {
+  if (status === 'accepted') return 'Виконано'
+  if (status === 'declined') return 'Відхилено'
+  return status || ''
+}
+
 function toggleOfferedItem(id) {
   const idx = newTrade.value.offeredItems.indexOf(id)
   if (idx >= 0) newTrade.value.offeredItems.splice(idx, 1)
@@ -117,6 +150,7 @@ async function accept(offerId) {
     await updateQuestProgress(auth.profile.id, 'trade')
     hapticSuccess()
     success('Обмін завершено! 🤝')
+    void trySystemNotify('Обмін завершено!', 'Ти прийняв(ла) пропозицію 🤝', { tag: 'trade-accepted-self' })
     showDetail.value = null
   } catch (e) { error(e.message) }
   finally { accepting.value = false }
@@ -162,20 +196,25 @@ const COIN_PRESETS = [5, 10, 25, 50, 100, 200]
     </div>
 
     <!-- Tabs -->
-    <div class="flex gap-1.5 p-1 rounded-2xl" style="background:rgba(255,255,255,0.04)">
+    <div class="flex gap-1 p-1 rounded-2xl" style="background:rgba(255,255,255,0.04)">
       <button
-        class="flex-1 py-2 rounded-xl font-bold text-sm transition-all duration-200 relative"
+        class="flex-1 py-1.5 rounded-xl font-bold text-xs min-[380px]:text-sm transition-all duration-200 relative"
         :class="activeTab === 'incoming' ? 'tab-active' : 'text-slate-500'"
         @click="activeTab = 'incoming'"
       >
         Вхідні
-        <span v-if="trade.incoming.length > 0" class="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white text-xs rounded-full flex items-center justify-center font-extrabold">{{ trade.incoming.length }}</span>
+        <span v-if="trade.incoming.length > 0" class="absolute -top-0.5 -right-0.5 min-w-[1.15rem] h-[1.15rem] px-0.5 bg-red-500 text-white text-[10px] rounded-full flex items-center justify-center font-extrabold">{{ trade.incoming.length }}</span>
       </button>
       <button
-        class="flex-1 py-2 rounded-xl font-bold text-sm transition-all duration-200"
+        class="flex-1 py-1.5 rounded-xl font-bold text-xs min-[380px]:text-sm transition-all duration-200"
         :class="activeTab === 'outgoing' ? 'tab-active' : 'text-slate-500'"
         @click="activeTab = 'outgoing'"
       >Вихідні</button>
+      <button
+        class="flex-1 py-1.5 rounded-xl font-bold text-xs min-[380px]:text-sm transition-all duration-200"
+        :class="activeTab === 'history' ? 'tab-active' : 'text-slate-500'"
+        @click="activeTab = 'history'"
+      >Історія</button>
     </div>
 
     <!-- ── Incoming ────────────────────────────────────────────────────── -->
@@ -308,9 +347,60 @@ const COIN_PRESETS = [5, 10, 25, 50, 100, 200]
       </div>
     </div>
 
+    <!-- ── History (accepted / declined) ─────────────────────────────── -->
+    <div v-if="activeTab === 'history'">
+      <div v-if="tradeHistoryMerged.length === 0" class="text-center py-12 text-slate-600">
+        <Clock :size="44" :stroke-width="1" class="mx-auto mb-3 opacity-30" />
+        <div class="font-bold text-slate-500">Ще немає завершених обмінів</div>
+        <div class="text-sm mt-1 text-slate-600">Прийняті та відхилені з’являться тут</div>
+      </div>
+      <div v-else class="flex flex-col gap-2">
+        <AppCard
+          v-for="offer in tradeHistoryMerged"
+          :key="offer.id"
+          class="cursor-pointer hover:border-violet-500/40 transition-all"
+          @click="showDetail = offer"
+        >
+          <div class="flex items-center justify-between gap-2 mb-2">
+            <div class="flex items-center gap-2 min-w-0">
+              <AvatarDisplay
+                :avatar="getUser(historyPartnerUid(offer))?.avatar"
+                :display-name="getUser(historyPartnerUid(offer))?.displayName || '?'"
+                size="sm"
+              />
+              <div class="min-w-0">
+                <div class="font-bold text-sm truncate">{{ getUser(historyPartnerUid(offer))?.displayName || 'Unknown' }}</div>
+                <div class="text-[11px] text-slate-500">{{ formatCreated(offer.createdAt) }}</div>
+              </div>
+            </div>
+            <span
+              class="shrink-0 text-[10px] font-extrabold uppercase px-2 py-1 rounded-lg"
+              :class="offer.status === 'accepted' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-slate-500/20 text-slate-400'"
+            >{{ tradeStatusLabel(offer.status) }}</span>
+          </div>
+          <div class="grid grid-cols-2 gap-2 text-[10px]">
+            <div class="text-emerald-400/90 font-bold">Пропозиція</div>
+            <div class="text-violet-400/90 font-bold">Запит</div>
+            <div class="text-slate-400 col-span-2 line-clamp-2">
+              {{ (offer.offeredItems || []).length + (offer.offeredCoins > 0 ? 1 : 0) }} / {{ (offer.requestedItems || []).length + (offer.requestedCoins > 0 ? 1 : 0) }}
+              позицій
+            </div>
+          </div>
+        </AppCard>
+      </div>
+    </div>
+
     <!-- ── Trade detail modal ─────────────────────────────────────────── -->
     <AppModal :model-value="!!showDetail" title="Деталі обміну" @update:model-value="v => { if (!v) showDetail = null }">
       <div v-if="showDetail" class="flex flex-col gap-4">
+        <div
+          v-if="showDetail.status && showDetail.status !== 'pending'"
+          class="rounded-xl px-3 py-2 text-sm font-bold text-center"
+          :class="showDetail.status === 'accepted' ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/25' : 'bg-slate-500/15 text-slate-400 border border-slate-500/25'"
+        >
+          {{ tradeStatusLabel(showDetail.status) }}
+          <span class="font-normal text-slate-500 text-xs block mt-0.5">{{ formatCreated(showDetail.createdAt) }}</span>
+        </div>
         <!-- Partner -->
         <div class="flex items-center gap-3">
           <AvatarDisplay
@@ -320,7 +410,10 @@ const COIN_PRESETS = [5, 10, 25, 50, 100, 200]
           />
           <div>
             <div class="font-extrabold">{{ getUser(showDetail.fromUid === auth.profile?.id ? showDetail.toUid : showDetail.fromUid)?.displayName || 'Unknown' }}</div>
-              <div class="flex items-center gap-0.5 text-xs text-orange-400">
+              <div
+                v-if="showDetail.status === 'pending'"
+                class="flex items-center gap-0.5 text-xs text-orange-400"
+              >
                 <Clock :size="11" :stroke-width="2" /> {{ formatExpiry(showDetail.expiresAt) }}
               </div>
           </div>
@@ -358,12 +451,12 @@ const COIN_PRESETS = [5, 10, 25, 50, 100, 200]
           </div>
         </div>
 
-        <!-- Actions for incoming trades only -->
-        <div v-if="showDetail.toUid === auth.profile?.id" class="flex gap-2">
+        <!-- Actions: лише активні (pending) пропозиції -->
+        <div v-if="showDetail.status === 'pending' && showDetail.toUid === auth.profile?.id" class="flex gap-2">
           <AppButton variant="primary" size="lg" class="flex-1" :loading="accepting" @click="accept(showDetail.id)">✓ Прийняти</AppButton>
           <AppButton variant="danger"  size="lg" class="flex-1" @click="decline(showDetail.id)">✕ Відхилити</AppButton>
         </div>
-        <div v-else>
+        <div v-else-if="showDetail.status === 'pending'">
           <AppButton variant="ghost" block @click="cancel(showDetail.id)">Скасувати пропозицію</AppButton>
         </div>
       </div>

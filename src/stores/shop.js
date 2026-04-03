@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { purchaseItem, getActiveItems, openMysteryBox } from '@/firebase/collections'
 import { useAuthStore } from './auth'
+import { useUserStore } from './user'
 
 export const useShopStore = defineStore('shop', () => {
   const items   = ref([])
@@ -25,12 +26,16 @@ export const useShopStore = defineStore('shop', () => {
     const item = items.value.find(i => i.id === itemId)
     if (!item) throw new Error('Item not found')
     await purchaseItem({ uid: auth.profile.id, itemId, price: item.price })
+    await fetchItems()
+    await useUserStore().fetchQuests()
   }
 
   async function openBox(itemId) {
     const auth = useAuthStore()
     if (!auth.profile?.id) throw new Error('Not signed in')
-    return openMysteryBox(auth.profile.id, itemId)
+    const result = await openMysteryBox(auth.profile.id, itemId)
+    await fetchItems()
+    return result
   }
 
   function itemsByCategory(category) {

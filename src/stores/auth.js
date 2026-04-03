@@ -64,6 +64,7 @@ export const useAuthStore = defineStore('auth', () => {
       syncLevel,
       updateStreak,
       getDailyQuests,
+      updateQuestProgress,
       checkAndGrantAchievements,
     } = await import('@/firebase/collections')
     const trimmedCode = code.trim().toUpperCase()
@@ -121,6 +122,9 @@ export const useAuthStore = defineStore('auth', () => {
           await syncLevel(uid, snap.xp, snap.level)
           await updateStreak(uid)
           await getDailyQuests(uid)
+          await updateQuestProgress(uid, 'login', 1)
+          const { registerWebPushAndSave } = await import('@/firebase/fcmClient')
+          void registerWebPushAndSave(uid)
           const granted = await checkAndGrantAchievements(uid)
           if (granted.length > 0) newAchievements.value = granted
         } catch (e) {

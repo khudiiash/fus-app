@@ -2,11 +2,14 @@ const { onCall, HttpsError } = require('firebase-functions/v2/https')
 const { initializeApp } = require('firebase-admin/app')
 const { getFirestore } = require('firebase-admin/firestore')
 const { getAuth } = require('firebase-admin/auth')
+const { registerTradeOfferTriggers } = require('./tradePush')
 
 initializeApp()
 
 /** Європейський регіон узгоджено з Firestore (eur3). */
 const REGION = 'europe-west1'
+
+registerTradeOfferTriggers(REGION, exports)
 
 /**
  * Виклик з клієнта (тільки залогінений користувач).

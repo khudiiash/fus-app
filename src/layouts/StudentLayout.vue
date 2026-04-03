@@ -3,6 +3,7 @@ import { computed, watch, onMounted, onUnmounted } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 import { useAuthStore }  from '@/stores/auth'
 import { useTradeStore } from '@/stores/trade'
+import { useStudentFeedStore } from '@/stores/studentFeed'
 import { useUserStore }  from '@/stores/user'
 import { useGameification } from '@/composables/useGameification'
 import { useToast } from '@/composables/useToast'
@@ -11,9 +12,10 @@ import {
   Home, ShoppingBag, ArrowLeftRight, Trophy, LayoutDashboard, User, Coins,
 } from 'lucide-vue-next'
 
-const auth      = useAuthStore()
-const trade     = useTradeStore()
-const userStore = useUserStore()
+const auth        = useAuthStore()
+const trade       = useTradeStore()
+const studentFeed = useStudentFeedStore()
+const userStore   = useUserStore()
 const route     = useRoute()
 const { coin: toastCoin, info: toastInfo } = useToast()
 
@@ -70,15 +72,27 @@ const isActive = (item) => item.exact ? route.path === item.to : route.path.star
 /** Кімната: без pt/px у main — інакше залишаються смуги; flex-1 заповнює область під хедером і над таббаром */
 const isStudentRoom = computed(() => route.path.startsWith('/student/room'))
 
+watch(
+  () => (auth.profile?.role === 'student' ? auth.profile.id : null),
+  (uid) => {
+    trade.teardown()
+    studentFeed.teardown()
+    if (uid) {
+      trade.initListeners()
+      studentFeed.init()
+    }
+  },
+  { immediate: true },
+)
+
 onMounted(() => {
-  trade.initListeners()
-  trade.watchBadge()
   userStore.fetchItems()
   userStore.fetchQuests()
 })
 
 onUnmounted(() => {
   trade.teardown()
+  studentFeed.teardown()
   notifyReady = false
 })
 </script>

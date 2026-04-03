@@ -1,5 +1,6 @@
 <script setup>
-import { onMounted, onUnmounted } from 'vue'
+import { ref, watch, onMounted, onUnmounted } from 'vue'
+import { pushModalScrollLock, popModalScrollLock } from '@/utils/modalScrollLock.js'
 
 const props = defineProps({
   modelValue: Boolean,
@@ -11,47 +12,92 @@ const close = () => emit('update:modelValue', false)
 
 const sizes = { sm: 'max-w-sm', md: 'max-w-md', lg: 'max-w-lg' }
 
+const scrollLockHeld = ref(false)
+
+watch(
+  () => props.modelValue,
+  (open) => {
+    if (open) {
+      pushModalScrollLock()
+      scrollLockHeld.value = true
+    } else if (scrollLockHeld.value) {
+      popModalScrollLock()
+      scrollLockHeld.value = false
+    }
+  },
+  { immediate: true },
+)
+
+/** Не-passive через модифікатор .prevent у шаблоні — зупиняє pull-to-refresh під пальцем */
+function swallowTouchMove(e) {
+  e.preventDefault()
+}
+
 function onKey(e) { if (e.key === 'Escape') close() }
 onMounted(() => document.addEventListener('keydown', onKey))
-onUnmounted(() => document.removeEventListener('keydown', onKey))
+onUnmounted(() => {
+  document.removeEventListener('keydown', onKey)
+  if (scrollLockHeld.value) {
+    popModalScrollLock()
+    scrollLockHeld.value = false
+  }
+})
 </script>
 
 <template>
   <Teleport to="body">
     <Transition name="modal">
-      <div v-if="modelValue" class="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4" @click.self="close">
-        <!-- Backdrop -->
-        <div class="absolute inset-0 bg-black/60 backdrop-blur-md" @click="close" />
+      <div
+        v-if="modelValue"
+        class="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4 overscroll-none touch-none sm:touch-auto"
+        @click.self="close"
+      >
+        <!-- Backdrop: touchmove — щоб жест не йшов у Chrome pull-to-refresh -->
+        <div
+          class="absolute inset-0 bg-black/60 backdrop-blur-md"
+          @click="close"
+          @touchmove.prevent="swallowTouchMove"
+        />
 
         <!-- Sheet -->
         <div
-          class="modal-sheet relative w-full sm:rounded-2xl"
+          class="modal-sheet relative w-full sm:rounded-2xl flex flex-col max-h-[90dvh] sm:max-h-[min(88vh,720px)] min-h-0 touch-auto overscroll-y-contain"
           :class="sizes[size]"
         >
-          <!-- Drag handle (mobile only) -->
-          <div class="sm:hidden flex justify-center pt-3 pb-1">
-            <div class="w-10 h-1 bg-white/20 rounded-full" />
-          </div>
-
           <!-- Header -->
-          <div v-if="title" class="flex items-center justify-between px-5 py-3">
-            <h3 class="font-extrabold text-lg tracking-tight">{{ title }}</h3>
+          <div
+            v-if="title"
+            class="flex items-center gap-3 px-4 sm:px-5 py-3 sm:py-3.5 shrink-0"
+            @touchmove.prevent="swallowTouchMove"
+          >
+            <h3 class="font-extrabold text-lg tracking-tight min-w-0 flex-1 leading-snug">{{ title }}</h3>
             <button
-              class="w-8 h-8 rounded-xl flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/10 transition-colors text-lg leading-none"
+              type="button"
+              class="shrink-0 flex items-center justify-center gap-1.5 min-h-11 px-3.5 rounded-xl font-extrabold text-sm
+                bg-white/[0.14] hover:bg-white/[0.22] active:bg-white/[0.18] border border-white/[0.14]
+                text-white shadow-sm transition-colors"
+              aria-label="Закрити"
               @click="close"
-            >×</button>
+            >
+              <span class="text-lg leading-none font-light" aria-hidden="true">×</span>
+              <span>Закрити</span>
+            </button>
           </div>
 
           <!-- Divider -->
-          <div v-if="title" class="h-px bg-white/[0.06] mx-5" />
+          <div v-if="title" class="h-px bg-white/[0.06] mx-5 shrink-0" />
 
           <!-- Body -->
-          <div class="p-5 max-h-[82dvh] overflow-y-auto">
+          <div class="flex-1 min-h-0 overflow-y-auto overscroll-y-contain touch-pan-y p-4 sm:p-5">
             <slot />
           </div>
 
-          <!-- Footer -->
-          <div v-if="$slots.footer" class="px-5 pb-5 pt-0">
+          <!-- Footer (sticky below scroll — primary actions belong here) -->
+          <div
+            v-if="$slots.footer"
+            class="px-4 sm:px-5 pb-4 sm:pb-5 pt-3 border-t border-white/[0.06] shrink-0 bg-[rgba(14,14,30,0.98)]"
+            @touchmove.prevent="swallowTouchMove"
+          >
             <slot name="footer" />
           </div>
         </div>

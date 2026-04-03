@@ -1,12 +1,12 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
+import { storeToRefs } from 'pinia'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useUserStore } from '@/stores/user'
+import { useStudentFeedStore } from '@/stores/studentFeed'
 import {
   getTransactionHistory,
-  getActiveQuestsForStudent,
-  getStudentCompletions,
   submitQuestCompletion,
   uploadQuestProof,
 } from '@/firebase/collections'
@@ -28,15 +28,15 @@ import { givenNameFromDisplayName } from '@/utils/personName'
 const router  = useRouter()
 const { success, error } = useToast()
 
-const auth      = useAuthStore()
-const userStore = useUserStore()
+const auth        = useAuthStore()
+const userStore   = useUserStore()
+const studentFeed = useStudentFeedStore()
+const { teacherQuests, questCompletions: myCompletions } = storeToRefs(studentFeed)
 const profile   = computed(() => auth.profile)
 
 const { level, coins, streak } = useGameification(profile)
 
-const history       = ref([])
-const teacherQuests = ref([])
-const myCompletions = ref([])  // flat list of all student's completions
+const history = ref([])
 
 // ─── Submission modal ─────────────────────────────────────────────────────────
 const showSubmit      = ref(false)
@@ -55,23 +55,11 @@ onMounted(async () => {
     if (!userStore.items.length) await userStore.fetchItems()
     const raw = await getTransactionHistory(auth.profile.id, 10)
     history.value = await enrichStudentFeedTransactions(raw, auth.profile.id)
-    await loadTeacherQuests()
   }
 })
 
-async function loadTeacherQuests() {
-  const uid     = auth.profile.id
-  const classId = auth.profile.classId || null
-  const [quests, completions] = await Promise.all([
-    getActiveQuestsForStudent(uid, classId),
-    getStudentCompletions(uid),
-  ])
-  teacherQuests.value = quests
-  myCompletions.value = completions
-}
-
 function completionFor(questId) {
-  return myCompletions.value.find(c => c.questId === questId) || null
+  return myCompletions.value.find((c) => c.questId === questId) || null
 }
 
 function openSubmit(quest) {
@@ -126,7 +114,6 @@ async function doSubmit() {
     )
     success('📤 Заявку надіслано! Чекайте підтвердження вчителя.')
     showSubmit.value = false
-    await loadTeacherQuests()
   } catch (e) {
     error(e.message)
   } finally {

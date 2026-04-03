@@ -1,10 +1,56 @@
-import { defineConfig } from 'vite'
+import { defineConfig, loadEnv } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import tailwindcss from '@tailwindcss/vite'
 import { VitePWA } from 'vite-plugin-pwa'
 import { fileURLToPath, URL } from 'node:url'
 
-export default defineConfig({
+const FCM_FB_CDN = '12.11.0'
+
+/** Embeds Firebase compat + onBackgroundMessage into the Workbox service worker (importScripts). */
+function fcmBackgroundWorkerPlugin(mode) {
+  return {
+    name: 'fcm-background-worker',
+    generateBundle() {
+      const env = loadEnv(mode, process.cwd(), '')
+      if (!env.VITE_FIREBASE_API_KEY) {
+        this.emitFile({
+          type: 'asset',
+          fileName: 'fcm-sw-compat.js',
+          source: '/* FCM: set VITE_FIREBASE_* in .env and rebuild */\n',
+        })
+        return
+      }
+      const firebaseConfig = {
+        apiKey: env.VITE_FIREBASE_API_KEY,
+        authDomain: env.VITE_FIREBASE_AUTH_DOMAIN,
+        projectId: env.VITE_FIREBASE_PROJECT_ID,
+        storageBucket: env.VITE_FIREBASE_STORAGE_BUCKET,
+        messagingSenderId: env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+        appId: env.VITE_FIREBASE_APP_ID,
+      }
+      const cfgJson = JSON.stringify(firebaseConfig)
+      const source = `importScripts('https://www.gstatic.com/firebasejs/${FCM_FB_CDN}/firebase-app-compat.js');
+importScripts('https://www.gstatic.com/firebasejs/${FCM_FB_CDN}/firebase-messaging-compat.js');
+firebase.initializeApp(${cfgJson});
+var messaging = firebase.messaging();
+messaging.onBackgroundMessage(function (payload) {
+  var n = payload.notification || {};
+  var title = n.title || (payload.data && payload.data.title) || 'FUSAPP';
+  var body = n.body || (payload.data && payload.data.body) || '';
+  return self.registration.showNotification(title, {
+    body: body,
+    icon: '/icons/icon-192.png',
+    badge: '/icons/icon-192.png',
+    vibrate: [200, 100, 200],
+  });
+});
+`
+      this.emitFile({ type: 'asset', fileName: 'fcm-sw-compat.js', source })
+    },
+  }
+}
+
+export default defineConfig(({ mode }) => ({
   // Listen on all interfaces so phones / other PCs on the same Wi‑Fi can open the dev app
   // (use the “Network” URL Vite prints, e.g. http://192.168.x.x:5173).
   server: {
@@ -31,6 +77,7 @@ export default defineConfig({
     },
   },
   plugins: [
+    fcmBackgroundWorkerPlugin(mode),
     vue(),
     tailwindcss(),
     VitePWA({
@@ -54,6 +101,7 @@ export default defineConfig({
       workbox: {
         skipWaiting: true,
         clientsClaim: true,
+        importScripts: ['fcm-sw-compat.js'],
         // Precache omits hashed *.svg in /assets (SubjectIcon uses only pl/ua/gb — a few small files).
         globPatterns: ['**/*.{js,css,html,png,woff2,ico}', '**/manifest.webmanifest', 'icons/*.png', 'icons/*.svg'],
         globIgnores: ['**/*.map'],
@@ -99,4 +147,4 @@ export default defineConfig({
     // same class constructors.
     dedupe: ['three'],
   },
-})
+}))

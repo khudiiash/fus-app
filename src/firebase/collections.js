@@ -28,6 +28,12 @@ export async function getUser(uid) {
   return snap.exists() ? { id: snap.id, ...snap.data() } : null
 }
 
+/** Store Web Push FCM token(s) for Cloud Messaging (server / Console tests). */
+export async function saveUserFcmToken(uid, token) {
+  if (!uid || !token) return
+  await updateDoc(doc(db, 'users', uid), { fcmTokens: arrayUnion(token) })
+}
+
 /** Correct the stored level if it doesn't match the XP. Call on login for existing profiles. */
 export async function syncLevel(uid, currentXp, currentLevel) {
   const correct = calcLevel(currentXp || 0)
@@ -280,6 +286,38 @@ export function watchOutgoingTrades(uid, cb) {
   return onSnapshot(q, snap => cb(snap.docs.map(d => ({ id: d.id, ...d.data() }))))
 }
 
+/** Прийняті / відхилені, де ти одержувач (потрібен складний індекс toUid+status+createdAt). */
+export function watchIncomingTradeHistory(uid, cb) {
+  const q = query(
+    tradesCol(),
+    where('toUid', '==', uid),
+    where('status', 'in', ['accepted', 'declined']),
+    orderBy('createdAt', 'desc'),
+    limit(50),
+  )
+  return onSnapshot(
+    q,
+    snap => cb(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
+    err => console.warn('[watchIncomingTradeHistory]', err?.message),
+  )
+}
+
+/** Прийняті / відхилені, де ти відправник. */
+export function watchOutgoingTradeHistory(uid, cb) {
+  const q = query(
+    tradesCol(),
+    where('fromUid', '==', uid),
+    where('status', 'in', ['accepted', 'declined']),
+    orderBy('createdAt', 'desc'),
+    limit(50),
+  )
+  return onSnapshot(
+    q,
+    snap => cb(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
+    err => console.warn('[watchOutgoingTradeHistory]', err?.message),
+  )
+}
+
 export async function getTrade(tradeId) {
   const snap = await getDoc(doc(db, 'tradeOffers', tradeId))
   return snap.exists() ? { id: snap.id, ...snap.data() } : null
@@ -407,6 +445,15 @@ export async function awardCoins({ fromUid, toUid, amount, note = '' }) {
   })
 
   await logTransaction({ type: 'award', fromUid, toUid, amount, note })
+
+  // Daily quest: отримати монети від вчителя (або адміна)
+  if (toUid !== fromUid && amount > 0) {
+    const fromSnap = await getDoc(doc(db, 'users', fromUid))
+    const role = fromSnap.exists() ? fromSnap.data().role : null
+    if (role === 'teacher' || role === 'admin') {
+      await updateQuestProgress(toUid, 'receive', 1)
+    }
+  }
 }
 
 // ─── Purchase item (transactional) ───────────────────────────────────────────
@@ -478,6 +525,9 @@ export async function purchaseItem({ uid, itemId, price }) {
   })
 
   await logTransaction({ type: 'purchase', fromUid: uid, toUid: uid, amount: -price, itemIds: [itemId] })
+
+  const spent = Number(price) || 0
+  if (spent > 0) await updateQuestProgress(uid, 'spend', spent)
 }
 
 /** Зняти один екземпляр предмета з інвентарю (з урахуванням inventoryCounts). */
@@ -619,6 +669,44 @@ export async function fineStudent({ fromUid, toUid, amount, reason = '' }) {
   await logTransaction({ type: 'fine', fromUid, toUid, amount: -amount, note: reason })
 }
 
+/** Unequip room/pet/accessory/skin that are no longer owned after a trade. */
+function avatarAfterLosingTradedItems(avatar, lostItemIds, itemMeta) {
+  const next = { ...(avatar || {}) }
+  const lost = new Set(lostItemIds || [])
+
+  if (next.roomId && lost.has(next.roomId)) next.roomId = null
+  if (next.petId && lost.has(next.petId)) next.petId = null
+  const prevAcc = next.accessories || []
+  next.accessories = prevAcc.filter((id) => !lost.has(id))
+
+  for (const rid of lost) {
+    const item = itemMeta[rid]
+    if (!item || item.category !== 'skin') continue
+    const skinMatch =
+      (next.skinUrl && item.skinUrl && next.skinUrl === item.skinUrl)
+      || (!(next.skinUrl || item.skinUrl)
+        && (next.skinId || 'default') === (item.skinId || 'default'))
+    if (skinMatch) {
+      next.skinId = 'default'
+      next.skinUrl = null
+      break
+    }
+  }
+  return next
+}
+
+function avatarEquipVisualEquals(a, b) {
+  a = a || {}
+  b = b || {}
+  return (
+    (a.roomId ?? null) === (b.roomId ?? null)
+    && (a.petId ?? null) === (b.petId ?? null)
+    && JSON.stringify(a.accessories || []) === JSON.stringify(b.accessories || [])
+    && (a.skinId || 'default') === (b.skinId || 'default')
+    && (a.skinUrl ?? null) === (b.skinUrl ?? null)
+  )
+}
+
 // ─── Execute trade (transactional) ───────────────────────────────────────────
 export async function executeTrade(tradeId) {
   const tradeSnap = await getDoc(doc(db, 'tradeOffers', tradeId))
@@ -634,6 +722,13 @@ export async function executeTrade(tradeId) {
 
     if ((from.coins || 0) < (trade.offeredCoins || 0)) throw new Error('Sender lacks coins')
     if ((to.coins   || 0) < (trade.requestedCoins || 0)) throw new Error('Receiver lacks coins')
+
+    const tradeItemIds = [...new Set([...(trade.offeredItems || []), ...(trade.requestedItems || [])])]
+    const itemMeta = {}
+    for (const iid of tradeItemIds) {
+      const isnap = await tx.get(doc(db, 'items', iid))
+      if (isnap.exists()) itemMeta[iid] = { id: isnap.id, ...isnap.data() }
+    }
 
     let fromInv = from.inventory || []
     let fromCounts = { ...(from.inventoryCounts || {}) }
@@ -666,20 +761,34 @@ export async function executeTrade(tradeId) {
 
     const fromNewXp = (from.xp || 0) + 50
     const toNewXp   = (to.xp   || 0) + 50
-    tx.update(fromRef, {
+
+    const fromAvatarNext = avatarAfterLosingTradedItems(from.avatar, trade.offeredItems || [], itemMeta)
+    const toAvatarNext = avatarAfterLosingTradedItems(to.avatar, trade.requestedItems || [], itemMeta)
+
+    const fromPatch = {
       coins: increment(-(trade.offeredCoins || 0) + (trade.requestedCoins || 0)),
       inventory: fromInv,
       inventoryCounts: fromCounts,
       xp: fromNewXp,
       level: calcLevel(fromNewXp),
-    })
-    tx.update(toRef, {
+    }
+    if (!avatarEquipVisualEquals(from.avatar, fromAvatarNext)) {
+      fromPatch.avatar = fromAvatarNext
+    }
+
+    const toPatch = {
       coins: increment(-(trade.requestedCoins || 0) + (trade.offeredCoins || 0)),
       inventory: toInv,
       inventoryCounts: toCounts,
       xp: toNewXp,
       level: calcLevel(toNewXp),
-    })
+    }
+    if (!avatarEquipVisualEquals(to.avatar, toAvatarNext)) {
+      toPatch.avatar = toAvatarNext
+    }
+
+    tx.update(fromRef, fromPatch)
+    tx.update(toRef, toPatch)
     tx.update(doc(db, 'tradeOffers', tradeId), { status: 'accepted' })
   })
 
@@ -874,6 +983,83 @@ export async function getActiveQuestsForStudent(studentId, classId) {
   }
 
   return results
+}
+
+/**
+ * Активні завдання вчителя для учня: персональні (studentId) + для класу (classId).
+ * Два snapshot-и зливаються по id (без дублікатів).
+ */
+export function watchMergedActiveQuests(studentId, classId, cb) {
+  const fromStudent = new Map()
+  const fromClass = new Map()
+
+  function emit() {
+    const merged = new Map()
+    for (const [id, row] of fromStudent) merged.set(id, row)
+    for (const [id, row] of fromClass) merged.set(id, row)
+    const list = [...merged.values()].filter((q) => q.status === 'active')
+    list.sort((a, b) => (b.createdAt?.seconds ?? 0) - (a.createdAt?.seconds ?? 0))
+    cb(list)
+  }
+
+  const unsubStudent = onSnapshot(
+    query(questsCol(), where('studentId', '==', studentId)),
+    (snap) => {
+      fromStudent.clear()
+      for (const d of snap.docs) {
+        fromStudent.set(d.id, { id: d.id, ...d.data() })
+      }
+      emit()
+    },
+    (err) => console.warn('[watchMergedActiveQuests studentId]', err?.message),
+  )
+
+  let unsubClass = () => {}
+  if (classId) {
+    unsubClass = onSnapshot(
+      query(questsCol(), where('classId', '==', classId)),
+      (snap) => {
+        fromClass.clear()
+        for (const d of snap.docs) {
+          fromClass.set(d.id, { id: d.id, ...d.data() })
+        }
+        emit()
+      },
+      (err) => console.warn('[watchMergedActiveQuests classId]', err?.message),
+    )
+  }
+
+  return () => {
+    unsubStudent()
+    unsubClass()
+  }
+}
+
+/** Усі заявки учня на перевірку завдань (для UI + сповіщень про рішення вчителя). */
+export function watchStudentQuestCompletions(studentId, cb) {
+  const q = query(questCompletionsCol(), where('studentId', '==', studentId))
+  return onSnapshot(
+    q,
+    (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
+    (err) => console.warn('[watchStudentQuestCompletions]', err?.message),
+  )
+}
+
+const TX_STUDENT_NOTIFY_LIMIT = 30
+
+/** Вхідні транзакції (нагороди / штрафи від вчителя тощо) — вже є індекс (toUid, timestamp desc). */
+export function watchIncomingTransactionsForStudent(toUid, cb) {
+  const q = query(
+    txCol(),
+    where('toUid', '==', toUid),
+    orderBy('timestamp', 'desc'),
+    limit(TX_STUDENT_NOTIFY_LIMIT),
+  )
+  return onSnapshot(
+    q,
+    (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
+    (err) => console.warn('[watchIncomingTransactionsForStudent]', err?.message),
+  )
 }
 
 /**

@@ -1,39 +1,143 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import {
-  createTrade, watchIncomingTrades, watchOutgoingTrades,
-  updateTrade, executeTrade, getAllStudents,
+  createTrade,
+  watchIncomingTrades,
+  watchOutgoingTrades,
+  watchIncomingTradeHistory,
+  watchOutgoingTradeHistory,
+  updateTrade,
+  executeTrade,
+  getAllStudents,
+  getTrade,
 } from '@/firebase/collections'
 import { useAuthStore } from './auth'
+import { trySystemNotify } from '@/utils/systemNotify'
+import { useToast } from '@/composables/useToast'
 
 export const useTradeStore = defineStore('trade', () => {
+  const { info: toastInfo, success: toastSuccess } = useToast()
   const incoming = ref([])
   const outgoing = ref([])
+  const historyIncoming = ref([])
+  const historyOutgoing = ref([])
   const classmates = ref([])
-  const loading  = ref(false)
+  const loading = ref(false)
 
-  let unsubIn = null, unsubOut = null
+  let unsubIn = null
+  let unsubOut = null
+  let unsubHistIn = null
+  let unsubHistOut = null
 
   function initListeners() {
     const auth = useAuthStore()
     if (!auth.profile) return
     const uid = auth.profile.id
-    if (unsubIn)  unsubIn()
+    if (unsubIn) unsubIn()
     if (unsubOut) unsubOut()
-    unsubIn  = watchIncomingTrades(uid, data => { incoming.value = data })
-    unsubOut = watchOutgoingTrades(uid, data => { outgoing.value = data })
+    if (unsubHistIn) unsubHistIn()
+    if (unsubHistOut) unsubHistOut()
+
+    let skipIncomingNotify = true
+    let prevIncomingIds = new Set()
+
+    unsubIn = watchIncomingTrades(uid, (data) => {
+      if (skipIncomingNotify) {
+        skipIncomingNotify = false
+        prevIncomingIds = new Set(data.map((d) => d.id))
+        incoming.value = data
+        incomingCount.value = data.length
+        return
+      }
+      const nextIds = new Set(data.map((d) => d.id))
+      for (const row of data) {
+        if (!prevIncomingIds.has(row.id)) {
+          toastInfo('Нова пропозиція обміну — відкрий вкладку «Обмін»')
+          void trySystemNotify(
+            'Нова пропозиція обміну',
+            'Відкрий вкладку «Обмін», щоб переглянути',
+            { tag: `trade-in-${row.id}` },
+          )
+        }
+      }
+      prevIncomingIds = nextIds
+      incoming.value = data
+      incomingCount.value = data.length
+    })
+
+    let skipOutgoingNotify = true
+    let prevOutgoingMap = new Map()
+
+    unsubOut = watchOutgoingTrades(uid, (data) => {
+      if (skipOutgoingNotify) {
+        skipOutgoingNotify = false
+        prevOutgoingMap = new Map(data.map((d) => [d.id, d]))
+        outgoing.value = data
+        return
+      }
+      const nextMap = new Map(data.map((d) => [d.id, d]))
+      for (const [id] of prevOutgoingMap) {
+        if (!nextMap.has(id)) {
+          void (async () => {
+            try {
+              const t = await getTrade(id)
+              if (t?.status === 'accepted') {
+                toastSuccess('Обмін виконано! Твою пропозицію прийнято 🤝')
+                await trySystemNotify(
+                  'Обмін виконано!',
+                  'Твою пропозицію прийнято 🤝',
+                  { tag: `trade-done-${id}` },
+                )
+              } else if (t?.status === 'declined') {
+                toastInfo('Пропозицію обміну відхилено')
+                await trySystemNotify(
+                  'Пропозицію відхилено',
+                  'Можна надіслати іншу угоду',
+                  { tag: `trade-out-${id}` },
+                )
+              }
+            } catch {
+              /* ignore */
+            }
+          })()
+        }
+      }
+      prevOutgoingMap = nextMap
+      outgoing.value = data
+    })
+
+    unsubHistIn = watchIncomingTradeHistory(uid, (data) => {
+      historyIncoming.value = data
+    })
+    unsubHistOut = watchOutgoingTradeHistory(uid, (data) => {
+      historyOutgoing.value = data
+    })
   }
 
   function teardown() {
-    if (unsubIn)  { unsubIn();  unsubIn  = null }
-    if (unsubOut) { unsubOut(); unsubOut = null }
+    if (unsubIn) {
+      unsubIn()
+      unsubIn = null
+    }
+    if (unsubOut) {
+      unsubOut()
+      unsubOut = null
+    }
+    if (unsubHistIn) {
+      unsubHistIn()
+      unsubHistIn = null
+    }
+    if (unsubHistOut) {
+      unsubHistOut()
+      unsubHistOut = null
+    }
   }
 
   async function fetchClassmates() {
     const auth = useAuthStore()
     if (!auth.profile) return
     const all = await getAllStudents()
-    classmates.value = all.filter(s => s.id !== auth.profile.id)
+    classmates.value = all.filter((s) => s.id !== auth.profile.id)
   }
 
   async function sendOffer({ toUid, offeredCoins, offeredItems, requestedCoins, requestedItems }) {
@@ -43,8 +147,8 @@ export const useTradeStore = defineStore('trade', () => {
       const id = await createTrade({
         fromUid: auth.profile.id,
         toUid,
-        offeredCoins:   offeredCoins   || 0,
-        offeredItems:   offeredItems   || [],
+        offeredCoins: offeredCoins || 0,
+        offeredItems: offeredItems || [],
         requestedCoins: requestedCoins || 0,
         requestedItems: requestedItems || [],
       })
@@ -72,15 +176,21 @@ export const useTradeStore = defineStore('trade', () => {
   }
 
   const incomingCount = ref(0)
-  function watchBadge() {
-    const auth = useAuthStore()
-    if (!auth.profile) return
-    watchIncomingTrades(auth.profile.id, data => { incomingCount.value = data.length })
-  }
 
   return {
-    incoming, outgoing, classmates, loading, incomingCount,
-    initListeners, teardown, fetchClassmates,
-    sendOffer, acceptTrade, declineTrade, cancelTrade, watchBadge,
+    incoming,
+    outgoing,
+    historyIncoming,
+    historyOutgoing,
+    classmates,
+    loading,
+    incomingCount,
+    initListeners,
+    teardown,
+    fetchClassmates,
+    sendOffer,
+    acceptTrade,
+    declineTrade,
+    cancelTrade,
   }
 })
