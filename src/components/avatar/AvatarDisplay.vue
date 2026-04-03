@@ -7,6 +7,8 @@ const props = defineProps({
   size: { type: String, default: 'md' }, // xs | sm | md | lg | xl
   showName: { type: Boolean, default: false },
   items: { type: Array, default: () => [] },
+  /** Only the circular avatar (no outer column) — for tight rows e.g. feed cards */
+  circleOnly: { type: Boolean, default: false },
 })
 
 const sizeMap = {
@@ -61,7 +63,7 @@ const s = computed(() => sizeMap[props.size] || sizeMap.md)
 </script>
 
 <template>
-  <div class="flex flex-col items-center gap-2">
+  <div v-if="!circleOnly" class="flex flex-col items-center gap-2">
     <div
       class="relative rounded-full bg-gradient-to-br flex items-center justify-center select-none overflow-hidden ring-2 ring-violet-700 ring-offset-2 ring-offset-game-bg"
       :class="s.outer"
@@ -95,6 +97,33 @@ const s = computed(() => sizeMap[props.size] || sizeMap.md)
 
     <div v-if="showName" class="text-xs font-bold text-center text-slate-300 max-w-[80px] truncate">
       {{ displayName }}
+    </div>
+  </div>
+
+  <div
+    v-else
+    class="relative rounded-full bg-gradient-to-br flex items-center justify-center select-none overflow-hidden ring-2 ring-violet-700 ring-offset-2 ring-offset-game-bg"
+    :class="s.outer"
+  >
+    <img
+      v-if="avatar?.photoUrl"
+      :src="avatar.photoUrl"
+      class="absolute inset-0 w-full h-full object-cover"
+      alt="avatar"
+      draggable="false"
+    />
+    <template v-else>
+      <div :class="['absolute inset-0 bg-gradient-to-br', skin]" />
+      <span class="relative z-10 font-extrabold text-white select-none" :class="s.text">
+        {{ initials }}
+      </span>
+    </template>
+    <div v-if="accessories.length > 0" class="absolute bottom-0 right-0 flex gap-0.5 p-0.5">
+      <span
+        v-for="acc in accessories.slice(0, 2)"
+        :key="acc.id"
+        class="text-xs bg-black/40 rounded-full p-0.5 leading-none"
+      >{{ acc.emoji || '✦' }}</span>
     </div>
   </div>
 </template>

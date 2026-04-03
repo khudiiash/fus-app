@@ -9,6 +9,16 @@ const props = defineProps({
   size: { type: Number, default: 72 },
 })
 
+const RARITY_KEYS = ['common', 'rare', 'epic', 'legendary']
+
+/** Firestore / forms sometimes use different casing; unknown → common (grey crate) */
+const normalizedRarity = computed(() => {
+  const r = String(props.rarity ?? 'common')
+    .toLowerCase()
+    .trim()
+  return RARITY_KEYS.includes(r) ? r : 'common'
+})
+
 /** Spritesheet 2×2: TL common, TR rare, BL epic, BR legendary */
 const pos = computed(() => {
   const p = {
@@ -16,7 +26,7 @@ const pos = computed(() => {
     rare:      { x: '100%', y: '0%' },
     epic:      { x: '0%',   y: '100%' },
     legendary: { x: '100%', y: '100%' },
-  }[props.rarity] || { x: '0%', y: '0%' }
+  }[normalizedRarity.value] || { x: '0%', y: '0%' }
   return p
 })
 
@@ -35,7 +45,7 @@ const boxStyle = computed(() => ({
     class="mystery-box-sprite shrink-0 rounded-lg overflow-hidden"
     :style="boxStyle"
     role="img"
-    :aria-label="`Магічна коробка (${rarity})`"
+    :aria-label="`Магічна коробка (${normalizedRarity})`"
   />
 </template>
 

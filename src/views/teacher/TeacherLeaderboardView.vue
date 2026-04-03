@@ -114,7 +114,7 @@ watch(selectedClassId, () => { if (scope.value === 'class') fetchLeaderboard() }
 
     <div v-else>
       <!-- Podium top 3 -->
-      <div v-if="podium.length >= 3" class="flex items-end justify-center gap-3 mb-6">
+      <div v-if="podium.length >= 3" class="flex items-end justify-center gap-3 mb-6 mt-8 pt-3">
         <!-- 2nd place -->
         <div class="flex flex-col items-center gap-2">
           <div class="cursor-pointer" @click="router.push(`/room/${podium[1]?.id}`)">
@@ -126,7 +126,7 @@ watch(selectedClassId, () => { if (scope.value === 'class') fetchLeaderboard() }
           </div>
         </div>
         <!-- 1st place -->
-        <div class="flex flex-col items-center gap-2 -mt-4">
+        <div class="flex flex-col items-center gap-2">
           <Crown :size="22" :stroke-width="1.8" class="text-amber-400 animate-float" />
           <div class="cursor-pointer" @click="router.push(`/room/${podium[0]?.id}`)">
             <AvatarDisplay :avatar="podium[0]?.avatar" :display-name="podium[0]?.displayName || ''" :items="userStore.items" size="lg" :show-name="true" />

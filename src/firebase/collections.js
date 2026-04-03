@@ -580,6 +580,9 @@ export async function openMysteryBox(uid, boxItemId) {
     amount: result.coins,
     itemIds: result.itemIds,
     note: boxLogName,
+    /** So journal can show box art + rarity when loot is coins-only or alongside items */
+    boxItemId: boxItemId,
+    boxRarity: boxItem.rarity || 'common',
   })
 
   return result

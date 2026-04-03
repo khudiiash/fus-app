@@ -133,6 +133,14 @@ export const useUserStore = defineStore('user', () => {
     if (auth.profile) auth.profile.avatar = newAvatar
   }
 
+  async function setNoAccessory() {
+    const auth = useAuthStore()
+    if (!auth.profile) return
+    const newAvatar = { ...(auth.profile.avatar || {}), accessories: [] }
+    await updateUser(auth.profile.id, { avatar: newAvatar })
+    if (auth.profile) auth.profile.avatar = newAvatar
+  }
+
   function getXpProgress(profile) {
     if (!profile) return { current: 0, needed: 100, percent: 0 }
     const levelStart = xpForLevel(profile.level || 1)
@@ -149,7 +157,7 @@ export const useUserStore = defineStore('user', () => {
 
   return {
     items, quests, loadingItems,
-    fetchItems, fetchQuests, progressQuest, equipItem, unequipItem, setDefaultRoom, setNoPet, getXpProgress, ownedItems,
+    fetchItems, fetchQuests, progressQuest, equipItem, unequipItem, setDefaultRoom, setNoPet, setNoAccessory, getXpProgress, ownedItems,
     uploadPhoto, removePhoto,
   }
 })

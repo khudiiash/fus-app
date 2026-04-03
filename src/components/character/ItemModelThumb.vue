@@ -16,7 +16,7 @@ defineProps({
 
 <template>
   <div
-    class="rounded-lg overflow-hidden border border-white/[0.08] bg-game-bg flex-shrink-0 flex items-center justify-center"
+    class="rounded-lg overflow-hidden flex-shrink-0 flex items-center justify-center"
     :style="{ width: width + 'px', height: height + 'px' }"
   >
     <template v-if="item">

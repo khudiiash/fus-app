@@ -10,18 +10,18 @@ import {
   submitQuestCompletion,
   uploadQuestProof,
 } from '@/firebase/collections'
+import { enrichStudentFeedTransactions } from '@/composables/useTransactionFeed'
+import HistoryTransactionCard from '@/components/feed/HistoryTransactionCard.vue'
 import { useGameification } from '@/composables/useGameification'
 import { useToast } from '@/composables/useToast'
 import StreakWidget from '@/components/gamification/StreakWidget.vue'
 import QuestCard from '@/components/gamification/QuestCard.vue'
 import CoinDisplay from '@/components/gamification/CoinDisplay.vue'
-import AppCard from '@/components/ui/AppCard.vue'
 import AppModal from '@/components/ui/AppModal.vue'
 import AppButton from '@/components/ui/AppButton.vue'
 import {
   Zap, ClipboardList, ScrollText, Activity, Inbox, Upload,
   RefreshCw, Paperclip, Send, Clock, CheckCircle2, XCircle, Trophy,
-  Coins, ArrowLeftRight, ShoppingBag, Flame, Star, Gift, Gavel,
 } from 'lucide-vue-next'
 import { givenNameFromDisplayName } from '@/utils/personName'
 
@@ -52,7 +52,9 @@ const MAX_FILE_SIZE = 20 * 1024 * 1024 // 20 MB
 onMounted(async () => {
   await userStore.fetchQuests()
   if (auth.profile?.id) {
-    history.value = await getTransactionHistory(auth.profile.id, 10)
+    if (!userStore.items.length) await userStore.fetchItems()
+    const raw = await getTransactionHistory(auth.profile.id, 10)
+    history.value = await enrichStudentFeedTransactions(raw, auth.profile.id)
     await loadTeacherQuests()
   }
 })
@@ -156,16 +158,11 @@ function formatDate(ts) {
   const d = ts.toDate ? ts.toDate() : new Date(ts)
   const now = new Date()
   const diff = (now - d) / 1000
-  if (diff < 60) return 'just now'
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`
-  return `${Math.floor(diff / 86400)}d ago`
+  if (diff < 60)    return 'щойно'
+  if (diff < 3600)  return `${Math.floor(diff / 60)} хв тому`
+  if (diff < 86400) return `${Math.floor(diff / 3600)} год тому`
+  return d.toLocaleDateString('uk-UA', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
 }
-
-const txLabels = { award: 'Нарахування', trade: 'Обмін', purchase: 'Покупка', fine: 'Штраф', box_open: 'Коробка', achievement_reward: 'Досягнення', streak_bonus: 'Бонус серії', quest_reward: 'Завдання виконано' }
-const txIconMap = { award: Coins, trade: ArrowLeftRight, purchase: ShoppingBag, fine: Gavel, box_open: Gift, achievement_reward: Trophy, streak_bonus: Flame, quest_reward: ScrollText }
-const txIcon  = (type) => txIconMap[type] || Star
-const txColor = (type) => ({ award: 'text-amber-400', trade: 'text-blue-400', purchase: 'text-violet-400', fine: 'text-red-400', box_open: 'text-amber-400', achievement_reward: 'text-emerald-400', streak_bonus: 'text-orange-400', quest_reward: 'text-violet-300' }[type] || 'text-slate-400')
 </script>
 
 <template>
@@ -255,14 +252,14 @@ const txColor = (type) => ({ award: 'text-amber-400', trade: 'text-blue-400', pu
 
           <!-- Action -->
           <div v-if="!completionFor(quest.id)">
-            <AppButton variant="primary" size="sm" block @click="openSubmit(quest)">
-              <Upload :size="14" :stroke-width="2" /> Підтвердити виконання
+            <AppButton variant="primary" size="md" block @click="openSubmit(quest)">
+              <Upload :size="16" :stroke-width="2" /> Підтвердити виконання
             </AppButton>
           </div>
           <div v-else-if="completionFor(quest.id)?.status === 'rejected'">
             <div class="text-xs text-slate-500 mb-2">Ваша заявка була відхилена. Спробуйте ще раз.</div>
-            <AppButton variant="ghost" size="sm" block @click="openSubmit(quest)">
-              <RefreshCw :size="14" :stroke-width="2" /> Надіслати знову
+            <AppButton variant="ghost" size="md" block @click="openSubmit(quest)">
+              <RefreshCw :size="16" :stroke-width="2" /> Надіслати знову
             </AppButton>
           </div>
         </div>
@@ -285,19 +282,15 @@ const txColor = (type) => ({ award: 'text-amber-400', trade: 'text-blue-400', pu
         <div class="text-sm text-slate-500">Активності ще немає. Починай заробляти!</div>
       </div>
       <div v-else class="flex flex-col gap-2">
-        <AppCard v-for="tx in history" :key="tx.id" class="flex items-center gap-3 !py-3">
-          <div class="w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0" :class="txColor(tx.type)" style="background:rgba(255,255,255,0.05)">
-            <component :is="txIcon(tx.type)" :size="16" :stroke-width="1.8" />
-          </div>
-          <div class="flex-1 min-w-0">
-            <div class="font-bold text-sm">{{ txLabels[tx.type] || tx.type }}</div>
-            <div v-if="tx.note" class="text-xs text-slate-400 truncate">"{{ tx.note }}"</div>
-          </div>
-          <div class="flex flex-col items-end">
-            <CoinDisplay :amount="tx.amount" :show-sign="tx.amount > 0" size="sm" />
-            <div class="text-xs text-slate-500">{{ formatDate(tx.timestamp) }}</div>
-          </div>
-        </AppCard>
+        <HistoryTransactionCard
+          v-for="tx in history"
+          :key="tx.id"
+          :tx="tx"
+          :items="userStore.items"
+          compact
+        >
+          <template #time>{{ formatDate(tx.timestamp) }}</template>
+        </HistoryTransactionCard>
       </div>
     </div>
   </div>

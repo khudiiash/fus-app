@@ -151,6 +151,7 @@ async function equipDefaultRoom() {
 
 const isDefaultRoomActive = computed(() => !auth.profile?.avatar?.roomId)
 const isNoPetActive = computed(() => !auth.profile?.avatar?.petId)
+const isNoAccessoryActive = computed(() => !(auth.profile?.avatar?.accessories || []).length)
 const isDefaultSkinActive = computed(() => {
   const av = auth.profile?.avatar || {}
   if (av.skinUrl) return false
@@ -187,6 +188,18 @@ async function equipNoPet() {
   try {
     await userStore.setNoPet()
     success('Улюбленця знято')
+  } catch (e) {
+    error(e.message)
+  } finally {
+    saving.value = false
+  }
+}
+
+async function equipNoAccessory() {
+  saving.value = true
+  try {
+    await userStore.setNoAccessory()
+    success('Аксесуар знято')
   } catch (e) {
     error(e.message)
   } finally {
@@ -339,11 +352,27 @@ const THUMB_GLB_H = 124
       </div>
     </div>
 
+    <div v-if="activeTab === 'accessory'" class="grid grid-cols-3 gap-2">
+      <div
+        class="glass-card p-2 flex flex-col items-center gap-1 cursor-pointer transition-all duration-150 active:scale-95"
+        :class="isNoAccessoryActive ? 'border-violet-400 glow-primary' : ''"
+        @click="equipNoAccessory"
+      >
+        <div class="w-[52px] h-[52px] flex items-center justify-center">
+          <ChefHat :size="28" :stroke-width="1.2" class="text-slate-500" />
+        </div>
+        <div class="text-[11px] font-bold text-center w-full leading-tight">Без аксесуара</div>
+        <div class="text-[9px] text-slate-500 font-bold">стандарт</div>
+        <div v-if="isNoAccessoryActive" class="text-[10px] text-violet-400 font-bold">✓ Активно</div>
+        <div v-else class="text-[10px] text-slate-500">обрати</div>
+      </div>
+    </div>
+
     <!-- Items grid (скіни / аксесуари / улюбленці / кімнати) -->
     <div
       v-if="activeTab !== 'mystery_box' && categoryItems.length > 0"
       class="grid grid-cols-3 gap-2"
-      :class="activeTab === 'room' || activeTab === 'pet' || activeTab === 'skin' ? '-mt-2' : ''"
+      :class="activeTab === 'room' || activeTab === 'pet' || activeTab === 'skin' || activeTab === 'accessory' ? '-mt-2' : ''"
     >
       <div
         v-for="item in categoryItems"
@@ -407,7 +436,7 @@ const THUMB_GLB_H = 124
       </div>
     </div>
 
-    <div v-else-if="activeTab !== 'room' && activeTab !== 'pet' && activeTab !== 'mystery_box'" class="text-center py-8 text-slate-600">
+    <div v-else-if="activeTab !== 'room' && activeTab !== 'pet' && activeTab !== 'accessory' && activeTab !== 'mystery_box'" class="text-center py-8 text-slate-600">
       <ShoppingBag :size="36" :stroke-width="1.2" class="mx-auto mb-2 opacity-40" />
       <div class="text-sm font-bold text-slate-500">Немає предметів типу «{{ tabs.find(t=>t.key===activeTab)?.label }}»</div>
       <div class="text-xs mt-1">Зайди до магазину та купи щось!</div>

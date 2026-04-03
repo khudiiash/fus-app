@@ -91,7 +91,7 @@ const SORT_OPTS = [
     </div>
 
     <!-- Podium top 3 -->
-    <div v-if="podium.length >= 3" class="flex items-end justify-center gap-3 mb-2">
+    <div v-if="podium.length >= 3" class="flex items-end justify-center gap-3 mb-2 mt-8 pt-3">
       <!-- 2nd -->
       <div class="flex flex-col items-center gap-2">
         <div class="cursor-pointer" @click="router.push(podium[1]?.id === auth.profile?.id ? '/student/room' : `/student/room/${podium[1]?.id}`)">
@@ -104,7 +104,7 @@ const SORT_OPTS = [
       </div>
 
       <!-- 1st -->
-      <div class="flex flex-col items-center gap-2 -mt-4">
+      <div class="flex flex-col items-center gap-2">
         <Crown :size="22" :stroke-width="1.8" class="text-amber-400 animate-float" />
         <div class="cursor-pointer" @click="router.push(podium[0]?.id === auth.profile?.id ? '/student/room' : `/student/room/${podium[0]?.id}`)">
           <AvatarDisplay :avatar="podium[0]?.avatar" :display-name="podium[0]?.displayName || ''" :items="userStore.items" size="lg" :show-name="true" />
