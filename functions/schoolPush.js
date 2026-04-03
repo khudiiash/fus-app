@@ -19,7 +19,7 @@ function registerSchoolPushTriggers(region, exportsObj) {
       if (!questSnap.exists) return
       const q = questSnap.data()
       const teacherId = q.teacherId
-      if (!teacherId) return
+      if (!teacherId || teacherId === d.studentId) return
       const questTitle = q.title || 'Завдання'
       const completionId = event.params.completionId
       await sendPushToUser(teacherId, {

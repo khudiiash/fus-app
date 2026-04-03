@@ -5,7 +5,8 @@ import {
   runTransaction, writeBatch, Timestamp, startAfter,
 } from 'firebase/firestore'
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage'
-import { db, storage } from './config'
+import app, { db, storage } from './config'
+import { getFunctions, httpsCallable } from 'firebase/functions'
 import {
   buildEligibleLootPool,
   rollMysteryBox,
@@ -28,10 +29,14 @@ export async function getUser(uid) {
   return snap.exists() ? { id: snap.id, ...snap.data() } : null
 }
 
-/** Store Web Push FCM token(s) for Cloud Messaging (server / Console tests). */
+const FUNCTIONS_REGION = import.meta.env.VITE_FUNCTIONS_REGION || 'europe-west1'
+
+/** Store FCM token for the signed-in user only; removes the same token from other user docs (shared browser). */
 export async function saveUserFcmToken(uid, token) {
   if (!uid || !token) return
-  await updateDoc(doc(db, 'users', uid), { fcmTokens: arrayUnion(token) })
+  const functions = getFunctions(app, FUNCTIONS_REGION)
+  const call = httpsCallable(functions, 'claimFcmToken')
+  await call({ token })
 }
 
 /** Correct the stored level if it doesn't match the XP. Call on login for existing profiles. */

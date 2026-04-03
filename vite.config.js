@@ -159,15 +159,17 @@ export default defineConfig(({ mode }) => ({
             options: { cacheName: 'firestore-cache' },
           },
           // GLB / images from Firebase Storage — not in precache; without this every cold open re-downloads models.
+          // NetworkFirst avoids first-load flakes with cross-origin <img> + SW; only cache real 200 (not opaque 0).
           {
             urlPattern: ({ url }) =>
               url.hostname === 'firebasestorage.googleapis.com' ||
               url.hostname === 'storage.googleapis.com',
-            handler: 'StaleWhileRevalidate',
+            handler: 'NetworkFirst',
             options: {
               cacheName: 'fus-storage-models',
+              networkTimeoutSeconds: 8,
               expiration: { maxEntries: 120, maxAgeSeconds: 60 * 60 * 24 * 30 },
-              cacheableResponse: { statuses: [0, 200] },
+              cacheableResponse: { statuses: [200] },
             },
           },
           {
