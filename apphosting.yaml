@@ -1,5 +1,5 @@
-# Unused for this project: we ship a static PWA via Firebase Hosting (`npm run build` → `firebase deploy --only hosting`).
-# App Hosting triggers Cloud Build + Cloud Run; remove `apphosting` from firebase.json unless you need that stack.
+# App Hosting runs this on Cloud Run — `npm start` must listen on PORT (see scripts/serve-dist.mjs).
+# Classic Firebase Hosting (`firebase deploy --only hosting`) does not need this file.
 # See https://firebase.google.com/docs/app-hosting/configure#cloud-run
 runConfig:
   minInstances: 0
