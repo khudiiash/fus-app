@@ -6,6 +6,7 @@ import {
   LayoutDashboard, ScrollText, Trophy, History, User,
 } from 'lucide-vue-next'
 import { givenNameInitial } from '@/utils/personName'
+import PushOptInBanner from '@/components/notifications/PushOptInBanner.vue'
 
 const auth  = useAuthStore()
 const route = useRoute()
@@ -40,6 +41,8 @@ const isTeacherRoom = computed(() => route.path.startsWith('/teacher/room'))
         </RouterLink>
       </div>
     </header>
+
+    <PushOptInBanner layout="teacher" />
 
     <!-- ── Page content ─────────────────────────────────────────────────── -->
     <main

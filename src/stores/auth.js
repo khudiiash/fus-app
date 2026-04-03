@@ -131,6 +131,11 @@ export const useAuthStore = defineStore('auth', () => {
           console.warn('[auth] post-login student sync:', e)
         }
       })()
+    } else if (profile.value?.role === 'teacher') {
+      const uid = credential.user.uid
+      void import('@/firebase/fcmClient').then(({ registerWebPushAndSave }) => {
+        void registerWebPushAndSave(uid)
+      })
     }
 
     return profile.value

@@ -8,6 +8,7 @@ import { useUserStore }  from '@/stores/user'
 import { useGameification } from '@/composables/useGameification'
 import { useToast } from '@/composables/useToast'
 import AvatarDisplay from '@/components/avatar/AvatarDisplay.vue'
+import PushOptInBanner from '@/components/notifications/PushOptInBanner.vue'
 import {
   Home, ShoppingBag, ArrowLeftRight, Trophy, LayoutDashboard, User, Coins,
 } from 'lucide-vue-next'
@@ -142,6 +143,8 @@ onUnmounted(() => {
 
       </div>
     </header>
+
+    <PushOptInBanner layout="student" />
 
     <!-- ── Page content ─────────────────────────────────────────────────── -->
     <main
