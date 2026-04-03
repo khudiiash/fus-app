@@ -1,4 +1,5 @@
 <script setup>
+import '@/utils/enableThreeFileCache'
 import { ref, onMounted, onUnmounted, watch, computed } from 'vue'
 import * as skinview3d from 'skinview3d'
 import * as THREE from 'three'

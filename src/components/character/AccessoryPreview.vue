@@ -1,4 +1,5 @@
 <script setup>
+import '@/utils/enableThreeFileCache'
 import { ref, onMounted, onUnmounted, watch } from 'vue'
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'

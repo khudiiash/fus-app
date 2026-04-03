@@ -1,4 +1,5 @@
 <script setup>
+import '@/utils/enableThreeFileCache'
 import { ref, onMounted, computed } from 'vue'
 import { getAuth } from 'firebase/auth'
 import { useAuthStore } from '@/stores/auth'

@@ -2,6 +2,7 @@
  * Single shared WebGL context for baking GLB previews to PNG data URLs.
  * Shop / lists enqueue renders serially so the browser never opens N contexts.
  */
+import '@/utils/enableThreeFileCache'
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 
