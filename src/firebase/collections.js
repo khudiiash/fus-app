@@ -516,6 +516,7 @@ export async function openMysteryBox(uid, boxItemId) {
 
   let result = { coins: 0, itemIds: [] }
   let boxLogName = ''
+  let boxRarityForLog = 'common'
 
   await runTransaction(db, async (tx) => {
     const uRef = doc(db, 'users', uid)
@@ -528,6 +529,7 @@ export async function openMysteryBox(uid, boxItemId) {
     const boxItem = { id: bSnap.id, ...bSnap.data() }
     if (boxItem.category !== 'mystery_box') throw new Error('Це не магічна коробка')
     boxLogName = boxItem.name || boxItemId
+    boxRarityForLog = boxItem.rarity || 'common'
 
     const counts = { ...(u.mysteryBoxCounts || {}) }
     if ((counts[boxItemId] || 0) < 1) throw new Error('У вас немає цієї коробки')
@@ -582,7 +584,7 @@ export async function openMysteryBox(uid, boxItemId) {
     note: boxLogName,
     /** So journal can show box art + rarity when loot is coins-only or alongside items */
     boxItemId: boxItemId,
-    boxRarity: boxItem.rarity || 'common',
+    boxRarity: boxRarityForLog,
   })
 
   return result
