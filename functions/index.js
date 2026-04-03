@@ -3,6 +3,7 @@ const { initializeApp } = require('firebase-admin/app')
 const { getFirestore } = require('firebase-admin/firestore')
 const { getAuth } = require('firebase-admin/auth')
 const { registerTradeOfferTriggers } = require('./tradePush')
+const { registerSchoolPushTriggers } = require('./schoolPush')
 
 initializeApp()
 
@@ -10,6 +11,7 @@ initializeApp()
 const REGION = 'europe-west1'
 
 registerTradeOfferTriggers(REGION, exports)
+registerSchoolPushTriggers(REGION, exports)
 
 /**
  * Виклик з клієнта (тільки залогінений користувач).
