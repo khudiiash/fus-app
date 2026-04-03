@@ -2,11 +2,15 @@ import { defineConfig, loadEnv } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import tailwindcss from '@tailwindcss/vite'
 import { VitePWA } from 'vite-plugin-pwa'
+import { readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { fileURLToPath, URL } from 'node:url'
+import { dirname, resolve } from 'node:path'
+
+const __dirname = dirname(fileURLToPath(import.meta.url))
 
 const FCM_FB_CDN = '12.11.0'
 
-/** Embeds Firebase compat + onBackgroundMessage into the Workbox service worker (importScripts). */
+/** Генерує `dist/fcm-sw-compat.js` (Firebase compat + onBackgroundMessage у SW). */
 function fcmBackgroundWorkerPlugin(mode) {
   return {
     name: 'fcm-background-worker',
@@ -69,6 +73,28 @@ self.addEventListener('notificationclick', function (event) {
   }
 }
 
+/**
+ * vite-plugin-pwa пише `dist/sw.js` у своєму `closeBundle`. Цей хук — `order: 'post'`,
+ * щоб виконуватись після PWA.
+ */
+function prependFcmImportToSwJs() {
+  return {
+    name: 'prepend-fcm-import-to-sw-js',
+    apply: 'build',
+    closeBundle: {
+      order: 'post',
+      sequential: true,
+      handler() {
+        const swPath = resolve(__dirname, 'dist/sw.js')
+        if (!existsSync(swPath)) return
+        const code = readFileSync(swPath, 'utf8')
+        if (/^importScripts\(['"]fcm-sw-compat\.js['"]\)/.test(code)) return
+        writeFileSync(swPath, "importScripts('fcm-sw-compat.js');\n" + code)
+      },
+    },
+  }
+}
+
 export default defineConfig(({ mode }) => ({
   // Listen on all interfaces so phones / other PCs on the same Wi‑Fi can open the dev app
   // (use the “Network” URL Vite prints, e.g. http://192.168.x.x:5173).
@@ -118,9 +144,11 @@ export default defineConfig(({ mode }) => ({
         ],
       },
       workbox: {
+        // Не використовувати `importScripts: ['fcm-sw-compat.js']` тут: workbox-build
+        // вшиває їх у середину AMD-обгортки, FCM у фоні працює нестабільно.
+        // Підключення — перший рядок dist/sw.js (плагін prependFcmImportToSwJs).
         skipWaiting: true,
         clientsClaim: true,
-        importScripts: ['fcm-sw-compat.js'],
         // Precache omits hashed *.svg in /assets (SubjectIcon uses only pl/ua/gb — a few small files).
         globPatterns: ['**/*.{js,css,html,png,woff2,ico}', '**/manifest.webmanifest', 'icons/*.png', 'icons/*.svg'],
         globIgnores: ['**/*.map'],
@@ -158,6 +186,7 @@ export default defineConfig(({ mode }) => ({
         type: 'module',
       },
     }),
+    prependFcmImportToSwJs(),
   ],
   resolve: {
     alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },

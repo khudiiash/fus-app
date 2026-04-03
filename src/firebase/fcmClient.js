@@ -1,21 +1,18 @@
 /**
- * Web FCM: token for push + foreground message handler.
- * Background payloads are handled by fb-msg-bg.js (Workbox importScripts).
+ * Web FCM: токен у Firestore + підписка на той самий SW, що й Workbox (`/sw.js`).
+ * Фонові push обробляє `fcm-sw-compat.js` (перший importScripts у sw.js).
+ * Foreground onMessage не реєструємо — потрібні лише системні push у фоні / закритому вигляді.
  *
- * Дозвіл на сповіщення: викликайте лише з явного кліку (банер / кнопка).
- * Після логіну використовуйте registerWebPushAndSave лише якщо permission уже granted.
+ * Дозвіл: лише з кліку (банер). Після логіну — registerWebPushAndSave, якщо permission уже granted.
  */
-import { getMessaging, getToken, isSupported, onMessage } from 'firebase/messaging'
+import { getMessaging, getToken, isSupported } from 'firebase/messaging'
 import app from './config'
 import { saveUserFcmToken } from './collections'
-import { trySystemNotify } from '@/utils/systemNotify'
 
 const FB_CDN = '12.11.0'
 
 /** Exposed for docs / debugging */
 export { FB_CDN }
-
-let messagingInited = false
 
 export function hasFcmVapidConfigured() {
   return !!import.meta.env.VITE_FCM_VAPID_KEY
@@ -38,17 +35,16 @@ async function ensureMessaging() {
   if (!hasFcmVapidConfigured()) return null
   const ok = await isSupported()
   if (!ok) return null
-  const messaging = getMessaging(app)
-  if (!messagingInited) {
-    messagingInited = true
-    onMessage(messaging, (payload) => {
-      const n = payload.notification
-      const title = n?.title || payload.data?.title || 'FUSAPP'
-      const body = n?.body || payload.data?.body || ''
-      void trySystemNotify(title, body, { tag: payload.data?.tag || 'fcm-foreground' })
-    })
+  return getMessaging(app)
+}
+
+/** Той самий SW, що реєструє vite-plugin-pwa (`/sw.js`). */
+async function getPushServiceWorkerRegistration() {
+  let reg = await navigator.serviceWorker.getRegistration('/')
+  if (!reg) {
+    reg = await navigator.serviceWorker.register('/sw.js', { scope: '/' })
   }
-  return messaging
+  return reg
 }
 
 /**
@@ -62,7 +58,7 @@ export async function registerWebPushAndSave(uid) {
   try {
     const messaging = await ensureMessaging()
     if (!messaging) return null
-    const registration = await navigator.serviceWorker.ready
+    const registration = await getPushServiceWorkerRegistration()
     const token = await getToken(messaging, {
       vapidKey: import.meta.env.VITE_FCM_VAPID_KEY,
       serviceWorkerRegistration: registration,
@@ -92,7 +88,7 @@ export async function requestWebPushPermissionAndRegister(uid) {
   try {
     const messaging = await ensureMessaging()
     if (!messaging) return { ok: false, reason: 'not_configured' }
-    const registration = await navigator.serviceWorker.ready
+    const registration = await getPushServiceWorkerRegistration()
     const token = await getToken(messaging, {
       vapidKey: import.meta.env.VITE_FCM_VAPID_KEY,
       serviceWorkerRegistration: registration,
