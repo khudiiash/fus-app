@@ -5,7 +5,6 @@ import { useAuthStore } from '@/stores/auth'
 import { useUserStore } from '@/stores/user'
 import { watchClass, getUsersByClass, awardCoins, fineStudent, checkAndGrantAchievements, getAllSubjects, getTeacherBudgetInfo } from '@/firebase/collections'
 import { getSubjectIcon } from '@/composables/useSubjectIcon'
-import AppCard from '@/components/ui/AppCard.vue'
 import AppButton from '@/components/ui/AppButton.vue'
 import AppModal from '@/components/ui/AppModal.vue'
 import AppInput from '@/components/ui/AppInput.vue'
@@ -14,7 +13,7 @@ import AvatarDisplay from '@/components/avatar/AvatarDisplay.vue'
 import CoinDisplay from '@/components/gamification/CoinDisplay.vue'
 import { useToast } from '@/composables/useToast'
 import { useHaptic } from '@/composables/useHaptic'
-import { Coins, Wallet, Flame, LayoutDashboard, Gavel } from 'lucide-vue-next'
+import { Coins, Wallet, Flame, LayoutDashboard, Gavel, Check } from 'lucide-vue-next'
 
 const route  = useRoute()
 const router = useRouter()
@@ -28,7 +27,12 @@ const students    = ref([])
 const showAward   = ref(false)
 const awardTarget = ref(null)
 const bulkMode    = ref(false)
-const selectedIds = ref([])
+/** Учні, обрані картками в списку класу */
+const selectedStudentIds = ref([])
+/** У модалці «нарахувати класу» — окремий список чекбоксів */
+const bulkModalIds = ref([])
+/** true = нарахування тим, кого обрали картками; false = вибір у модалці */
+const bulkFromCards = ref(false)
 const awardAmount = ref(10)
 const awardNote   = ref('')
 const awardSubject = ref('')   // selected subject name for the award
@@ -69,6 +73,7 @@ const sortedStudents = computed(() =>
 function openAward(student) {
   awardTarget.value = student
   bulkMode.value = false
+  bulkFromCards.value = false
   awardAmount.value = 10
   awardNote.value = ''
   awardSubject.value = teacherSubjects.value[0]?.name || ''
@@ -78,30 +83,78 @@ function openAward(student) {
 function openBulkAward() {
   awardTarget.value = null
   bulkMode.value = true
-  selectedIds.value = []
+  bulkFromCards.value = false
+  bulkModalIds.value = []
   awardAmount.value = 10
   awardNote.value = ''
   awardSubject.value = teacherSubjects.value[0]?.name || ''
   showAward.value = true
 }
 
-function toggleSelect(id) {
-  const idx = selectedIds.value.indexOf(id)
-  if (idx >= 0) selectedIds.value.splice(idx, 1)
-  else selectedIds.value.push(id)
+function openAwardSelected() {
+  if (!selectedStudentIds.value.length) {
+    error('Оберіть хоча б одного учня')
+    return
+  }
+  awardTarget.value = null
+  bulkMode.value = true
+  bulkFromCards.value = true
+  awardAmount.value = 10
+  awardNote.value = ''
+  awardSubject.value = teacherSubjects.value[0]?.name || ''
+  showAward.value = true
 }
 
-function selectAll() {
-  if (selectedIds.value.length === students.value.length) selectedIds.value = []
-  else selectedIds.value = students.value.map(s => s.id)
+function toggleCardSelect(id) {
+  const idx = selectedStudentIds.value.indexOf(id)
+  if (idx >= 0) selectedStudentIds.value.splice(idx, 1)
+  else selectedStudentIds.value.push(id)
+}
+
+function clearCardSelection() {
+  selectedStudentIds.value = []
+}
+
+function toggleBulkModal(id) {
+  const idx = bulkModalIds.value.indexOf(id)
+  if (idx >= 0) bulkModalIds.value.splice(idx, 1)
+  else bulkModalIds.value.push(id)
+}
+
+function selectAllInModal() {
+  if (bulkModalIds.value.length === students.value.length) bulkModalIds.value = []
+  else bulkModalIds.value = students.value.map(s => s.id)
+}
+
+/** Усі видимі після пошуку / сортування */
+function toggleSelectAllVisible() {
+  const ids = sortedStudents.value.map(s => s.id)
+  const allSelected = ids.length > 0 && ids.every((id) => selectedStudentIds.value.includes(id))
+  if (allSelected) {
+    selectedStudentIds.value = selectedStudentIds.value.filter((id) => !ids.includes(id))
+  } else {
+    const set = new Set(selectedStudentIds.value)
+    ids.forEach((id) => set.add(id))
+    selectedStudentIds.value = [...set]
+  }
 }
 
 async function doAward() {
   if (!awardAmount.value || awardAmount.value < 1) { error('Введіть правильну суму'); return }
 
-  const targets = bulkMode.value
-    ? students.value.filter(s => selectedIds.value.includes(s.id))
-    : [awardTarget.value]
+  let targets
+  if (!bulkMode.value) {
+    targets = awardTarget.value ? [awardTarget.value] : []
+  } else if (bulkFromCards.value) {
+    targets = students.value.filter((s) => selectedStudentIds.value.includes(s.id))
+  } else {
+    targets = students.value.filter((s) => bulkModalIds.value.includes(s.id))
+  }
+
+  if (!targets.length) {
+    error(bulkFromCards.value ? 'Немає обраних учнів' : 'Оберіть учнів у списку')
+    return
+  }
 
   const total = targets.length * Number(awardAmount.value)
   const { remaining } = getTeacherBudgetInfo(auth.profile)
@@ -122,6 +175,7 @@ async function doAward() {
     hapticCoin()
     success(`🪙 +${awardAmount.value} нараховано ${targets.length} учн${targets.length === 1 ? 'ю' : 'ям'}!`)
     showAward.value = false
+    if (bulkFromCards.value) clearCardSelection()
     students.value = await getUsersByClass(route.params.id)
   } catch (e) {
     error(e.message)
@@ -134,39 +188,114 @@ const QUICK_AMOUNTS = [5, 10, 25, 50, 100]
 const FINE_AMOUNTS  = [5, 10, 25, 50]
 
 const budgetInfo = computed(() => getTeacherBudgetInfo(auth.profile))
-const totalCost  = computed(() => {
-  const count = bulkMode.value ? selectedIds.value.length : 1
-  return count * (Number(awardAmount.value) || 0)
+const awardRecipientCount = computed(() => {
+  if (!bulkMode.value) return awardTarget.value ? 1 : 0
+  if (bulkFromCards.value) return selectedStudentIds.value.length
+  return bulkModalIds.value.length
+})
+
+const totalCost  = computed(() => awardRecipientCount.value * (Number(awardAmount.value) || 0))
+
+const selectedSummaryNames = computed(() => {
+  if (!selectedStudentIds.value.length) return ''
+  const map = new Map(students.value.map((s) => [s.id, s.displayName]))
+  return selectedStudentIds.value
+    .map((id) => map.get(id))
+    .filter(Boolean)
+    .slice(0, 4)
+    .join(', ')
+})
+
+const awardModalTitle = computed(() => {
+  if (!bulkMode.value) return `Нарахувати: ${awardTarget.value?.displayName || ''}`
+  if (bulkFromCards.value) {
+    const n = selectedStudentIds.value.length
+    return `Нарахувати обраним (${n})`
+  }
+  return 'Нарахувати всьому класу'
 })
 const budgetOk = computed(() => totalCost.value <= budgetInfo.value.remaining)
 
 // ── Fine state ───────────────────────────────────────────────────────────────
 const showFine  = ref(false)
 const fineTarget = ref(null)
+/** true = штраф усім, кого обрали картками */
+const fineBulkFromCards = ref(false)
 const fineAmount = ref(10)
 const fineReason = ref('')
 const fining    = ref(false)
 
+const fineModalTitle = computed(() => {
+  if (fineBulkFromCards.value) {
+    return `Штраф обраним (${selectedStudentIds.value.length})`
+  }
+  return `Штраф: ${fineTarget.value?.displayName || ''}`
+})
+
+const fineSelectedTargets = computed(() =>
+  students.value.filter((s) => selectedStudentIds.value.includes(s.id))
+)
+
+const fineSelectedMinCoins = computed(() => {
+  if (!fineBulkFromCards.value || !fineSelectedTargets.value.length) return null
+  return Math.min(...fineSelectedTargets.value.map((s) => s.coins || 0))
+})
+
 function openFine(student) {
+  fineBulkFromCards.value = false
   fineTarget.value = student
   fineAmount.value = 10
   fineReason.value = ''
   showFine.value   = true
 }
 
+function openFineSelected() {
+  if (!selectedStudentIds.value.length) {
+    error('Оберіть хоча б одного учня')
+    return
+  }
+  fineBulkFromCards.value = true
+  fineTarget.value = null
+  fineAmount.value = 10
+  fineReason.value = ''
+  showFine.value = true
+}
+
 async function doFine() {
   if (!fineAmount.value || fineAmount.value < 1) { error('Введіть суму штрафу'); return }
   if (!fineReason.value.trim()) { error('Вкажіть причину штрафу'); return }
+
+  const targets = fineBulkFromCards.value
+    ? students.value.filter((s) => selectedStudentIds.value.includes(s.id))
+    : fineTarget.value
+      ? [fineTarget.value]
+      : []
+
+  if (!targets.length) {
+    error(fineBulkFromCards.value ? 'Немає обраних учнів' : 'Учня не знайдено')
+    return
+  }
+
   fining.value = true
   try {
-    await fineStudent({
-      fromUid: auth.profile.id,
-      toUid:   fineTarget.value.id,
-      amount:  Number(fineAmount.value),
-      reason:  fineReason.value.trim(),
-    })
-    success(`Штраф ${fineAmount.value} монет для ${fineTarget.value.displayName}`)
+    const reason = fineReason.value.trim()
+    const amt = Number(fineAmount.value)
+    for (const s of targets) {
+      await fineStudent({
+        fromUid: auth.profile.id,
+        toUid: s.id,
+        amount: amt,
+        reason,
+      })
+    }
+    if (targets.length === 1) {
+      success(`Штраф ${amt} монет для ${targets[0].displayName}`)
+    } else {
+      success(`Штраф до ${amt} монет накладено для ${targets.length} учнів`)
+    }
     showFine.value = false
+    if (fineBulkFromCards.value) clearCardSelection()
+    fineBulkFromCards.value = false
     students.value = await getUsersByClass(route.params.id)
   } catch (e) {
     error(e.message)
@@ -177,36 +306,36 @@ async function doFine() {
 </script>
 
 <template>
-  <div class="flex flex-col gap-4">
+  <div class="flex flex-col gap-2.5">
     <!-- Header -->
-    <div class="flex flex-col gap-3">
-      <div class="flex items-start justify-between gap-3 flex-wrap">
-        <div>
-          <div class="flex items-center gap-2">
-            <span class="text-3xl">{{ classData?.icon || '🏫' }}</span>
-            <h1 class="text-2xl font-extrabold">{{ classData?.name }}</h1>
+    <div class="flex flex-col gap-2">
+      <div class="flex items-start justify-between gap-2 flex-wrap">
+        <div class="min-w-0">
+          <div class="flex items-center gap-1.5">
+            <span class="text-2xl shrink-0">{{ classData?.icon || '🏫' }}</span>
+            <h1 class="text-lg font-extrabold leading-tight [overflow-wrap:anywhere]">{{ classData?.name }}</h1>
           </div>
-          <p class="text-slate-400 text-sm mt-1">{{ students.length }} учнів</p>
+          <p class="text-slate-400 text-xs mt-0.5">{{ students.length }} учнів</p>
         </div>
-        <AppButton variant="coin" size="md" class="shrink-0" @click="openBulkAward">
-          <Coins :size="16" :stroke-width="2" /> Нарахувати класу
+        <AppButton variant="coin" size="sm" class="shrink-0" @click="openBulkAward">
+          <Coins :size="14" :stroke-width="2" /> Нарахувати класу
         </AppButton>
       </div>
 
       <!-- Weekly budget meter -->
-      <div class="glass-card p-3 flex flex-col gap-2">
-        <div class="flex items-center justify-between text-sm">
-          <span class="font-bold text-slate-300 flex items-center gap-1.5">
-            <Wallet :size="14" :stroke-width="2" class="text-amber-400" /> Тижневий бюджет
+      <div class="glass-card p-2.5 flex flex-col gap-1.5">
+        <div class="flex items-center justify-between text-xs">
+          <span class="font-bold text-slate-300 flex items-center gap-1">
+            <Wallet :size="13" :stroke-width="2" class="text-amber-400" /> Тижневий бюджет
           </span>
           <span class="font-extrabold" :class="budgetInfo.remaining < 50 ? 'text-red-400' : budgetInfo.remaining < 150 ? 'text-amber-400' : 'text-emerald-400'">
-            <span class="flex items-center gap-1">
+            <span class="flex items-center gap-0.5 tabular-nums">
               {{ budgetInfo.remaining }} / {{ budgetInfo.budget }}
-              <Coins :size="12" :stroke-width="2" />
+              <Coins :size="11" :stroke-width="2" />
             </span>
           </span>
         </div>
-        <div class="h-2 bg-game-bg rounded-full overflow-hidden">
+        <div class="h-1.5 bg-game-bg rounded-full overflow-hidden">
           <div
             class="h-full rounded-full transition-all duration-500"
             :class="budgetInfo.remaining < 50 ? 'bg-red-500' : budgetInfo.remaining < 150 ? 'bg-amber-500' : 'bg-emerald-500'"
@@ -223,85 +352,141 @@ async function doFine() {
     <input
       v-model="search"
       placeholder="🔍 Пошук учня..."
-      class="w-full bg-game-card border border-game-border rounded-xl px-4 py-2.5 text-sm font-semibold text-white placeholder-slate-500 focus:outline-none focus:border-violet-500"
+      class="w-full bg-game-card border border-game-border rounded-lg px-3 py-2 text-xs font-semibold text-white placeholder-slate-500 focus:outline-none focus:border-violet-500"
     />
 
-    <div class="flex flex-col gap-3">
+    <!-- Вибір кількох учнів для одного нарахування -->
+    <div
+      v-if="selectedStudentIds.length > 0"
+      class="flex flex-col gap-1.5 rounded-xl border border-violet-500/35 bg-violet-500/[0.08] p-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3"
+    >
+      <div class="min-w-0">
+        <div class="text-xs font-extrabold text-violet-200">
+          Обрано: {{ selectedStudentIds.length }}
+        </div>
+        <div v-if="selectedSummaryNames" class="text-[11px] text-slate-400 truncate mt-0.5 leading-snug">
+          {{ selectedSummaryNames
+          }}<span v-if="selectedStudentIds.length > 4">…</span>
+        </div>
+      </div>
+      <div class="flex flex-wrap items-center gap-1.5 shrink-0">
+        <AppButton variant="ghost" size="sm" @click="clearCardSelection">
+          Скинути
+        </AppButton>
+        <AppButton variant="coin" size="sm" @click="openAwardSelected">
+          <Coins :size="14" :stroke-width="2" />
+          Нарахувати
+        </AppButton>
+        <AppButton
+          variant="ghost"
+          size="sm"
+          class="!text-red-300 hover:!bg-red-500/15 hover:!text-red-200 border border-red-500/30"
+          @click="openFineSelected"
+        >
+          <Gavel :size="14" :stroke-width="2" />
+          Штраф усім
+        </AppButton>
+      </div>
+    </div>
+
+    <div class="flex items-center justify-between gap-2 -mt-0.5">
+      <span class="text-[11px] text-slate-500 leading-tight">Торкнись картки — вибір</span>
+      <button
+        type="button"
+        class="text-[11px] font-bold text-violet-400 hover:text-violet-300 shrink-0"
+        @click="toggleSelectAllVisible"
+      >
+        {{ sortedStudents.length > 0 && sortedStudents.every((x) => selectedStudentIds.includes(x.id)) ? 'Зняти видимих' : 'Обрати видимих' }}
+      </button>
+    </div>
+
+    <div class="flex flex-col gap-2">
       <div
         v-for="(s, i) in sortedStudents"
         :key="s.id"
-        class="glass-card flex flex-col gap-3 p-4 rounded-2xl border border-white/[0.06] hover:border-violet-500/35 transition-all"
+        class="glass-card flex flex-col gap-2 p-2.5 rounded-xl border transition-all"
+        :class="
+          selectedStudentIds.includes(s.id)
+            ? 'border-violet-500/60 bg-violet-500/[0.06] ring-1 ring-violet-500/25'
+            : 'border-white/[0.06] hover:border-violet-500/35'
+        "
       >
-        <!-- Identity: rank + avatar + name + stats (tap name/avatar → room) -->
-        <div class="flex gap-3 items-start min-w-0">
+        <!-- Картка: натискання обирає учня (кімната — лише кнопка «Кімната») -->
+        <button
+          type="button"
+          class="flex gap-2 items-center min-w-0 w-full text-left rounded-lg -m-0.5 p-0.5 transition-colors active:bg-white/[0.04]"
+          @click="toggleCardSelect(s.id)"
+        >
           <div
-            class="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-sm font-black tabular-nums"
+            class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-xs font-black tabular-nums relative"
             :class="
-              i === 0
-                ? 'bg-amber-500/15 text-amber-400 ring-1 ring-amber-500/25'
-                : i === 1
-                  ? 'bg-slate-400/10 text-slate-300 ring-1 ring-slate-400/20'
-                  : i === 2
-                    ? 'bg-amber-800/20 text-amber-600 ring-1 ring-amber-700/25'
-                    : 'bg-white/[0.04] text-slate-500'
+              selectedStudentIds.includes(s.id)
+                ? 'bg-violet-600/40 text-white ring-1 ring-violet-400/50'
+                : i === 0
+                  ? 'bg-amber-500/15 text-amber-400 ring-1 ring-amber-500/25'
+                  : i === 1
+                    ? 'bg-slate-400/10 text-slate-300 ring-1 ring-slate-400/20'
+                    : i === 2
+                      ? 'bg-amber-800/20 text-amber-600 ring-1 ring-amber-700/25'
+                      : 'bg-white/[0.04] text-slate-500'
             "
           >
-            {{ i + 1 }}
+            <Check
+              v-if="selectedStudentIds.includes(s.id)"
+              :size="15"
+              :stroke-width="2.5"
+              class="text-white"
+            />
+            <template v-else>{{ i + 1 }}</template>
           </div>
 
-          <button
-            type="button"
-            class="flex min-w-0 flex-1 gap-3 rounded-xl text-left transition-colors hover:bg-white/[0.03] -m-1 p-1"
-            @click="router.push(`/room/${s.id}`)"
-          >
-            <AvatarDisplay
-              circle-only
-              :avatar="s.avatar"
-              :display-name="s.displayName || ''"
-              :items="userStore.items"
-              size="md"
-              class="shrink-0"
-            />
-            <div class="min-w-0 flex-1 pt-0.5">
-              <div
-                class="font-extrabold text-[15px] leading-snug text-white [overflow-wrap:anywhere] line-clamp-2"
-              >
-                {{ s.displayName }}
-              </div>
-              <div
-                class="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs font-semibold text-slate-400"
-              >
-                <span>Рів. {{ s.level ?? 1 }}</span>
-                <span class="inline-flex items-center gap-1 text-orange-300/90">
-                  <Flame :size="12" :stroke-width="2" class="shrink-0" />
-                  {{ s.streak ?? 0 }}
-                </span>
-                <CoinDisplay :amount="s.coins || 0" size="sm" />
-              </div>
+          <AvatarDisplay
+            circle-only
+            :avatar="s.avatar"
+            :display-name="s.displayName || ''"
+            :items="userStore.items"
+            size="sm"
+            class="shrink-0 pointer-events-none"
+          />
+          <div class="min-w-0 flex-1 pointer-events-none">
+            <div
+              class="font-bold text-sm leading-tight text-white [overflow-wrap:anywhere] line-clamp-2"
+            >
+              {{ s.displayName }}
             </div>
-          </button>
-        </div>
+            <div
+              class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] font-semibold text-slate-400"
+            >
+              <span>Рів. {{ s.level ?? 1 }}</span>
+              <span class="inline-flex items-center gap-0.5 text-orange-300/90">
+                <Flame :size="11" :stroke-width="2" class="shrink-0" />
+                {{ s.streak ?? 0 }}
+              </span>
+              <CoinDisplay :amount="s.coins || 0" size="sm" />
+            </div>
+          </div>
+        </button>
 
-        <!-- Actions: full-width, labeled, touch-friendly -->
+        <!-- Actions: компактний ряд -->
         <div
-          class="grid grid-cols-1 gap-2 border-t border-white/[0.06] pt-3 min-[360px]:grid-cols-3"
+          class="grid grid-cols-3 gap-1.5 border-t border-white/[0.06] pt-2"
         >
-          <AppButton variant="secondary" size="md" block @click="router.push(`/room/${s.id}`)">
-            <LayoutDashboard :size="16" :stroke-width="2" />
+          <AppButton variant="secondary" size="sm" block class="!text-xs !px-2 !py-1.5 !rounded-lg" @click.stop="router.push(`/teacher/room/${s.id}`)">
+            <LayoutDashboard :size="14" :stroke-width="2" />
             Кімната
           </AppButton>
-          <AppButton variant="coin" size="md" block @click="openAward(s)">
-            <Coins :size="16" :stroke-width="2" />
+          <AppButton variant="coin" size="sm" block class="!text-xs !px-2 !py-1.5 !rounded-lg" @click.stop="openAward(s)">
+            <Coins :size="14" :stroke-width="2" />
             Монети
           </AppButton>
           <AppButton
             variant="ghost"
-            size="md"
+            size="sm"
             block
-            class="!text-red-300 hover:!bg-red-500/10 hover:!text-red-200"
-            @click="openFine(s)"
+            class="!text-xs !px-2 !py-1.5 !rounded-lg !text-red-300 hover:!bg-red-500/10 hover:!text-red-200"
+            @click.stop="openFine(s)"
           >
-            <Gavel :size="16" :stroke-width="2" />
+            <Gavel :size="14" :stroke-width="2" />
             Штраф
           </AppButton>
         </div>
@@ -309,30 +494,45 @@ async function doFine() {
     </div>
 
     <!-- Award modal -->
-    <AppModal v-model="showAward" :title="bulkMode ? 'Нарахувати всьому класу' : `Нарахувати: ${awardTarget?.displayName}`">
-      <div class="flex flex-col gap-4">
-        <!-- Bulk select -->
-        <div v-if="bulkMode">
+    <AppModal v-model="showAward" :title="awardModalTitle">
+      <div class="flex flex-col gap-3">
+        <!-- Обрані на картках класу -->
+        <div
+          v-if="bulkMode && bulkFromCards"
+          class="rounded-xl border border-violet-500/25 bg-violet-500/10 px-3 py-2 text-sm text-slate-200"
+        >
+          <span class="font-bold text-violet-200">Учнів у списку: {{ selectedStudentIds.length }}</span>
+          <span class="text-slate-400"> отримають по </span>
+          <span class="font-extrabold text-amber-300">{{ awardAmount }} 🪙</span>
+        </div>
+
+        <!-- Ручний вибір у модалці (кнопка «Нарахувати класу») -->
+        <div v-if="bulkMode && !bulkFromCards">
           <div class="flex items-center justify-between mb-2">
             <label class="text-sm font-bold text-slate-300">Оберіть учнів</label>
-            <button class="text-xs text-violet-400 font-bold" @click="selectAll">
-              {{ selectedIds.length === students.length ? 'Зняти вибір' : 'Вибрати всіх' }}
+            <button type="button" class="text-xs text-violet-400 font-bold" @click="selectAllInModal">
+              {{ bulkModalIds.length === students.length ? 'Зняти вибір' : 'Вибрати всіх' }}
             </button>
           </div>
           <div class="max-h-48 overflow-y-auto flex flex-col gap-2">
             <label
               v-for="s in students"
               :key="s.id"
-              class="flex items-center gap-3 glass-card p-2 cursor-pointer"
-              :class="selectedIds.includes(s.id) ? 'border-violet-500' : ''"
+              class="flex items-center gap-3 glass-card p-2 cursor-pointer rounded-xl border"
+              :class="bulkModalIds.includes(s.id) ? 'border-violet-500' : 'border-transparent'"
             >
-              <input type="checkbox" :checked="selectedIds.includes(s.id)" @change="toggleSelect(s.id)" class="accent-violet-500 w-4 h-4" />
+              <input
+                type="checkbox"
+                :checked="bulkModalIds.includes(s.id)"
+                class="accent-violet-500 w-4 h-4 shrink-0"
+                @change="toggleBulkModal(s.id)"
+              />
               <AvatarDisplay :avatar="s.avatar" :display-name="s.displayName" size="xs" />
-              <span class="font-semibold text-sm">{{ s.displayName }}</span>
-              <CoinDisplay :amount="s.coins || 0" size="sm" class="ml-auto" />
+              <span class="font-semibold text-sm truncate">{{ s.displayName }}</span>
+              <CoinDisplay :amount="s.coins || 0" size="sm" class="ml-auto shrink-0" />
             </label>
           </div>
-          <div class="text-xs text-slate-400 mt-1">{{ selectedIds.length }} обрано</div>
+          <div class="text-xs text-slate-400 mt-1">{{ bulkModalIds.length }} обрано</div>
         </div>
 
         <!-- Subject selector -->
@@ -390,31 +590,57 @@ async function doFine() {
 
         <AppButton
           variant="coin"
-          size="lg"
+          size="md"
           block
           :loading="awarding"
-          :disabled="(bulkMode && selectedIds.length === 0) || !budgetOk"
+          :disabled="awardRecipientCount === 0 || !budgetOk"
           @click="doAward"
         >
-          <Coins :size="14" :stroke-width="2" /> Нарахувати {{ awardAmount }} монет{{ bulkMode ? ` ${selectedIds.length} учням` : '' }}
+          <Coins :size="14" :stroke-width="2" />
+          Нарахувати {{ awardAmount }} монет
+          <template v-if="bulkMode && awardRecipientCount > 0">
+            ({{ awardRecipientCount }})
+          </template>
         </AppButton>
       </div>
     </AppModal>
 
     <!-- Fine modal -->
-    <AppModal v-model="showFine" :title="`Штраф: ${fineTarget?.displayName}`">
-      <div class="flex flex-col gap-4">
+    <AppModal v-model="showFine" :title="fineModalTitle">
+      <div class="flex flex-col gap-3">
 
         <!-- Warning banner -->
         <div class="flex items-start gap-2.5 rounded-2xl p-3" style="background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.18)">
           <Gavel :size="16" :stroke-width="2" class="text-red-400 flex-shrink-0 mt-0.5" />
           <div class="text-xs text-red-300">
-            Монети будуть знято з балансу учня і повернуті до твого тижневого бюджету.
+            <template v-if="fineBulkFromCards">
+              Кожному з обраних зніметься до {{ fineAmount }} монет (не більше його балансу). Монети повернуться до твого тижневого бюджету.
+            </template>
+            <template v-else>
+              Монети будуть знято з балансу учня і повернуті до твого тижневого бюджету.
+            </template>
           </div>
         </div>
 
-        <!-- Student current balance -->
-        <div class="flex items-center justify-between rounded-xl px-3 py-2 bg-white/[0.04]">
+        <!-- Bulk summary -->
+        <div
+          v-if="fineBulkFromCards"
+          class="rounded-xl border border-red-500/25 bg-red-500/10 px-3 py-2 text-sm text-slate-200"
+        >
+          <span class="font-bold text-red-200">Учнів у списку: {{ selectedStudentIds.length }}</span>
+          <span class="text-slate-400"> — штраф до </span>
+          <span class="font-extrabold text-red-300">{{ fineAmount }} 🪙</span>
+          <span class="text-slate-400"> кожному</span>
+          <div v-if="fineSelectedMinCoins !== null" class="text-xs text-slate-500 mt-1">
+            Найменший баланс серед обраних: {{ fineSelectedMinCoins }} 🪙
+          </div>
+        </div>
+
+        <!-- Student current balance (single) -->
+        <div
+          v-if="!fineBulkFromCards && fineTarget"
+          class="flex items-center justify-between rounded-xl px-3 py-2 bg-white/[0.04]"
+        >
           <span class="text-sm text-slate-400">Баланс учня</span>
           <CoinDisplay :amount="fineTarget?.coins || 0" size="sm" />
         </div>
@@ -437,7 +663,7 @@ async function doFine() {
             v-model="fineAmount"
             type="number"
             min="1"
-            :max="fineTarget?.coins || 9999"
+            :max="fineBulkFromCards ? 999999 : (fineTarget?.coins || 9999)"
             class="w-full bg-game-bg border border-red-500/30 rounded-xl px-4 py-3 text-center text-2xl font-extrabold text-red-400 focus:outline-none focus:border-red-500"
           />
         </div>
@@ -451,13 +677,19 @@ async function doFine() {
 
         <AppButton
           variant="danger"
-          size="lg"
+          size="md"
           block
           :loading="fining"
-          :disabled="!fineReason.trim()"
+          :disabled="!fineReason.trim() || (fineBulkFromCards && selectedStudentIds.length === 0)"
           @click="doFine"
         >
-          <Gavel :size="14" :stroke-width="2" /> Накласти штраф −{{ fineAmount }}
+          <Gavel :size="14" :stroke-width="2" />
+          <template v-if="fineBulkFromCards">
+            Накласти штраф обраним ({{ selectedStudentIds.length }}× −{{ fineAmount }})
+          </template>
+          <template v-else>
+            Накласти штраф −{{ fineAmount }}
+          </template>
         </AppButton>
       </div>
     </AppModal>

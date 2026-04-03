@@ -19,10 +19,12 @@ const loading        = ref(true)
 
 const isOwnRoom = computed(() => !route.params.uid || route.params.uid === auth.profile?.id)
 
-/** У студентському layout висоту дає flex-1 у main (без pt/px для room); для /room/:uid (вчитель) — повний екран */
-const isStudentRoom = computed(() => route.path.startsWith('/student/room'))
+/** У layout (студент / вчитель) висоту дає flex-1; лише автономний /room/:uid (напр. адмін) — повний екран */
+const isEmbeddedRoom = computed(
+  () => route.path.startsWith('/student/room') || route.path.startsWith('/teacher/room'),
+)
 const standaloneRoomStyle = computed(() =>
-  isStudentRoom.value ? null : { minHeight: '100dvh', height: '100dvh' },
+  isEmbeddedRoom.value ? null : { minHeight: '100dvh', height: '100dvh' },
 )
 
 watch(loading, (v) => {
@@ -51,12 +53,16 @@ onMounted(async () => {
 <template>
   <div
     class="flex flex-col overflow-hidden box-border w-full bg-game-bg"
-    :class="isStudentRoom ? 'flex-1 min-h-0' : ''"
+    :class="isEmbeddedRoom ? 'flex-1 min-h-0' : ''"
     :style="standaloneRoomStyle"
   >
 
-    <!-- Top bar -->
-    <div class="flex items-center gap-3 px-4 py-2 shrink-0 z-20 border-b border-white/[0.06]" style="background:rgba(0,0,0,0.45);backdrop-filter:blur(12px)">
+    <!-- Top bar (safe-area лише для автономного /room/:uid — у layout хедер уже з inset) -->
+    <div
+      class="flex items-center gap-3 px-4 py-2 shrink-0 z-20 border-b border-white/[0.06]"
+      :class="isEmbeddedRoom ? '' : 'pt-[calc(env(safe-area-inset-top,0px)+0.35rem)]'"
+      style="background:rgba(0,0,0,0.45);backdrop-filter:blur(12px)"
+    >
       <button
         class="flex items-center gap-1.5 text-sm font-bold text-amber-400/80 hover:text-amber-300 transition-colors"
         @click="router.back()"

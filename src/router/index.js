@@ -41,6 +41,7 @@ const router = createRouter({
         { path: 'leaderboard', name: 'teacher-leaderboard', component: () => import('@/views/teacher/TeacherLeaderboardView.vue') },
         { path: 'quests',      name: 'teacher-quests',      component: () => import('@/views/teacher/TeacherQuestsView.vue') },
         { path: 'profile',     name: 'teacher-profile',     component: () => import('@/views/teacher/TeacherProfileView.vue') },
+        { path: 'room/:uid',   name: 'teacher-room-student', component: () => import('@/views/student/RoomView.vue') },
       ],
     },
 
@@ -96,6 +97,11 @@ router.beforeEach(async (to) => {
   // Students: /room/:uid is outside StudentLayout (no footer). Use nested route instead.
   if (to.name === 'room-view' && role === 'student' && to.params.uid) {
     return { path: `/student/room/${to.params.uid}`, replace: true }
+  }
+
+  // Teachers: same — use layout with safe-area header + bottom nav (matches student room UX).
+  if (to.name === 'room-view' && role === 'teacher' && to.params.uid) {
+    return { path: `/teacher/room/${to.params.uid}`, replace: true }
   }
 
   // Authenticated, profile ready, trying to visit the login page
