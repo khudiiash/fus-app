@@ -430,7 +430,7 @@ async function saveEditStudent() {
     <!-- Edit student -->
     <AppModal v-model="showEditModal" title="Редагувати учня">
       <div v-if="editingStudent" class="flex flex-col gap-4">
-        <AppInput v-model="editForm.displayName" label="Повне ім'я" placeholder="напр. Іван Петренко" />
+        <AppInput v-model="editForm.displayName" label="Повне ім'я" placeholder="напр. Петренко Іван" />
         <div>
           <label class="text-sm font-bold text-slate-300 block mb-1.5">Клас</label>
           <select
@@ -451,7 +451,7 @@ async function saveEditStudent() {
     <!-- Create modal -->
     <AppModal v-model="showModal" title="Новий учень">
       <div class="flex flex-col gap-4">
-        <AppInput v-model="form.displayName" label="Повне ім'я" placeholder="напр. Іван Петренко" />
+        <AppInput v-model="form.displayName" label="Повне ім'я" placeholder="напр. Петренко Іван" />
         <div>
           <label class="text-sm font-bold text-slate-300 block mb-1.5">Клас</label>
           <select

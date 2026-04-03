@@ -368,7 +368,7 @@ async function saveEditTeacher() {
     <!-- Create modal -->
     <AppModal v-model="showModal" title="Новий вчитель">
       <div class="flex flex-col gap-4">
-        <AppInput v-model="form.displayName" label="Повне ім'я" placeholder="напр. Олена Коваль" />
+        <AppInput v-model="form.displayName" label="Повне ім'я" placeholder="напр. Коваль Олена" />
 
         <div>
           <label class="text-sm font-bold text-slate-300 block mb-2">Предмети</label>

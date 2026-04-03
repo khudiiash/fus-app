@@ -4,6 +4,7 @@ import { useAuthStore } from '@/stores/auth'
 import {
   LayoutDashboard, ScrollText, Trophy, History, User,
 } from 'lucide-vue-next'
+import { givenNameInitial } from '@/utils/personName'
 
 const auth  = useAuthStore()
 const route = useRoute()
@@ -31,7 +32,7 @@ const isActive = (item) => item.exact ? route.path === item.to : route.path.star
         </div>
 
         <RouterLink to="/teacher/profile" class="avatar-pill w-9 h-9 rounded-full flex items-center justify-center font-extrabold text-base text-white">
-          {{ auth.profile?.displayName?.charAt(0)?.toUpperCase() || '?' }}
+          {{ givenNameInitial(auth.profile?.displayName) }}
         </RouterLink>
       </div>
     </header>

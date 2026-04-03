@@ -23,6 +23,7 @@ import {
   RefreshCw, Paperclip, Send, Clock, CheckCircle2, XCircle, Trophy,
   Coins, ArrowLeftRight, ShoppingBag, Flame, Star, Gift, Gavel,
 } from 'lucide-vue-next'
+import { givenNameFromDisplayName } from '@/utils/personName'
 
 const router  = useRouter()
 const { success, error } = useToast()
@@ -171,7 +172,7 @@ const txColor = (type) => ({ award: 'text-amber-400', trade: 'text-blue-400', pu
   <div class="flex flex-col gap-4 animate-fade-in">
     <!-- Greeting -->
     <div>
-      <div class="font-extrabold text-2xl gradient-heading">Привіт, {{ profile?.displayName?.split(' ')[0] }}!</div>
+      <div class="font-extrabold text-2xl gradient-heading">Привіт, {{ givenNameFromDisplayName(profile?.displayName) }}!</div>
       <div class="text-slate-500 text-sm mt-0.5">Заробимо сьогодні монети!</div>
     </div>
 

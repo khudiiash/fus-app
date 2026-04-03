@@ -25,7 +25,7 @@ function toCountryCode(emoji) {
 }
 
 /** Only these ship in the bundle (see flag-icons-subset.css). Others use native emoji. */
-const CSS_FLAG_CODES = new Set(['pl', 'ua', 'gb'])
+const CSS_FLAG_CODES = new Set(['pl', 'ua', 'gb', 'de'])
 
 const cssFlagCode = computed(() => {
   if (!isFlagEmoji(props.icon)) return null
@@ -35,7 +35,7 @@ const cssFlagCode = computed(() => {
 </script>
 
 <template>
-  <!-- CSS flags: PL / UA / GB only (small bundle); other flag emojis render natively -->
+  <!-- CSS flags: PL / UA / GB / DE (small bundle); other flag emojis render natively -->
   <span
     v-if="cssFlagCode"
     :class="`fi fi-${cssFlagCode}`"

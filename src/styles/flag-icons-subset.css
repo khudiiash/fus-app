@@ -1,4 +1,4 @@
-/* Subset of flag-icons: only PL, UA, GB (UK). Keeps Vite build small. */
+/* Subset: PL, UA, GB (UK), DE — small bundle. */
 .fib,
 .fi {
   background-size: contain;
@@ -34,4 +34,10 @@
 }
 .fi-gb.fis {
   background-image: url('../assets/flags/gb.svg');
+}
+.fi-de {
+  background-image: url('../assets/flags/de.svg');
+}
+.fi-de.fis {
+  background-image: url('../assets/flags/de.svg');
 }

@@ -5,6 +5,7 @@ import { useAuthStore } from '@/stores/auth'
 import { getClass } from '@/firebase/collections'
 import AppCard from '@/components/ui/AppCard.vue'
 import { School } from 'lucide-vue-next'
+import { givenNameFromDisplayName } from '@/utils/personName'
 
 const auth   = useAuthStore()
 const router = useRouter()
@@ -20,7 +21,7 @@ onMounted(async () => {
 <template>
   <div class="flex flex-col gap-6">
     <div>
-      <h1 class="text-2xl font-extrabold gradient-heading">Вітаємо, {{ auth.profile?.displayName?.split(' ')[0] }}!</h1>
+      <h1 class="text-2xl font-extrabold gradient-heading">Вітаємо, {{ givenNameFromDisplayName(auth.profile?.displayName) }}!</h1>
       <p class="text-slate-500 text-sm mt-0.5">Оберіть клас, щоб нарахувати монети</p>
     </div>
 

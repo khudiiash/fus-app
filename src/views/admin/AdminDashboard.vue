@@ -6,6 +6,7 @@ import { runFullSeed, seedSubjects } from '@/firebase/seedData'
 import AppCard from '@/components/ui/AppCard.vue'
 import AppButton from '@/components/ui/AppButton.vue'
 import { useToast } from '@/composables/useToast'
+import { Download, KeyRound } from 'lucide-vue-next'
 
 const router  = useRouter()
 const { success, error } = useToast()
@@ -13,6 +14,85 @@ const seeding         = ref(false)
 const seedingSubjects = ref(false)
 const stats   = ref({ students: 0, teachers: 0, classes: 0, items: 0 })
 const topStudents = ref([])
+const exportingStudents = ref(false)
+const exportingTeachers = ref(false)
+
+/** Один рядок: прізвище ім'я код (ім'я може бути з кількох слів, напр. по батькові). */
+function lineSurnameNameCode(displayName, accessCode) {
+  const parts = String(displayName || '')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+  const code = String(accessCode || '').trim()
+  if (parts.length >= 2) {
+    const surname = parts[0]
+    const givenRest = parts.slice(1).join(' ')
+    return `${surname} ${givenRest} ${code}`.trim()
+  }
+  if (parts.length === 1) return `${parts[0]} ${code}`.trim()
+  return code
+}
+
+function downloadTxt(filename, text) {
+  const blob = new Blob(['\ufeff', text], { type: 'text/plain;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+function todaySlug() {
+  return new Date().toISOString().slice(0, 10)
+}
+
+async function exportStudentCodes() {
+  exportingStudents.value = true
+  try {
+    const [students, classes] = await Promise.all([getAllStudents(), getAllClasses()])
+    const className = (id) => classes.find((c) => c.id === id)?.name || '—'
+    const sorted = [...students].sort((a, b) => {
+      const na = className(a.classId).localeCompare(className(b.classId), 'uk')
+      if (na !== 0) return na
+      return (a.displayName || '').localeCompare(b.displayName || '', 'uk')
+    })
+    const lines = []
+    let prevClassLabel = null
+    for (const s of sorted) {
+      const label = className(s.classId)
+      if (label !== prevClassLabel) {
+        lines.push(`# ${label}`)
+        prevClassLabel = label
+      }
+      lines.push(lineSurnameNameCode(s.displayName, s.accessCode))
+    }
+    const text = lines.join('\r\n')
+    downloadTxt(`fusapp-kody-uchni-${todaySlug()}.txt`, text)
+    success(`Експортовано ${sorted.length} учнів`)
+  } catch (e) {
+    error(e.message || 'Не вдалося експортувати')
+  } finally {
+    exportingStudents.value = false
+  }
+}
+
+async function exportTeacherCodes() {
+  exportingTeachers.value = true
+  try {
+    const teachers = await getAllTeachers()
+    const sorted = [...teachers].sort((a, b) =>
+      (a.displayName || '').localeCompare(b.displayName || '', 'uk'),
+    )
+    const lines = sorted.map((t) => lineSurnameNameCode(t.displayName, t.accessCode))
+    downloadTxt(`fusapp-kody-vchyteli-${todaySlug()}.txt`, lines.join('\r\n'))
+    success(`Експортовано ${sorted.length} вчителів`)
+  } catch (e) {
+    error(e.message || 'Не вдалося експортувати')
+  } finally {
+    exportingTeachers.value = false
+  }
+}
 
 async function doSeedSubjects() {
   seedingSubjects.value = true
@@ -98,6 +178,46 @@ const statCards = [
         </AppCard>
       </div>
     </div>
+
+    <!-- Access code lists (.txt: прізвище ім'я код) -->
+    <AppCard>
+      <div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+        <div class="flex gap-3">
+          <div class="w-10 h-10 rounded-xl bg-violet-500/15 flex items-center justify-center shrink-0">
+            <KeyRound :size="20" :stroke-width="2" class="text-violet-400" />
+          </div>
+          <div>
+            <div class="font-extrabold">Коди доступу</div>
+            <div class="text-xs text-slate-400 mt-1 max-w-xl">
+              Текстовий файл (.txt): кожен рядок — <span class="text-slate-300">прізвище ім'я код</span>.
+              У списку учнів перед групою — рядок <span class="text-slate-300"># назва класу</span>. UTF‑8 (зручно в Блокноті).
+            </div>
+          </div>
+        </div>
+        <div class="flex flex-col sm:flex-row gap-2 shrink-0">
+          <AppButton
+            variant="secondary"
+            size="sm"
+            :loading="exportingStudents"
+            :disabled="exportingTeachers"
+            @click="exportStudentCodes"
+          >
+            <Download :size="14" :stroke-width="2" class="shrink-0" />
+            Коди учнів
+          </AppButton>
+          <AppButton
+            variant="secondary"
+            size="sm"
+            :loading="exportingTeachers"
+            :disabled="exportingStudents"
+            @click="exportTeacherCodes"
+          >
+            <Download :size="14" :stroke-width="2" class="shrink-0" />
+            Коди вчителів
+          </AppButton>
+        </div>
+      </div>
+    </AppCard>
 
     <!-- Quick actions -->
     <div>

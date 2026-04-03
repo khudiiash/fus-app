@@ -15,7 +15,10 @@ const config = {
 
 <template>
   <Teleport to="body">
-    <div class="fixed top-4 left-1/2 -translate-x-1/2 z-[9999] flex flex-col gap-2 w-[90vw] max-w-sm pointer-events-none">
+    <div
+      class="fixed left-1/2 -translate-x-1/2 z-[9999] flex flex-col gap-2 w-[90vw] max-w-sm pointer-events-none"
+      style="top: calc(env(safe-area-inset-top, 0px) + 1rem)"
+    >
       <TransitionGroup name="toast">
         <div
           v-for="toast in toasts"
