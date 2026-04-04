@@ -109,6 +109,15 @@ function tradeStatusLabel(status) {
   return status || ''
 }
 
+/** Скільки «слотів» у стороні обміну (предмети + монети як один слот). */
+function tradeSideSlotCount(offer, side) {
+  const items = side === 'offered' ? offer.offeredItems : offer.requestedItems
+  let n = (items && items.length) || 0
+  const coins = side === 'offered' ? offer.offeredCoins : offer.requestedCoins
+  if (coins > 0) n += 1
+  return n
+}
+
 function toggleOfferedItem(id) {
   const idx = newTrade.value.offeredItems.indexOf(id)
   if (idx >= 0) newTrade.value.offeredItems.splice(idx, 1)
@@ -245,7 +254,7 @@ const COIN_PRESETS = [5, 10, 25, 50, 100, 200]
           <div class="grid grid-cols-2 gap-2 mb-3">
             <!-- Пропонує -->
             <div class="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-2">
-              <div class="text-[10px] font-extrabold text-emerald-400 mb-1.5">ПРОПОНУЄ</div>
+              <div class="text-[10px] font-extrabold text-emerald-400 mb-1.5">ПРОПОНУЄ В ОБМІН</div>
               <div v-if="offer.offeredCoins > 0" class="mb-1">
                 <CoinDisplay :amount="offer.offeredCoins" size="sm" />
               </div>
@@ -263,7 +272,7 @@ const COIN_PRESETS = [5, 10, 25, 50, 100, 200]
 
             <!-- Просить -->
             <div class="bg-violet-500/10 border border-violet-500/20 rounded-xl p-2">
-              <div class="text-[10px] font-extrabold text-violet-400 mb-1.5">ПРОСИТЬ</div>
+              <div class="text-[10px] font-extrabold text-violet-400 mb-1.5">ПРОСИТЬ НАТОМІСТЬ</div>
               <div v-if="offer.requestedCoins > 0" class="mb-1">
                 <CoinDisplay :amount="offer.requestedCoins" size="sm" />
               </div>
@@ -315,7 +324,7 @@ const COIN_PRESETS = [5, 10, 25, 50, 100, 200]
 
           <div class="grid grid-cols-2 gap-2">
             <div class="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-2">
-              <div class="text-[10px] font-extrabold text-emerald-400 mb-1.5">ПРОПОНУЮ</div>
+              <div class="text-[10px] font-extrabold text-emerald-400 mb-1.5">ПРОПОНУЮ В ОБМІН</div>
               <div v-if="offer.offeredCoins > 0" class="mb-1"><CoinDisplay :amount="offer.offeredCoins" size="sm" /></div>
               <div class="flex flex-wrap gap-1">
                 <div
@@ -329,7 +338,7 @@ const COIN_PRESETS = [5, 10, 25, 50, 100, 200]
               </div>
             </div>
             <div class="bg-violet-500/10 border border-violet-500/20 rounded-xl p-2">
-              <div class="text-[10px] font-extrabold text-violet-400 mb-1.5">ПРОШУ</div>
+              <div class="text-[10px] font-extrabold text-violet-400 mb-1.5">ПРОШУ НАТОМІСТЬ</div>
               <div v-if="offer.requestedCoins > 0" class="mb-1"><CoinDisplay :amount="offer.requestedCoins" size="sm" /></div>
               <div class="flex flex-wrap gap-1">
                 <div
@@ -354,14 +363,18 @@ const COIN_PRESETS = [5, 10, 25, 50, 100, 200]
         <div class="font-bold text-slate-500">Ще немає завершених обмінів</div>
         <div class="text-sm mt-1 text-slate-600">Прийняті та відхилені з’являться тут</div>
       </div>
-      <div v-else class="flex flex-col gap-2">
+      <div v-else class="flex flex-col gap-3">
+        <p class="text-[11px] text-slate-500 leading-snug -mt-1">
+          Як у вкладці «Вихідні»: зліва — <span class="text-slate-400">що запропонували в обмін</span>, справа —
+          <span class="text-slate-400">що просили натомість у відповідь</span> (з погляду того, хто надіслав пропозицію).
+        </p>
         <AppCard
           v-for="offer in tradeHistoryMerged"
           :key="offer.id"
           class="cursor-pointer hover:border-violet-500/40 transition-all"
           @click="showDetail = offer"
         >
-          <div class="flex items-center justify-between gap-2 mb-2">
+          <div class="flex items-center justify-between gap-2 mb-3">
             <div class="flex items-center gap-2 min-w-0">
               <AvatarDisplay
                 :avatar="getUser(historyPartnerUid(offer))?.avatar"
@@ -378,13 +391,45 @@ const COIN_PRESETS = [5, 10, 25, 50, 100, 200]
               :class="offer.status === 'accepted' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-slate-500/20 text-slate-400'"
             >{{ tradeStatusLabel(offer.status) }}</span>
           </div>
-          <div class="grid grid-cols-2 gap-2 text-[10px]">
-            <div class="text-emerald-400/90 font-bold">Пропозиція</div>
-            <div class="text-violet-400/90 font-bold">Запит</div>
-            <div class="text-slate-400 col-span-2 line-clamp-2">
-              {{ (offer.offeredItems || []).length + (offer.offeredCoins > 0 ? 1 : 0) }} / {{ (offer.requestedItems || []).length + (offer.requestedCoins > 0 ? 1 : 0) }}
-              позицій
+          <div class="grid grid-cols-2 gap-2">
+            <div class="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-2">
+              <div class="text-[10px] font-extrabold text-emerald-400 mb-1.5 leading-tight">ЗАПРОПОНОВАНО В ОБМІН</div>
+              <div v-if="offer.offeredCoins > 0" class="mb-1">
+                <CoinDisplay :amount="offer.offeredCoins" size="sm" />
+              </div>
+              <div class="flex flex-wrap gap-1">
+                <div
+                  v-for="id in (offer.offeredItems || [])"
+                  :key="id"
+                  class="flex-shrink-0"
+                  :title="getItem(id)?.name"
+                >
+                  <ItemModelThumb :item="getItem(id)" :width="THUMB_CARD.w" :height="THUMB_CARD.h" />
+                </div>
+                <div v-if="!offer.offeredCoins && !(offer.offeredItems?.length)" class="text-xs text-slate-500 italic">нічого</div>
+              </div>
             </div>
+            <div class="bg-violet-500/10 border border-violet-500/20 rounded-xl p-2">
+              <div class="text-[10px] font-extrabold text-violet-400 mb-1.5 leading-tight">ПРОСИЛИ НАТОМІСТЬ</div>
+              <div v-if="offer.requestedCoins > 0" class="mb-1">
+                <CoinDisplay :amount="offer.requestedCoins" size="sm" />
+              </div>
+              <div class="flex flex-wrap gap-1">
+                <div
+                  v-for="id in (offer.requestedItems || [])"
+                  :key="id"
+                  class="flex-shrink-0"
+                  :title="getItem(id)?.name"
+                >
+                  <ItemModelThumb :item="getItem(id)" :width="THUMB_CARD.w" :height="THUMB_CARD.h" />
+                </div>
+                <div v-if="!offer.requestedCoins && !(offer.requestedItems?.length)" class="text-xs text-slate-500 italic">нічого</div>
+              </div>
+            </div>
+          </div>
+          <div class="text-[10px] text-slate-500 mt-2 tabular-nums">
+            Запропоновано: {{ tradeSideSlotCount(offer, 'offered') }} поз.
+            · Просили натомість: {{ tradeSideSlotCount(offer, 'requested') }} поз.
           </div>
         </AppCard>
       </div>
@@ -422,7 +467,7 @@ const COIN_PRESETS = [5, 10, 25, 50, 100, 200]
         <div class="grid grid-cols-2 gap-3">
           <!-- Пропонує -->
           <div class="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-3">
-            <div class="text-xs font-extrabold text-emerald-400 mb-2">ПРОПОНУЄ</div>
+            <div class="text-xs font-extrabold text-emerald-400 mb-2">ПРОПОНУЄ <span class="font-semibold text-emerald-400/65">в обмін</span></div>
             <div v-if="showDetail.offeredCoins > 0" class="mb-2"><CoinDisplay :amount="showDetail.offeredCoins" size="sm" /></div>
             <div class="flex flex-col gap-2">
               <div v-for="id in (showDetail.offeredItems || [])" :key="id" class="flex items-center gap-2">
@@ -437,7 +482,7 @@ const COIN_PRESETS = [5, 10, 25, 50, 100, 200]
 
           <!-- Просить -->
           <div class="bg-violet-500/10 border border-violet-500/20 rounded-xl p-3">
-            <div class="text-xs font-extrabold text-violet-400 mb-2">ПРОСИТЬ</div>
+            <div class="text-xs font-extrabold text-violet-400 mb-2">ПРОСИТЬ <span class="font-semibold text-violet-400/65">натомість</span></div>
             <div v-if="showDetail.requestedCoins > 0" class="mb-2"><CoinDisplay :amount="showDetail.requestedCoins" size="sm" /></div>
             <div class="flex flex-col gap-2">
               <div v-for="id in (showDetail.requestedItems || [])" :key="id" class="flex items-center gap-2">

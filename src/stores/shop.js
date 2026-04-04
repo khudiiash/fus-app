@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { purchaseItem, getActiveItems, openMysteryBox } from '@/firebase/collections'
+import { purchaseItem, openMysteryBox } from '@/firebase/collections'
 import { useAuthStore } from './auth'
 import { useUserStore } from './user'
 
@@ -9,11 +9,19 @@ export const useShopStore = defineStore('shop', () => {
   const loading = ref(false)
   const error   = ref(null)
 
-  async function fetchItems() {
+  /** @param {{ forceCatalog?: boolean }} opts Re-fetch Firestore after purchase (stock) */
+  async function fetchItems(opts = {}) {
+    const { forceCatalog = false } = opts
     loading.value = true
     error.value   = null
     try {
-      items.value = await getActiveItems()
+      const userStore = useUserStore()
+      if (!userStore.items.length) {
+        await userStore.fetchItems()
+      } else if (forceCatalog) {
+        await userStore.fetchItems({ force: true })
+      }
+      items.value = userStore.items.filter((i) => i.active !== false)
     } catch (e) {
       error.value = e.message
     } finally {
@@ -26,7 +34,7 @@ export const useShopStore = defineStore('shop', () => {
     const item = items.value.find(i => i.id === itemId)
     if (!item) throw new Error('Item not found')
     await purchaseItem({ uid: auth.profile.id, itemId, price: item.price })
-    await fetchItems()
+    await fetchItems({ forceCatalog: true })
     await useUserStore().fetchQuests()
   }
 
@@ -34,7 +42,7 @@ export const useShopStore = defineStore('shop', () => {
     const auth = useAuthStore()
     if (!auth.profile?.id) throw new Error('Not signed in')
     const result = await openMysteryBox(auth.profile.id, itemId)
-    await fetchItems()
+    await fetchItems({ forceCatalog: true })
     return result
   }
 

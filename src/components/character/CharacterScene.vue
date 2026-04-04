@@ -1,6 +1,6 @@
 <script setup>
 import '@/utils/enableThreeFileCache'
-import { ref, onMounted, onUnmounted, watch, computed } from 'vue'
+import { ref, onMounted, onUnmounted, watch } from 'vue'
 import * as skinview3d from 'skinview3d'
 import * as THREE from 'three'
 import { Coins } from 'lucide-vue-next'
@@ -678,12 +678,45 @@ async function applyProfile() {
   if (props.roomMode) {
     const roomItemId = avatar.roomId || null
     const roomItem   = roomItemId ? (props.allItems || []).find(i => i.id === roomItemId) : null
-    buildRoom(viewer.scene, roomItem || null)
+    await buildRoom(viewer.scene, roomItem || null)
     await applyEquippedPet()
   }
 
   // 4. Background — fixed dark color
   viewer.background = props.roomMode ? ROOM_BG_COLOR : 0x0f0c24
+}
+
+/**
+ * When `allItems` hydrates after first paint (length 0 → N), upgrade room/pet/accessories
+ * without reloading the skin — avoids visible multi-blink from stacked full applyProfile calls.
+ */
+async function applyCatalogDependentLayers() {
+  if (!viewer || !props.profile) return
+  const avatar = props.profile.avatar || {}
+  await applyAccessories(avatar.accessories || [])
+  if (props.accessoryOverrideUrl) await applyAccessoryOverride()
+  if (props.roomMode) {
+    const roomItemId = avatar.roomId || null
+    const roomItem = roomItemId ? (props.allItems || []).find((i) => i.id === roomItemId) : null
+    await buildRoom(viewer.scene, roomItem || null)
+    await applyEquippedPet()
+  }
+  viewer.background = props.roomMode ? ROOM_BG_COLOR : 0x0f0c24
+}
+
+let _avatarApplyTimer = null
+function scheduleApplyProfileFromAvatar() {
+  if (_avatarApplyTimer) clearTimeout(_avatarApplyTimer)
+  _avatarApplyTimer = setTimeout(() => {
+    _avatarApplyTimer = null
+    if (!viewer || !props.profile) return
+    cancelEmote()
+    applyProfile()
+      .catch(() => {})
+      .then(() => {
+        if (viewer) scheduleEmote()
+      })
+  }, 40)
 }
 
 async function applyAccessories(accessoryItemIds) {
@@ -810,6 +843,11 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  if (_avatarApplyTimer) {
+    clearTimeout(_avatarApplyTimer)
+    _avatarApplyTimer = null
+  }
+
   window.removeEventListener('resize', handleResize)
   _resizeObs?.disconnect()
   _resizeObs = null
@@ -839,29 +877,21 @@ onUnmounted(() => {
   }
 })
 
-// Re-apply skin + accessories whenever the avatar changes
-watch(() => props.profile?.avatar, () => {
-  cancelEmote()
-  applyProfile().catch(() => {}).then(() => { if (viewer) scheduleEmote() })
-}, { deep: true })
+// Avatar edits — debounce so Firestore/profile snapshot churn doesn’t stack full reloads
+watch(() => props.profile?.avatar, () => scheduleApplyProfileFromAvatar(), { deep: true })
 
-// Profile or shop items can arrive after the viewer inits — avatar-only watch misses the first load
+// Catalog arrived late: patch GLB room / pet / shop accessories only (no skin re-fetch)
 watch(
-  () => [props.profile?.id, props.allItems?.length],
-  () => {
+  () => props.allItems?.length ?? 0,
+  (len, prevLen) => {
     if (!viewer || !props.profile) return
+    if (prevLen !== 0 || len === 0) return
     cancelEmote()
-    applyProfile().catch(() => {}).then(() => { if (viewer) scheduleEmote() })
-  },
-)
-
-// Rebuild room display when owned item list changes
-watch(() => [props.ownedItemIds, props.allItems?.length], () => applyProfile().catch(() => {}), { deep: true })
-
-watch(
-  () => props.profile?.avatar?.petId,
-  () => {
-    if (viewer && props.roomMode) applyEquippedPet().catch(() => {})
+    applyCatalogDependentLayers()
+      .catch(() => {})
+      .then(() => {
+        if (viewer) scheduleEmote()
+      })
   },
 )
 

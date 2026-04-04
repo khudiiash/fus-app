@@ -8,12 +8,40 @@ export const useUserStore = defineStore('user', () => {
   const quests      = ref([])
   const loadingItems = ref(false)
 
-  async function fetchItems() {
+  /** Single in-flight catalog fetch (layout + room + shop mounting together). */
+  let itemsFetchPromise = null
+
+  /**
+   * @param {{ force?: boolean }} opts force: bypass in-memory skip (e.g. after long idle).
+   */
+  async function fetchItems(opts = {}) {
+    const { force = false } = opts
+    if (!force && items.value.length > 0) {
+      void refreshItemsFromServerQuietly()
+      return
+    }
+    if (itemsFetchPromise && !force) return itemsFetchPromise
+
     loadingItems.value = true
+    itemsFetchPromise = (async () => {
+      try {
+        items.value = await getAllItems()
+      } finally {
+        loadingItems.value = false
+        itemsFetchPromise = null
+      }
+    })()
+    return itemsFetchPromise
+  }
+
+  /** Update catalog without blocking UI when we already have a usable list. */
+  async function refreshItemsFromServerQuietly() {
+    if (itemsFetchPromise) return
     try {
-      items.value = await getAllItems()
-    } finally {
-      loadingItems.value = false
+      const fresh = await getAllItems()
+      if (fresh.length) items.value = fresh
+    } catch {
+      /* keep stale */
     }
   }
 

@@ -1,8 +1,10 @@
 /**
  * Single shared WebGL context for baking GLB previews to PNG data URLs.
  * Shop / lists enqueue renders serially so the browser never opens N contexts.
+ * IndexedDB persists PNGs across sessions (see thumbnailIndexedDb.js).
  */
 import '@/utils/enableThreeFileCache'
+import { getPersistentThumbnail, setPersistentThumbnail } from '@/services/thumbnailIndexedDb'
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 
@@ -197,16 +199,27 @@ export function requestGlbThumbnail(modelData, width, height, opts = {}) {
   const key = cacheKey(modelData, width, height, !!opts.isRoom)
   if (cache.has(key)) return Promise.resolve(cache.get(key))
 
-  const run = async () => {
-    const dataUrl = await renderOnce(modelData, width, height, opts)
-    trimCache()
-    cache.set(key, dataUrl)
-    return dataUrl
-  }
+  return getPersistentThumbnail('glb', key).then((fromDisk) => {
+    if (cache.has(key)) return cache.get(key)
+    if (fromDisk) {
+      trimCache()
+      cache.set(key, fromDisk)
+      return fromDisk
+    }
 
-  const p = pipeline.catch(() => {}).then(run)
-  pipeline = p.catch(() => {})
-  return p
+    const run = async () => {
+      if (cache.has(key)) return cache.get(key)
+      const dataUrl = await renderOnce(modelData, width, height, opts)
+      trimCache()
+      cache.set(key, dataUrl)
+      setPersistentThumbnail('glb', key, dataUrl)
+      return dataUrl
+    }
+
+    const p = pipeline.catch(() => {}).then(run)
+    pipeline = p.catch(() => {})
+    return p
+  })
 }
 
 /** Drop cached image for a given model (e.g. after admin replaces file). */

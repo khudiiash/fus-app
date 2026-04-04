@@ -45,7 +45,8 @@ const CATEGORIES = [
 ]
 
 onMounted(async () => {
-  await Promise.all([shop.fetchItems(), userStore.fetchItems()])
+  // shop.fetchItems() reuses userStore catalog when present (one Firestore read, not two).
+  await shop.fetchItems()
 })
 
 const displayed = computed(() => {

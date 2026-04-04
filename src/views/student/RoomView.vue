@@ -32,21 +32,29 @@ watch(loading, (v) => {
 })
 
 onMounted(async () => {
-  await userStore.fetchItems()
+  // Catalog: never block the room on a full Firestore round-trip; CharacterScene
+  // watches allItems.length and rebuilds when shop data arrives.
+  void userStore.fetchItems()
+
   if (isOwnRoom.value) {
-    targetProfile.value  = auth.profile
+    targetProfile.value = auth.profile
     targetOwnedIds.value = auth.profile?.inventory || []
-  } else {
-    const uid = route.params.uid
-    try {
-      const snap = await getDoc(doc(db, 'users', uid))
-      if (snap.exists()) {
-        targetProfile.value  = { id: snap.id, ...snap.data() }
-        targetOwnedIds.value = targetProfile.value.inventory || []
-      }
-    } catch (e) { console.error('Failed to load student profile:', e) }
+    loading.value = false
+    return
   }
-  loading.value = false
+
+  const uid = route.params.uid
+  try {
+    const snap = await getDoc(doc(db, 'users', uid))
+    if (snap.exists()) {
+      targetProfile.value = { id: snap.id, ...snap.data() }
+      targetOwnedIds.value = targetProfile.value.inventory || []
+    }
+  } catch (e) {
+    console.error('Failed to load student profile:', e)
+  } finally {
+    loading.value = false
+  }
 })
 </script>
 

@@ -22,6 +22,31 @@ export const useAuthStore = defineStore('auth', () => {
   let unsubscribeProfile = null
   let _initPromise = null
 
+  /** Daily streak, quest doc, login quest, FCM, achievements — must run on PWA restore, not only after typing access code. */
+  async function runStudentSessionSync(uid, snap) {
+    const {
+      syncLevel,
+      updateStreak,
+      getDailyQuests,
+      updateQuestProgress,
+      checkAndGrantAchievements,
+    } = await import('@/firebase/collections')
+    try {
+      await syncLevel(uid, snap.xp, snap.level)
+      await updateStreak(uid)
+      await getDailyQuests(uid)
+      await updateQuestProgress(uid, 'login', 1)
+      const { useUserStore } = await import('@/stores/user')
+      await useUserStore().fetchQuests()
+      const { registerWebPushAndSave } = await import('@/firebase/fcmClient')
+      void registerWebPushAndSave(uid)
+      const granted = await checkAndGrantAchievements(uid)
+      if (granted.length > 0) newAchievements.value = granted
+    } catch (e) {
+      console.warn('[auth] student session sync:', e)
+    }
+  }
+
   function init() {
     if (_initPromise) return _initPromise
     _initPromise = new Promise(resolve => {
@@ -29,6 +54,9 @@ export const useAuthStore = defineStore('auth', () => {
         if (fbUser) {
           user.value = fbUser
           await loadProfile(fbUser.uid)
+          if (profile.value?.role === 'student') {
+            void runStudentSessionSync(fbUser.uid, { ...profile.value })
+          }
         } else {
           user.value    = null
           profile.value = null
@@ -59,14 +87,7 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   async function loginWithCode(code) {
-    const {
-      getCodeData,
-      syncLevel,
-      updateStreak,
-      getDailyQuests,
-      updateQuestProgress,
-      checkAndGrantAchievements,
-    } = await import('@/firebase/collections')
+    const { getCodeData } = await import('@/firebase/collections')
     const trimmedCode = code.trim().toUpperCase()
     const codeData = await getCodeData(trimmedCode)
     if (!codeData) throw new Error('Невірний код доступу')
@@ -112,25 +133,9 @@ export const useAuthStore = defineStore('auth', () => {
       }
     }
 
-    // Post-login gamification (students) — run in background so login + navigation
-    // are not blocked on slow Firestore / achievement checks (fixes stuck login UI).
+    // Same work as onAuthStateChanged student branch; keep fire-and-forget so UI is not blocked.
     if (profile.value?.role === 'student') {
-      const uid = credential.user.uid
-      const snap = { ...profile.value }
-      void (async () => {
-        try {
-          await syncLevel(uid, snap.xp, snap.level)
-          await updateStreak(uid)
-          await getDailyQuests(uid)
-          await updateQuestProgress(uid, 'login', 1)
-          const { registerWebPushAndSave } = await import('@/firebase/fcmClient')
-          void registerWebPushAndSave(uid)
-          const granted = await checkAndGrantAchievements(uid)
-          if (granted.length > 0) newAchievements.value = granted
-        } catch (e) {
-          console.warn('[auth] post-login student sync:', e)
-        }
-      })()
+      void runStudentSessionSync(credential.user.uid, { ...profile.value })
     } else if (profile.value?.role === 'teacher') {
       const uid = credential.user.uid
       void import('@/firebase/fcmClient').then(({ registerWebPushAndSave }) => {

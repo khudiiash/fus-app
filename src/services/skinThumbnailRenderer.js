@@ -1,7 +1,8 @@
 /**
  * One shared skinview3d SkinViewer — bakes character + skin to PNG (shop grids).
- * Serial queue + cache; same pattern as glbThumbnailRenderer.js
+ * Serial queue + memory cache + IndexedDB across sessions (thumbnailIndexedDb.js).
  */
+import { getPersistentThumbnail, setPersistentThumbnail } from '@/services/thumbnailIndexedDb'
 import * as skinview3d from 'skinview3d'
 import * as THREE from 'three'
 
@@ -163,16 +164,27 @@ export function requestSkinThumbnail(skinUrl, skinId, width, height) {
   const key = cacheKey(skinUrl, skinId, width, height)
   if (cache.has(key)) return Promise.resolve(cache.get(key))
 
-  const run = async () => {
-    const dataUrl = await renderOnce(skinUrl, skinId, width, height)
-    trimCache()
-    cache.set(key, dataUrl)
-    return dataUrl
-  }
+  return getPersistentThumbnail('skin', key).then((fromDisk) => {
+    if (cache.has(key)) return cache.get(key)
+    if (fromDisk) {
+      trimCache()
+      cache.set(key, fromDisk)
+      return fromDisk
+    }
 
-  const p = pipeline.catch(() => {}).then(run)
-  pipeline = p.catch(() => {})
-  return p
+    const run = async () => {
+      if (cache.has(key)) return cache.get(key)
+      const dataUrl = await renderOnce(skinUrl, skinId, width, height)
+      trimCache()
+      cache.set(key, dataUrl)
+      setPersistentThumbnail('skin', key, dataUrl)
+      return dataUrl
+    }
+
+    const p = pipeline.catch(() => {}).then(run)
+    pipeline = p.catch(() => {})
+    return p
+  })
 }
 
 export function invalidateSkinThumbnail(skinUrl) {

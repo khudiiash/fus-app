@@ -214,15 +214,15 @@ export function watchClass(classId, cb) {
 /** Returns ALL items including archived (active:false). Used for inventory resolution. */
 export async function getAllItems() {
   const snap = await getDocs(itemsCol())
-  return snap.docs.map(d => ({ id: d.id, ...d.data() }))
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }))
 }
 
 /** Returns only active (non-archived) items for the shop display. */
 export async function getActiveItems() {
   const snap = await getDocs(itemsCol())
   return snap.docs
-    .map(d => ({ id: d.id, ...d.data() }))
-    .filter(item => item.active !== false)
+    .map((d) => ({ id: d.id, ...d.data() }))
+    .filter((item) => item.active !== false)
 }
 
 export async function createItem(data) {
