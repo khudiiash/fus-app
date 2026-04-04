@@ -117,17 +117,10 @@ async function logout() {
         <span class="font-bold text-sm">{{ auth.profile?.displayName }}</span>
       </div>
 
-      <div class="flex items-center justify-between py-2 border-b border-game-border">
+      <div class="flex items-center justify-between py-2">
         <span class="text-sm text-slate-400">Роль</span>
         <span class="flex items-center gap-1 font-bold text-sm text-violet-300">
           <GraduationCap :size="13" :stroke-width="2" /> Вчитель
-        </span>
-      </div>
-
-      <div class="flex items-center justify-between py-2">
-        <span class="text-sm text-slate-400">Код доступу</span>
-        <span class="font-mono font-extrabold text-amber-400 text-sm bg-amber-500/10 px-3 py-1 rounded-lg">
-          {{ auth.profile?.accessCode || '—' }}
         </span>
       </div>
     </AppCard>

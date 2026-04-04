@@ -7,7 +7,7 @@ import { useGameification } from '@/composables/useGameification'
 import AvatarBuilder from '@/components/avatar/AvatarBuilder.vue'
 import CharacterScene from '@/components/character/CharacterScene.vue'
 import AppButton from '@/components/ui/AppButton.vue'
-import { Star, Coins, Flame, Award, Package, LogOut, ArrowRight, Key, Palette } from 'lucide-vue-next'
+import { Star, Coins, Flame, Award, Package, LogOut, ArrowRight, Palette } from 'lucide-vue-next'
 import { currentAccent, setAccent, ACCENT_PRESETS } from '@/composables/useAccentColor'
 
 const auth      = useAuthStore()
@@ -66,10 +66,6 @@ async function logout() {
         <div class="absolute bottom-0 inset-x-0 px-4 pb-3 flex items-end justify-between">
           <div>
             <div class="font-extrabold text-white text-base leading-tight">{{ profile?.displayName }}</div>
-            <div class="flex items-center gap-1 text-slate-400 text-xs mt-0.5">
-              <Key :size="11" :stroke-width="2" />
-              <span>{{ profile?.accessCode }}</span>
-            </div>
           </div>
           <div class="flex items-center gap-1 text-xs font-bold text-accent">
             <span>Кімната</span>
