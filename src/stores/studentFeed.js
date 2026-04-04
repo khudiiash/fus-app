@@ -125,7 +125,10 @@ export const useStudentFeedStore = defineStore('studentFeed', () => {
         if (prevTxIds.has(row.id)) continue
         const t = row.type
         if (t === 'award') {
-          const note = row.note ? String(row.note).slice(0, 120) : `+${row.amount ?? ''} монет`
+          const sub = row.subjectName ? String(row.subjectName) : ''
+          const msg = row.note ? String(row.note) : ''
+          const line = [sub, msg].filter(Boolean).join(' — ').slice(0, 120)
+          const note = line || `+${row.amount ?? ''} монет`
           void trySystemNotify('Нагорода від вчителя', note, { tag: `tx-${row.id}` })
         } else if (t === 'fine') {
           const note = row.note ? String(row.note).slice(0, 120) : 'Штраф монетами'

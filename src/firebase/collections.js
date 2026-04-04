@@ -421,7 +421,7 @@ export async function setTeacherWeeklyBudget(teacherUid, amount) {
 }
 
 // ─── Award coins (transactional) ──────────────────────────────────────────────
-export async function awardCoins({ fromUid, toUid, amount, note = '' }) {
+export async function awardCoins({ fromUid, toUid, amount, note = '', subjectName = '' }) {
   const monday = getCurrentMondayDate()
 
   await runTransaction(db, async tx => {
@@ -449,7 +449,16 @@ export async function awardCoins({ fromUid, toUid, amount, note = '' }) {
     tx.update(toRef, { coins: newCoins, xp: newXp, level: calcLevel(newXp) })
   })
 
-  await logTransaction({ type: 'award', fromUid, toUid, amount, note })
+  const noteTrim = typeof note === 'string' ? note.trim() : ''
+  const subTrim = typeof subjectName === 'string' ? subjectName.trim() : ''
+  await logTransaction({
+    type: 'award',
+    fromUid,
+    toUid,
+    amount,
+    note: noteTrim,
+    ...(subTrim ? { subjectName: subTrim } : {}),
+  })
 
   // Daily quest: отримати монети від вчителя (або адміна)
   if (toUid !== fromUid && amount > 0) {

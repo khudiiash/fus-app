@@ -165,10 +165,17 @@ async function doAward() {
 
   awarding.value = true
   try {
-    const noteText = [awardSubject.value, awardNote.value].filter(Boolean).join(' — ')
+    const subj = (awardSubject.value || '').trim()
+    const comment = (awardNote.value || '').trim()
     // Sequential to respect budget atomically — avoids race conditions
     for (const s of targets) {
-      await awardCoins({ fromUid: auth.profile.id, toUid: s.id, amount: Number(awardAmount.value), note: noteText })
+      await awardCoins({
+        fromUid: auth.profile.id,
+        toUid: s.id,
+        amount: Number(awardAmount.value),
+        note: comment,
+        subjectName: subj,
+      })
     }
     await Promise.all(targets.map(s => checkAndGrantAchievements(s.id)))
 

@@ -126,7 +126,12 @@ function registerSchoolPushTriggers(region, exportsObj) {
       const txId = event.params.txId
       const isFine = t.type === 'fine'
       const title = isFine ? 'Штраф від вчителя' : 'Нагорода від вчителя'
-      let body = t.note ? String(t.note).slice(0, 160) : ''
+      let body = ''
+      if (!isFine && t.subjectName) {
+        body = [String(t.subjectName), t.note ? String(t.note) : ''].filter(Boolean).join(' — ').slice(0, 160)
+      } else if (t.note) {
+        body = String(t.note).slice(0, 160)
+      }
       if (!body) {
         const n = Number(t.amount) || 0
         body = isFine ? `−${Math.abs(n)} 🪙` : `+${n} 🪙`

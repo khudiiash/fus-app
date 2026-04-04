@@ -67,6 +67,50 @@ function roleLabel(role) {
   if (role === 'admin') return 'Адмін'
   return 'Учень'
 }
+
+/** Нарахування від вчителя/адміна: предмет у бейджі, коментар окремо (див. awardCoins subjectName). */
+function parseTeacherAwardNote(tx) {
+  const sn = (tx.subjectName || '').trim()
+  const note = (tx.note || '').trim()
+  if (sn) return { subject: sn, message: note }
+  const sep = ' — '
+  const i = note.indexOf(sep)
+  if (i > 0) {
+    return {
+      subject: note.slice(0, i).trim(),
+      message: note.slice(i + sep.length).trim(),
+    }
+  }
+  return { subject: '', message: note }
+}
+
+const peerChipLabel = computed(() => {
+  const peer = props.tx.peerProfile
+  if (!peer) return ''
+  const r = peer.role
+  if (props.tx.type === 'award' && (r === 'teacher' || r === 'admin')) {
+    const { subject } = parseTeacherAwardNote(props.tx)
+    if (subject) return subject
+  }
+  return roleLabel(r)
+})
+
+const messageBodyText = computed(() => {
+  if (props.tx.type === 'box_open') return ''
+  if (props.tx.type !== 'award') return (props.tx.note || '').trim()
+  const peer = props.tx.peerProfile
+  if (!peer || (peer.role !== 'teacher' && peer.role !== 'admin')) {
+    return (props.tx.note || '').trim()
+  }
+  return parseTeacherAwardNote(props.tx).message
+})
+
+const subjectInChip = computed(() => {
+  if (props.tx.type !== 'award' || !props.tx.peerProfile) return false
+  const r = props.tx.peerProfile.role
+  if (r !== 'teacher' && r !== 'admin') return false
+  return !!parseTeacherAwardNote(props.tx).subject
+})
 </script>
 
 <template>
@@ -116,9 +160,11 @@ function roleLabel(role) {
             <div v-if="tx.peerProfile" class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5">
               <span class="text-sm font-semibold text-slate-200 truncate">{{ tx.peerProfile.displayName }}</span>
               <span
-                class="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-md bg-white/[0.06] text-slate-400"
+                class="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-white/[0.06] max-w-[min(12rem,55vw)] truncate"
+                :class="subjectInChip ? 'text-slate-200 tracking-tight normal-case' : 'uppercase tracking-wide text-slate-400'"
+                :title="peerChipLabel"
               >
-                {{ roleLabel(tx.peerProfile.role) }}
+                {{ peerChipLabel }}
               </span>
             </div>
           </div>
@@ -127,11 +173,11 @@ function roleLabel(role) {
 
         <!-- Message / note (box name lives in the box chip below) -->
         <div
-          v-if="tx.note && tx.type !== 'box_open'"
+          v-if="messageBodyText && tx.type !== 'box_open'"
           class="rounded-xl border border-white/[0.06] bg-black/25 px-3 py-2 text-sm text-slate-200/95 leading-snug"
         >
           <span class="text-slate-500 text-[10px] font-bold uppercase tracking-wider block mb-1">Повідомлення</span>
-          {{ tx.note }}
+          {{ messageBodyText }}
         </div>
 
         <!-- Mystery box + loot row -->

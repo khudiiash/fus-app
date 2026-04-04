@@ -103,13 +103,21 @@ const totalAwarded = computed(() => history.value.reduce((s, tx) => s + (tx.amou
             </div>
 
             <div
-              v-if="tx.note"
-              class="rounded-xl border border-white/[0.06] bg-black/25 px-3 py-2 text-sm text-slate-200/95 leading-snug"
+              v-if="tx.subjectName || tx.note"
+              class="rounded-xl border border-white/[0.06] bg-black/25 px-3 py-2 text-sm text-slate-200/95 leading-snug space-y-2"
             >
-              <span class="text-slate-500 text-[10px] font-bold uppercase tracking-wider block mb-1">
-                Коментар для учня
-              </span>
-              {{ tx.note }}
+              <div v-if="tx.subjectName">
+                <span class="text-slate-500 text-[10px] font-bold uppercase tracking-wider block mb-1">
+                  Предмет
+                </span>
+                {{ tx.subjectName }}
+              </div>
+              <div v-if="tx.note">
+                <span class="text-slate-500 text-[10px] font-bold uppercase tracking-wider block mb-1">
+                  Коментар для учня
+                </span>
+                {{ tx.note }}
+              </div>
             </div>
 
             <div class="text-[11px] font-medium text-slate-500 tabular-nums">
