@@ -52,11 +52,22 @@ function registerTradeOfferTriggers(region, exportsObj) {
       }
 
       if (before.status === 'pending' && after.status === 'declined') {
-        await sendPushToUser(after.fromUid, {
-          title: 'Пропозицію відхилено',
-          body: 'Можна надіслати іншу угоду',
-          data: { type: 'trade_declined', tradeId, tag: `trade-out-${tradeId}` },
-        })
+        const by = after.declinedBy
+        // from = ініціатор скасував — пуш лише одержувачу; to = одержувач відхилив — пуш ініціатору.
+        // Без поля (старі документи) — не шлемо, щоб не повідомляти не ту сторону.
+        if (by === 'from' && after.toUid) {
+          await sendPushToUser(after.toUid, {
+            title: 'Пропозицію скасовано',
+            body: 'Відправник відкликав обмін',
+            data: { type: 'trade_cancelled', tradeId, tag: `trade-cancel-${tradeId}` },
+          })
+        } else if (by === 'to' && after.fromUid) {
+          await sendPushToUser(after.fromUid, {
+            title: 'Пропозицію відхилено',
+            body: 'Можна надіслати іншу угоду',
+            data: { type: 'trade_declined', tradeId, tag: `trade-out-${tradeId}` },
+          })
+        }
       }
     },
   )

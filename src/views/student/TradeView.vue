@@ -185,7 +185,7 @@ function formatExpiry(ts) {
   return `${Math.round(diff)}год`
 }
 
-const COIN_PRESETS = [5, 10, 25, 50, 100, 200]
+const COIN_PRESETS = [5, 10, 25, 50, 100]
 </script>
 
 <template>
@@ -509,7 +509,7 @@ const COIN_PRESETS = [5, 10, 25, 50, 100, 200]
 
     <!-- ── New Trade Modal ────────────────────────────────────────────── -->
     <AppModal v-model="showNewTrade" title="Нова пропозиція обміну" size="lg">
-      <div class="flex flex-col gap-5">
+      <div class="flex flex-col gap-5 min-h-0">
         <!-- Pick student -->
         <div>
           <label class="text-sm font-bold text-slate-300 block mb-2">Обмінятися з</label>
@@ -588,11 +588,12 @@ const COIN_PRESETS = [5, 10, 25, 50, 100, 200]
             </div>
           </div>
         </div>
-
+      </div>
+      <template #footer>
         <AppButton variant="primary" block :loading="sending" @click="sendTrade">
           Надіслати пропозицію
         </AppButton>
-      </div>
+      </template>
     </AppModal>
   </div>
 </template>

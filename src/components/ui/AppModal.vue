@@ -95,7 +95,7 @@ onUnmounted(() => {
           <!-- Footer (sticky below scroll — primary actions belong here) -->
           <div
             v-if="$slots.footer"
-            class="px-4 sm:px-5 pb-4 sm:pb-5 pt-3 border-t border-white/[0.06] shrink-0 bg-[rgba(14,14,30,0.98)]"
+            class="px-4 sm:px-5 pt-3 pb-[calc(1rem+env(safe-area-inset-bottom,0px))] sm:pb-5 border-t border-white/[0.06] shrink-0 bg-[rgba(14,14,30,0.98)]"
             @touchmove.prevent="swallowTouchMove"
           >
             <slot name="footer" />
@@ -145,12 +145,12 @@ onUnmounted(() => {
   opacity: 0;
 }
 
-/* Mobile: з’їжджає знизу екрана без overshoot (без «стрибка вище»). Desktop: легкий slide + scale. */
+/* Mobile: короткий зсув + fade (без повного translateY(100%) — менше ривків). Desktop: легкий ease-out. */
 .modal-sheet-enter-active .modal-sheet {
-  animation: modal-sheet-enter-mobile 0.38s cubic-bezier(0.32, 0.72, 0, 1) both;
+  animation: modal-sheet-enter-mobile 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 .modal-sheet-leave-active .modal-sheet {
-  animation: modal-sheet-leave-mobile 0.22s cubic-bezier(0.4, 0, 1, 1) both;
+  animation: modal-sheet-leave-mobile 0.24s cubic-bezier(0.4, 0, 0.2, 1) both;
 }
 
 @media (min-width: 640px) {
@@ -165,7 +165,7 @@ onUnmounted(() => {
 @keyframes modal-sheet-enter-mobile {
   from {
     opacity: 0;
-    transform: translateY(100%);
+    transform: translateY(22px);
   }
   to {
     opacity: 1;
@@ -180,14 +180,14 @@ onUnmounted(() => {
   }
   to {
     opacity: 0;
-    transform: translateY(100%);
+    transform: translateY(16px);
   }
 }
 
 @keyframes modal-sheet-enter-desktop {
   from {
     opacity: 0;
-    transform: translateY(16px) scale(0.98);
+    transform: translateY(10px) scale(0.985);
   }
   to {
     opacity: 1;
@@ -202,7 +202,7 @@ onUnmounted(() => {
   }
   to {
     opacity: 0;
-    transform: translateY(12px) scale(0.99);
+    transform: translateY(8px) scale(0.992);
   }
 }
 </style>

@@ -12,7 +12,7 @@ import AppModal from '@/components/ui/AppModal.vue'
 import { useToast } from '@/composables/useToast'
 import { useHaptic } from '@/composables/useHaptic'
 import { checkAndGrantAchievements } from '@/firebase/collections'
-import { Palette, ChefHat, Home, Camera, ShoppingBag, Package, Gift, PawPrint } from 'lucide-vue-next'
+import { Palette, ChefHat, Home, Camera, Package, Gift, PawPrint } from 'lucide-vue-next'
 
 const userStore = useUserStore()
 const auth = useAuthStore()
@@ -298,7 +298,7 @@ const THUMB_GLB_H = 124
       <div class="text-xs mt-1">Купи їх у магазині</div>
     </div>
 
-    <!-- Default skin (like standard room / no pet) -->
+    <!-- Єдина сітка: стандарт / «без …» + куплені предмети (без розриву між рядками) -->
     <div v-if="activeTab === 'skin'" class="grid grid-cols-3 gap-2">
       <div
         class="glass-card p-2 flex flex-col items-center gap-1 cursor-pointer transition-all duration-150 active:scale-95"
@@ -318,10 +318,32 @@ const THUMB_GLB_H = 124
         <div v-if="isDefaultSkinActive" class="text-[10px] text-violet-400 font-bold">✓ Активно</div>
         <div v-else class="text-[10px] text-slate-500">обрати</div>
       </div>
+      <div
+        v-for="item in categoryItems"
+        :key="item.id"
+        class="glass-card p-2 flex flex-col items-center gap-1 cursor-pointer transition-all duration-150 active:scale-95 relative"
+        :class="isEquipped(item) ? 'border-violet-400 glow-primary' : ''"
+        @click="equip(item)"
+      >
+        <Skin3dThumbnail
+          :skin-url="item.skinUrl" :skin-id="item.skinId || 'default'"
+          :width="THUMB_SKIN_W"
+          :height="THUMB_SKIN_H"
+          class="rounded-lg"
+        />
+        <div class="text-[11px] font-bold text-center truncate w-full leading-tight">{{ item.name }}</div>
+        <div
+          v-if="stackQty(item) > 1"
+          class="absolute top-1.5 right-1.5 min-w-[1.25rem] h-5 px-1 rounded-full bg-slate-600 flex items-center justify-center text-[9px] font-extrabold text-white"
+        >
+          ×{{ stackQty(item) }}
+        </div>
+        <div v-if="isEquipped(item)" class="text-[10px] text-violet-400 font-bold">✓ Активно</div>
+        <div v-else class="text-[10px] text-slate-500">одягнути</div>
+      </div>
     </div>
 
-    <!-- Default room card (always first in the rooms tab) -->
-    <div v-if="activeTab === 'room'" class="grid grid-cols-3 gap-2">
+    <div v-else-if="activeTab === 'room'" class="grid grid-cols-3 gap-2">
       <div
         class="glass-card p-2 flex flex-col items-center gap-1 cursor-pointer transition-all duration-150 active:scale-95"
         :class="isDefaultRoomActive ? 'border-violet-400 glow-primary' : ''"
@@ -335,9 +357,41 @@ const THUMB_GLB_H = 124
         <div v-if="isDefaultRoomActive" class="text-[10px] text-violet-400 font-bold">✓ Активно</div>
         <div v-else class="text-[10px] text-slate-500">обрати</div>
       </div>
+      <div
+        v-for="item in categoryItems"
+        :key="item.id"
+        class="glass-card p-2 flex flex-col items-center gap-1 cursor-pointer transition-all duration-150 active:scale-95 relative"
+        :class="isEquipped(item) ? 'border-violet-400 glow-primary' : ''"
+        @click="equip(item)"
+      >
+        <GlbThumbnail
+          v-if="item.modelData"
+          :model-data="item.modelData"
+          :width="THUMB_GLB_W"
+          :height="THUMB_GLB_H"
+          is-room
+          class="rounded-xl"
+        />
+        <div
+          v-else
+          class="flex items-center justify-center opacity-30"
+          :style="{ width: THUMB_GLB_W + 'px', height: THUMB_GLB_H + 'px' }"
+        >
+          <Home :size="28" :stroke-width="1.2" />
+        </div>
+        <div class="text-[11px] font-bold text-center truncate w-full leading-tight">{{ item.name }}</div>
+        <div
+          v-if="stackQty(item) > 1"
+          class="absolute top-1.5 right-1.5 min-w-[1.25rem] h-5 px-1 rounded-full bg-slate-600 flex items-center justify-center text-[9px] font-extrabold text-white"
+        >
+          ×{{ stackQty(item) }}
+        </div>
+        <div v-if="isEquipped(item)" class="text-[10px] text-violet-400 font-bold">✓ Активно</div>
+        <div v-else class="text-[10px] text-slate-500">обрати</div>
+      </div>
     </div>
 
-    <div v-if="activeTab === 'pet'" class="grid grid-cols-3 gap-2">
+    <div v-else-if="activeTab === 'pet'" class="grid grid-cols-3 gap-2">
       <div
         class="glass-card p-2 flex flex-col items-center gap-1 cursor-pointer transition-all duration-150 active:scale-95"
         :class="isNoPetActive ? 'border-violet-400 glow-primary' : ''"
@@ -350,9 +404,40 @@ const THUMB_GLB_H = 124
         <div v-if="isNoPetActive" class="text-[10px] text-violet-400 font-bold">✓ Активно</div>
         <div v-else class="text-[10px] text-slate-500">обрати</div>
       </div>
+      <div
+        v-for="item in categoryItems"
+        :key="item.id"
+        class="glass-card p-2 flex flex-col items-center gap-1 cursor-pointer transition-all duration-150 active:scale-95 relative"
+        :class="isEquipped(item) ? 'border-violet-400 glow-primary' : ''"
+        @click="equip(item)"
+      >
+        <GlbThumbnail
+          v-if="item.modelData"
+          :model-data="item.modelData"
+          :width="THUMB_GLB_W"
+          :height="THUMB_GLB_H"
+          class="rounded-xl"
+        />
+        <div
+          v-else
+          class="flex items-center justify-center opacity-30"
+          :style="{ width: THUMB_GLB_W + 'px', height: THUMB_GLB_H + 'px' }"
+        >
+          <PawPrint :size="28" :stroke-width="1.2" />
+        </div>
+        <div class="text-[11px] font-bold text-center truncate w-full leading-tight">{{ item.name }}</div>
+        <div
+          v-if="stackQty(item) > 1"
+          class="absolute top-1.5 right-1.5 min-w-[1.25rem] h-5 px-1 rounded-full bg-slate-600 flex items-center justify-center text-[9px] font-extrabold text-white"
+        >
+          ×{{ stackQty(item) }}
+        </div>
+        <div v-if="isEquipped(item)" class="text-[10px] text-violet-400 font-bold">✓ Активно</div>
+        <div v-else class="text-[10px] text-slate-500">обрати</div>
+      </div>
     </div>
 
-    <div v-if="activeTab === 'accessory'" class="grid grid-cols-3 gap-2">
+    <div v-else-if="activeTab === 'accessory'" class="grid grid-cols-3 gap-2">
       <div
         class="glass-card p-2 flex flex-col items-center gap-1 cursor-pointer transition-all duration-150 active:scale-95"
         :class="isNoAccessoryActive ? 'border-violet-400 glow-primary' : ''"
@@ -366,14 +451,6 @@ const THUMB_GLB_H = 124
         <div v-if="isNoAccessoryActive" class="text-[10px] text-violet-400 font-bold">✓ Активно</div>
         <div v-else class="text-[10px] text-slate-500">обрати</div>
       </div>
-    </div>
-
-    <!-- Items grid (скіни / аксесуари / улюбленці / кімнати) -->
-    <div
-      v-if="activeTab !== 'mystery_box' && categoryItems.length > 0"
-      class="grid grid-cols-3 gap-2"
-      :class="activeTab === 'room' || activeTab === 'pet' || activeTab === 'skin' || activeTab === 'accessory' ? '-mt-2' : ''"
-    >
       <div
         v-for="item in categoryItems"
         :key="item.id"
@@ -381,30 +458,8 @@ const THUMB_GLB_H = 124
         :class="isEquipped(item) ? 'border-violet-400 glow-primary' : ''"
         @click="equip(item)"
       >
-        <Skin3dThumbnail
-          v-if="item.category === 'skin'"
-          :skin-url="item.skinUrl" :skin-id="item.skinId || 'default'"
-          :width="THUMB_SKIN_W"
-          :height="THUMB_SKIN_H"
-          class="rounded-lg"
-        />
         <GlbThumbnail
-          v-else-if="item.category === 'room' && item.modelData"
-          :model-data="item.modelData"
-          :width="THUMB_GLB_W"
-          :height="THUMB_GLB_H"
-          is-room
-          class="rounded-xl"
-        />
-        <GlbThumbnail
-          v-else-if="item.category === 'accessory' && item.modelData"
-          :model-data="item.modelData"
-          :width="THUMB_GLB_W"
-          :height="THUMB_GLB_H"
-          class="rounded-xl"
-        />
-        <GlbThumbnail
-          v-else-if="item.category === 'pet' && item.modelData"
+          v-if="item.modelData"
           :model-data="item.modelData"
           :width="THUMB_GLB_W"
           :height="THUMB_GLB_H"
@@ -415,9 +470,7 @@ const THUMB_GLB_H = 124
           class="flex items-center justify-center opacity-30"
           :style="{ width: THUMB_GLB_W + 'px', height: THUMB_GLB_H + 'px' }"
         >
-          <Home v-if="item.category === 'room'" :size="28" :stroke-width="1.2" />
-          <PawPrint v-else-if="item.category === 'pet'" :size="28" :stroke-width="1.2" />
-          <Package v-else :size="28" :stroke-width="1.2" />
+          <Package :size="28" :stroke-width="1.2" />
         </div>
         <div class="text-[11px] font-bold text-center truncate w-full leading-tight">{{ item.name }}</div>
         <div
@@ -428,18 +481,9 @@ const THUMB_GLB_H = 124
         </div>
         <div v-if="isEquipped(item)" class="text-[10px] text-violet-400 font-bold">✓ Активно</div>
         <div v-else class="text-[10px] text-slate-500">
-          {{ item.category === 'room'      ? 'обрати'
-           : item.category === 'pet'       ? 'обрати'
-           : item.category === 'accessory' && (auth.profile?.avatar?.accessories?.length > 0) ? 'замінити'
-           : 'одягнути' }}
+          {{ (auth.profile?.avatar?.accessories?.length > 0) ? 'замінити' : 'одягнути' }}
         </div>
       </div>
-    </div>
-
-    <div v-else-if="activeTab !== 'room' && activeTab !== 'pet' && activeTab !== 'accessory' && activeTab !== 'mystery_box'" class="text-center py-8 text-slate-600">
-      <ShoppingBag :size="36" :stroke-width="1.2" class="mx-auto mb-2 opacity-40" />
-      <div class="text-sm font-bold text-slate-500">Немає предметів типу «{{ tabs.find(t=>t.key===activeTab)?.label }}»</div>
-      <div class="text-xs mt-1">Зайди до магазину та купи щось!</div>
     </div>
 
     <AppModal

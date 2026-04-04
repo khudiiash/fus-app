@@ -50,6 +50,25 @@ export const useTradeStore = defineStore('trade', () => {
         return
       }
       const nextIds = new Set(data.map((d) => d.id))
+      for (const id of prevIncomingIds) {
+        if (!nextIds.has(id)) {
+          void (async () => {
+            try {
+              const t = await getTrade(id)
+              if (t?.status === 'declined' && t.declinedBy === 'from') {
+                toastInfo('Відправник скасував пропозицію обміну')
+                await trySystemNotify(
+                  'Пропозицію скасовано',
+                  'Відправник відкликав обмін',
+                  { tag: `trade-cancel-${id}` },
+                )
+              }
+            } catch {
+              /* ignore */
+            }
+          })()
+        }
+      }
       for (const row of data) {
         if (!prevIncomingIds.has(row.id)) {
           toastInfo('Нова пропозиція обміну — відкрий вкладку «Обмін»')
@@ -88,7 +107,7 @@ export const useTradeStore = defineStore('trade', () => {
                   'Твою пропозицію прийнято 🤝',
                   { tag: `trade-done-${id}` },
                 )
-              } else if (t?.status === 'declined') {
+              } else if (t?.status === 'declined' && t.declinedBy === 'to') {
                 toastInfo('Пропозицію обміну відхилено')
                 await trySystemNotify(
                   'Пропозицію відхилено',
@@ -168,11 +187,11 @@ export const useTradeStore = defineStore('trade', () => {
   }
 
   async function declineTrade(tradeId) {
-    await updateTrade(tradeId, { status: 'declined' })
+    await updateTrade(tradeId, { status: 'declined', declinedBy: 'to' })
   }
 
   async function cancelTrade(tradeId) {
-    await updateTrade(tradeId, { status: 'declined' })
+    await updateTrade(tradeId, { status: 'declined', declinedBy: 'from' })
   }
 
   const incomingCount = ref(0)

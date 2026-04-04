@@ -212,7 +212,7 @@ const MODAL_SKIN_H = 200
       <div
         v-for="item in sorted"
         :key="item.id"
-        class="item-card overflow-hidden cursor-pointer transition-all duration-150 active:scale-[0.97] rounded-2xl flex flex-col"
+        class="item-card overflow-hidden cursor-pointer transition-[transform,opacity] duration-200 ease-out active:scale-[0.98] rounded-2xl flex flex-col"
         :class="rarityGlow[item.rarity]"
         @click="selectedItem = item"
       >

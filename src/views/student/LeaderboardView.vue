@@ -17,6 +17,7 @@ const router    = useRouter()
 const scope    = ref('class')   // class | global
 const sortBy   = ref('coins')   // coins | xp | streak
 const students = ref([])
+const leaderboardLoading = ref(true)
 
 onMounted(async () => {
   await userStore.fetchItems()
@@ -24,8 +25,13 @@ onMounted(async () => {
 })
 
 async function fetchLeaderboard() {
-  const classId = scope.value === 'class' ? auth.profile?.classId : null
-  students.value = await getLeaderboard(classId, 50)
+  leaderboardLoading.value = true
+  try {
+    const classId = scope.value === 'class' ? auth.profile?.classId : null
+    students.value = await getLeaderboard(classId, 50)
+  } finally {
+    leaderboardLoading.value = false
+  }
 }
 
 watch(scope, fetchLeaderboard)
@@ -90,8 +96,29 @@ const SORT_OPTS = [
       </div>
     </div>
 
+    <!-- Podium: skeleton під час завантаження — без стрибка висоти -->
+    <div
+      v-if="leaderboardLoading"
+      class="flex items-end justify-center gap-3 mb-2 mt-2 min-h-[220px]"
+      aria-hidden="true"
+    >
+      <div class="flex flex-col items-center gap-2 w-[5.5rem]">
+        <div class="h-16 w-16 rounded-full bg-white/[0.06] animate-pulse" />
+        <div class="w-20 h-16 rounded-2xl bg-white/[0.06] animate-pulse" />
+      </div>
+      <div class="flex flex-col items-center gap-2 w-[6.5rem]">
+        <div class="h-6 w-6 rounded-full bg-white/[0.06] animate-pulse" />
+        <div class="h-[4.5rem] w-[4.5rem] rounded-full bg-white/[0.06] animate-pulse" />
+        <div class="w-24 h-20 rounded-2xl bg-white/[0.08] animate-pulse" />
+      </div>
+      <div class="flex flex-col items-center gap-2 w-[5.5rem]">
+        <div class="h-16 w-16 rounded-full bg-white/[0.06] animate-pulse" />
+        <div class="w-20 h-14 rounded-2xl bg-white/[0.06] animate-pulse" />
+      </div>
+    </div>
+
     <!-- Podium top 3 -->
-    <div v-if="podium.length >= 3" class="flex items-end justify-center gap-3 mb-2 mt-8 pt-3">
+    <div v-else-if="podium.length >= 3" class="flex items-end justify-center gap-3 mb-2 mt-2 pt-1">
       <!-- 2nd -->
       <div class="flex flex-col items-center gap-2">
         <div class="cursor-pointer" @click="router.push(podium[1]?.id === auth.profile?.id ? '/student/room' : `/student/room/${podium[1]?.id}`)">

@@ -40,9 +40,8 @@ const progress  = computed(() => Math.min(100, Math.round((props.quest.progress 
     <div class="flex-1 min-w-0">
       <div class="flex items-center justify-between gap-2 mb-1.5">
         <div class="font-bold text-sm truncate">{{ quest.label }}</div>
-        <div v-if="quest.completed" class="flex items-center gap-1 flex-shrink-0 text-emerald-400 text-xs font-extrabold">
-          <CheckCircle2 :size="13" :stroke-width="2.5" />
-          <span>Виконано</span>
+        <div v-if="quest.completed" class="flex items-center flex-shrink-0 text-emerald-400" aria-label="Виконано">
+          <CheckCircle2 :size="15" :stroke-width="2.5" />
         </div>
       </div>
       <!-- Progress bar -->
