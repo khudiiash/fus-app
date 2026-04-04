@@ -395,34 +395,40 @@ export async function createAchievement(data) {
   return ref.id
 }
 
-// ─── Teacher weekly coin budget ───────────────────────────────────────────────
-export const DEFAULT_WEEKLY_BUDGET = 500
+// ─── Teacher daily coin budget ────────────────────────────────────────────────
+export const DEFAULT_DAILY_BUDGET = 200
+/** @deprecated Alias — imports still work; value matches daily cap. */
+export const DEFAULT_WEEKLY_BUDGET = DEFAULT_DAILY_BUDGET
 
-export function getCurrentMondayDate() {
-  const now = new Date()
-  const day = now.getDay() // 0=Sun … 6=Sat
-  const daysToMonday = day === 0 ? -6 : 1 - day
-  const monday = new Date(now)
-  monday.setDate(now.getDate() + daysToMonday)
-  return monday.toISOString().split('T')[0]
+/** Local calendar date YYYY-MM-DD (browser timezone). */
+export function getCurrentBudgetDayDate() {
+  const d = new Date()
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
 }
 
 /** Returns { budget, used, remaining } for any teacher profile snapshot. */
 export function getTeacherBudgetInfo(teacherData) {
-  const monday  = getCurrentMondayDate()
-  const budget  = teacherData?.coinsBudgetWeekly ?? DEFAULT_WEEKLY_BUDGET
-  const used    = teacherData?.budgetWeekStart === monday
-    ? (teacherData.coinsUsedThisWeek || 0) : 0
+  const today  = getCurrentBudgetDayDate()
+  const budget = teacherData?.coinsBudgetDaily ?? teacherData?.coinsBudgetWeekly ?? DEFAULT_DAILY_BUDGET
+  const used   = teacherData?.budgetDayStart === today ? (teacherData.coinsUsedToday || 0) : 0
   return { budget, used, remaining: Math.max(0, budget - used) }
 }
 
+export async function setTeacherDailyBudget(teacherUid, amount) {
+  await updateDoc(doc(db, 'users', teacherUid), { coinsBudgetDaily: Number(amount) })
+}
+
+/** @deprecated Use setTeacherDailyBudget — still updates coinsBudgetDaily. */
 export async function setTeacherWeeklyBudget(teacherUid, amount) {
-  await updateDoc(doc(db, 'users', teacherUid), { coinsBudgetWeekly: Number(amount) })
+  return setTeacherDailyBudget(teacherUid, amount)
 }
 
 // ─── Award coins (transactional) ──────────────────────────────────────────────
 export async function awardCoins({ fromUid, toUid, amount, note = '', subjectName = '' }) {
-  const monday = getCurrentMondayDate()
+  const today = getCurrentBudgetDayDate()
 
   await runTransaction(db, async tx => {
     const toRef   = doc(db, 'users', toUid)
@@ -431,15 +437,15 @@ export async function awardCoins({ fromUid, toUid, amount, note = '', subjectNam
 
     if (!toSnap.exists()) throw new Error('Student not found')
 
-    // Enforce weekly budget for teachers
+    // Enforce daily budget for teachers
     if (fromSnap.exists() && fromSnap.data().role === 'teacher') {
       const t      = fromSnap.data()
-      const used   = t.budgetWeekStart === monday ? (t.coinsUsedThisWeek || 0) : 0
-      const budget = t.coinsBudgetWeekly ?? DEFAULT_WEEKLY_BUDGET
+      const used   = t.budgetDayStart === today ? (t.coinsUsedToday || 0) : 0
+      const budget = t.coinsBudgetDaily ?? t.coinsBudgetWeekly ?? DEFAULT_DAILY_BUDGET
       if (used + amount > budget) {
-        throw new Error(`Недостатньо тижневого бюджету. Залишок: ${budget - used} 🪙`)
+        throw new Error(`Недостатньо денного бюджету. Залишок: ${budget - used} 🪙`)
       }
-      tx.update(fromRef, { coinsUsedThisWeek: used + amount, budgetWeekStart: monday })
+      tx.update(fromRef, { coinsUsedToday: used + amount, budgetDayStart: today })
     }
 
     const current  = toSnap.data()
@@ -656,7 +662,7 @@ export async function openMysteryBox(uid, boxItemId) {
 
 // ─── Fine student (transactional) ────────────────────────────────────────────
 export async function fineStudent({ fromUid, toUid, amount, reason = '' }) {
-  const monday = getCurrentMondayDate()
+  const today = getCurrentBudgetDayDate()
 
   await runTransaction(db, async tx => {
     const uRef = doc(db, 'users', toUid)
@@ -670,12 +676,12 @@ export async function fineStudent({ fromUid, toUid, amount, reason = '' }) {
 
     tx.update(uRef, { coins: increment(-deduction) })
 
-    // Return the deducted coins to the teacher's weekly spent budget
+    // Return the deducted coins to the teacher's daily spent budget
     if (tSnap.exists() && tSnap.data().role === 'teacher') {
       const teacher = tSnap.data()
-      if (teacher.budgetWeekStart === monday) {
-        const newUsed = Math.max(0, (teacher.coinsUsedThisWeek || 0) - deduction)
-        tx.update(tRef, { coinsUsedThisWeek: newUsed })
+      if (teacher.budgetDayStart === today) {
+        const newUsed = Math.max(0, (teacher.coinsUsedToday || 0) - deduction)
+        tx.update(tRef, { coinsUsedToday: newUsed })
       }
     }
   })
@@ -1123,7 +1129,7 @@ export async function getStudentCompletions(studentId) {
 }
 
 export async function grantQuestReward({ teacherId, studentId, questId, questTitle, coins, xp }) {
-  const monday = getCurrentMondayDate()
+  const today = getCurrentBudgetDayDate()
 
   await runTransaction(db, async tx => {
     const uRef = doc(db, 'users', studentId)
@@ -1132,15 +1138,15 @@ export async function grantQuestReward({ teacherId, studentId, questId, questTit
 
     if (!uSnap.exists()) throw new Error('Student not found')
 
-    // Enforce weekly budget for teachers
+    // Enforce daily budget for teachers
     if (tSnap.exists() && tSnap.data().role === 'teacher') {
       const t      = tSnap.data()
-      const used   = t.budgetWeekStart === monday ? (t.coinsUsedThisWeek || 0) : 0
-      const budget = t.coinsBudgetWeekly ?? DEFAULT_WEEKLY_BUDGET
+      const used   = t.budgetDayStart === today ? (t.coinsUsedToday || 0) : 0
+      const budget = t.coinsBudgetDaily ?? t.coinsBudgetWeekly ?? DEFAULT_DAILY_BUDGET
       if (used + coins > budget) {
-        throw new Error(`Недостатньо тижневого бюджету. Залишок: ${budget - used} 🪙`)
+        throw new Error(`Недостатньо денного бюджету. Залишок: ${budget - used} 🪙`)
       }
-      tx.update(tRef, { coinsUsedThisWeek: used + coins, budgetWeekStart: monday })
+      tx.update(tRef, { coinsUsedToday: used + coins, budgetDayStart: today })
     }
 
     const user     = uSnap.data()

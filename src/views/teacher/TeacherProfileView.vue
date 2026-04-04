@@ -48,6 +48,8 @@ async function removePhoto() {
 }
 
 const budgetInfo = computed(() => getTeacherBudgetInfo(auth.profile))
+const budgetLowThresh = computed(() => Math.max(15, Math.round((budgetInfo.value.budget || 1) * 0.1)))
+const budgetMidThresh = computed(() => Math.max(50, Math.round((budgetInfo.value.budget || 1) * 0.35)))
 
 async function logout() {
   await auth.logout()
@@ -125,13 +127,16 @@ async function logout() {
       </div>
     </AppCard>
 
-    <!-- Weekly budget card -->
+    <!-- Daily budget card -->
     <AppCard class="flex flex-col gap-3">
       <div class="flex items-center justify-between">
         <div class="flex items-center gap-1.5 text-sm font-extrabold text-slate-300">
-          <Wallet :size="14" :stroke-width="2" class="text-amber-400" /> Тижневий бюджет
+          <Wallet :size="14" :stroke-width="2" class="text-amber-400" /> Денний бюджет
         </div>
-        <div class="font-extrabold text-sm" :class="budgetInfo.remaining < 50 ? 'text-red-400' : budgetInfo.remaining < 150 ? 'text-amber-400' : 'text-emerald-400'">
+        <div
+          class="font-extrabold text-sm"
+          :class="budgetInfo.remaining <= budgetLowThresh ? 'text-red-400' : budgetInfo.remaining <= budgetMidThresh ? 'text-amber-400' : 'text-emerald-400'"
+        >
           <span class="flex items-center gap-1">
             {{ budgetInfo.remaining }} / {{ budgetInfo.budget }}
             <Wallet :size="11" :stroke-width="2" />
@@ -141,13 +146,13 @@ async function logout() {
       <div class="h-3 bg-game-bg rounded-full overflow-hidden">
         <div
           class="h-full rounded-full transition-all duration-500"
-          :class="budgetInfo.remaining < 50 ? 'bg-red-500' : budgetInfo.remaining < 150 ? 'bg-amber-500' : 'bg-emerald-500'"
+          :class="budgetInfo.remaining <= budgetLowThresh ? 'bg-red-500' : budgetInfo.remaining <= budgetMidThresh ? 'bg-amber-500' : 'bg-emerald-500'"
           :style="{ width: Math.round((budgetInfo.remaining / budgetInfo.budget) * 100) + '%' }"
         />
       </div>
       <div class="flex items-center justify-between text-xs text-slate-500">
         <span class="flex items-center gap-0.5">Використано: {{ budgetInfo.used }} <Wallet :size="10" :stroke-width="2" /></span>
-        <span>Оновлюється щопонеділка</span>
+        <span>Оновлюється щодня</span>
       </div>
     </AppCard>
 

@@ -2,7 +2,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import {
-  getClass, getUsersByClass,
+  getClass, getUsersByClass, getAllSubjects,
   createQuest, cancelQuest, getQuestsByTeacher,
   getQuestCompletions, approveQuestCompletion, rejectQuestCompletion,
   getTeacherBudgetInfo,
@@ -23,6 +23,7 @@ const { success, error } = useToast()
 const quests        = ref([])
 const classes       = ref([])
 const modalStudents = ref([])
+const teacherSubjects = ref([])
 const loading       = ref(false)
 
 // ─── Create-quest modal ───────────────────────────────────────────────────────
@@ -31,6 +32,7 @@ const creating    = ref(false)
 const form = ref({
   title:       '',
   description: '',
+  subjectId:   '',
   scope:       'class',   // 'class' | 'student'
   classId:     '',
   studentId:   '',
@@ -62,6 +64,16 @@ onMounted(async () => {
   const all = await Promise.all(ids.map(id => getClass(id)))
   classes.value = all.filter(Boolean)
   if (classes.value.length) form.value.classId = classes.value[0].id
+
+  const subjIds = auth.profile?.subjectIds || []
+  try {
+    const allSub = await getAllSubjects()
+    teacherSubjects.value = subjIds.length
+      ? allSub.filter((s) => subjIds.includes(s.id))
+      : allSub
+  } catch {
+    teacherSubjects.value = []
+  }
 
   await fetchQuests()
 })
@@ -96,13 +108,20 @@ watch(() => form.value.scope, (s) => {
 // ─── Create quest ─────────────────────────────────────────────────────────────
 function openCreate() {
   form.value = {
-    title: '', description: '', scope: 'class',
+    title: '', description: '', subjectId: '', scope: 'class',
     classId: classes.value[0]?.id || '',
     studentId: '',
     rewardMode: 'all',
     rewardCoins: 20, rewardXp: 50,
   }
   showCreate.value = true
+}
+
+function selectedSubjectMeta() {
+  const id = form.value.subjectId
+  if (!id) return { subjectId: null, subjectName: null }
+  const s = teacherSubjects.value.find((x) => x.id === id)
+  return { subjectId: id, subjectName: s?.name || null }
 }
 
 async function doCreate() {
@@ -112,11 +131,14 @@ async function doCreate() {
 
   creating.value = true
   try {
+    const sub = selectedSubjectMeta()
     await createQuest({
       teacherId:   auth.profile.id,
       teacherName: auth.profile.displayName,
       title:       form.value.title.trim(),
       description: form.value.description.trim(),
+      subjectId:   sub.subjectId,
+      subjectName: sub.subjectName,
       scope:       form.value.scope,
       classId:     form.value.scope === 'class'   ? form.value.classId   : null,
       studentId:   form.value.scope === 'student' ? form.value.studentId : null,
@@ -312,6 +334,10 @@ function isImage(type) {
 
               <!-- Meta row -->
               <div class="flex items-center gap-2 mt-2 flex-wrap">
+                <span
+                  v-if="quest.subjectName"
+                  class="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-sky-500/15 text-sky-300"
+                >{{ quest.subjectName }}</span>
                 <span class="flex items-center gap-0.5 text-xs text-violet-300 font-bold">
                   <component :is="quest.scope === 'class' ? School : User" :size="10" :stroke-width="2" />
                   {{ quest.scope === 'class' ? className(quest.classId) : 'Індивідуальне' }}
@@ -471,6 +497,17 @@ function isImage(type) {
             placeholder="Детальний опис того, що потрібно зробити..."
             class="w-full bg-game-bg border border-game-border rounded-xl px-4 py-2.5 text-sm font-semibold text-white placeholder-slate-500 focus:outline-none focus:border-violet-500 resize-none"
           />
+        </div>
+
+        <div v-if="teacherSubjects.length > 0">
+          <label class="text-sm font-bold text-slate-300 block mb-2">Предмет (необов’язково)</label>
+          <select
+            v-model="form.subjectId"
+            class="w-full bg-game-bg border border-game-border rounded-xl px-4 py-2.5 text-sm font-bold text-white focus:outline-none focus:border-violet-500"
+          >
+            <option value="">— Без предмета —</option>
+            <option v-for="s in teacherSubjects" :key="s.id" :value="s.id">{{ s.name }}</option>
+          </select>
         </div>
 
         <!-- Scope toggle -->

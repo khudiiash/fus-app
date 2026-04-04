@@ -9,9 +9,7 @@ import { checkAndGrantAchievements } from '@/firebase/collections'
 import AppButton from '@/components/ui/AppButton.vue'
 import AppModal from '@/components/ui/AppModal.vue'
 import CoinDisplay from '@/components/gamification/CoinDisplay.vue'
-import SkinPreview      from '@/components/character/SkinPreview.vue'
 import Skin3dThumbnail  from '@/components/character/Skin3dThumbnail.vue'
-import AccessoryPreview from '@/components/character/AccessoryPreview.vue'
 import GlbThumbnail     from '@/components/character/GlbThumbnail.vue'
 import MysteryBoxSprite from '@/components/shop/MysteryBoxSprite.vue'
 import MysteryBoxRevealModal from '@/components/shop/MysteryBoxRevealModal.vue'
@@ -140,11 +138,30 @@ function rarityRadialBg(rarity) {
   return `radial-gradient(ellipse 82% 78% at 50% 40%, rgba(${rgb},0.42) 0%, rgba(${rgb},0.14) 42%, rgba(${rgb},0.03) 62%, transparent 74%)`
 }
 
+/**
+ * Modal preview: circle larger than the skin so the rarity wash frames the model, not only behind it.
+ */
+function rarityRadialBgModal(rarity) {
+  const rgb = {
+    legendary: '251,191,36',
+    epic: '192,132,252',
+    rare: '96,165,250',
+    common: '148,163,184',
+  }[rarity] || '148,163,184'
+  return `radial-gradient(circle min(240px, 78vw) at 50% 42%, rgba(${rgb},0.5) 0%, rgba(${rgb},0.22) 40%, rgba(${rgb},0.08) 62%, transparent 82%)`
+}
+
 /** Grid thumbnails ~30% smaller than previous shop layout */
 const THUMB_SKIN_W = 78
 const THUMB_SKIN_H = 106
 const THUMB_GLB_W = 130
 const THUMB_GLB_H = 176
+/** Modal GLB preview — same renderer as grid cards, slightly larger for detail */
+const MODAL_GLB_W = 140
+const MODAL_GLB_H = 190
+/** Modal skin — baked PNG via skinThumbnailRenderer (memory + IndexedDB), not live SkinViewer */
+const MODAL_SKIN_W = 140
+const MODAL_SKIN_H = 200
 </script>
 
 <template>
@@ -286,45 +303,53 @@ const THUMB_GLB_H = 176
     <!-- Item detail modal -->
     <AppModal :modelValue="!!selectedItem" :title="selectedItem?.name" @update:modelValue="v => { if (!v) selectedItem = null }">
       <div v-if="selectedItem" class="flex flex-col gap-4">
-        <div
-          class="flex items-center justify-center"
-          :class="
-            selectedItem.category === 'skin'
-              ? 'py-1'
-              : [
-                  'py-4 rounded-xl',
-                  selectedItem.rarity === 'legendary' && 'bg-gradient-to-br from-amber-500/10 to-amber-900/20',
-                  selectedItem.rarity === 'epic' && 'bg-gradient-to-br from-purple-500/10 to-purple-900/20',
-                  selectedItem.rarity === 'rare' && 'bg-gradient-to-br from-blue-500/10 to-blue-900/20',
-                  selectedItem.rarity === 'common' && 'bg-game-bg',
-                ].filter(Boolean)
-          "
-        >
-          <SkinPreview
-            v-if="selectedItem.category === 'skin'"
-            :skin-url="selectedItem.skinUrl" :skin-id="selectedItem.skinId"
-            :width="140" :height="200"
-            transparent-background
-          />
-          <AccessoryPreview
-            v-else-if="selectedItem.modelData"
-            :model-data="selectedItem.modelData"
-            :width="140" :height="200"
-            :yaw-deg="selectedItem.category === 'room' ? 0 : -30"
-          />
-          <div
-            v-else-if="selectedItem.category === 'mystery_box'"
-            class="flex flex-col items-center justify-center py-4 gap-1.5"
-          >
-            <MysteryBoxSprite :rarity="selectedItem.rarity || 'common'" :size="100" />
-            <p class="text-[10px] text-slate-500 text-center px-2 max-w-[280px] leading-snug">
-              Монети та шанс на предмети за рідкістю коробки.
-            </p>
-          </div>
-          <div v-else class="opacity-20 py-4">
-            <Home v-if="selectedItem.category === 'room'" :size="80" :stroke-width="1" />
-            <PawPrint v-else-if="selectedItem.category === 'pet'" :size="80" :stroke-width="1" />
-            <Package v-else :size="80" :stroke-width="1" />
+        <!-- w-fit = glow box matches thumbnail, not full modal width (fixes stretched / clipped radial) -->
+        <div class="flex justify-center py-1">
+          <div class="relative w-fit max-w-full mx-auto px-8 py-7">
+            <div
+              class="absolute inset-0 pointer-events-none rounded-2xl overflow-hidden"
+              :style="{ background: rarityRadialBgModal(selectedItem.rarity) }"
+              aria-hidden="true"
+            />
+            <div class="relative z-[1] flex flex-col items-center justify-center gap-1.5">
+            <Skin3dThumbnail
+              v-if="selectedItem.category === 'skin'"
+              :skin-url="selectedItem.skinUrl"
+              :skin-id="selectedItem.skinId || 'default'"
+              :width="MODAL_SKIN_W"
+              :height="MODAL_SKIN_H"
+            />
+            <GlbThumbnail
+              v-else-if="selectedItem.category === 'room' && selectedItem.modelData"
+              :model-data="selectedItem.modelData"
+              :width="MODAL_GLB_W"
+              :height="MODAL_GLB_H"
+              is-room
+            />
+            <GlbThumbnail
+              v-else-if="selectedItem.category === 'accessory' && selectedItem.modelData"
+              :model-data="selectedItem.modelData"
+              :width="MODAL_GLB_W"
+              :height="MODAL_GLB_H"
+            />
+            <GlbThumbnail
+              v-else-if="selectedItem.category === 'pet' && selectedItem.modelData"
+              :model-data="selectedItem.modelData"
+              :width="MODAL_GLB_W"
+              :height="MODAL_GLB_H"
+            />
+            <template v-else-if="selectedItem.category === 'mystery_box'">
+              <MysteryBoxSprite :rarity="selectedItem.rarity || 'common'" :size="100" />
+              <p class="text-[10px] text-slate-500 text-center px-2 max-w-[280px] leading-snug">
+                Монети та шанс на предмети за рідкістю коробки.
+              </p>
+            </template>
+            <div v-else class="opacity-20 py-4 flex items-center justify-center">
+              <Home v-if="selectedItem.category === 'room'" :size="80" :stroke-width="1" />
+              <PawPrint v-else-if="selectedItem.category === 'pet'" :size="80" :stroke-width="1" />
+              <Package v-else :size="80" :stroke-width="1" />
+            </div>
+            </div>
           </div>
         </div>
 

@@ -1,6 +1,6 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue'
-import { getAllTeachers, getAllClasses, getAllSubjects, createAccessCode, updateClass, setTeacherWeeklyBudget, DEFAULT_WEEKLY_BUDGET, deleteUserData, adminUpdateTeacherAssignments } from '@/firebase/collections'
+import { getAllTeachers, getAllClasses, getAllSubjects, createAccessCode, updateClass, setTeacherDailyBudget, DEFAULT_DAILY_BUDGET, deleteUserData, adminUpdateTeacherAssignments } from '@/firebase/collections'
 import { createUserWithEmailAndPassword, updateProfile, signInWithEmailAndPassword } from 'firebase/auth'
 import { auth as fbAuth } from '@/firebase/config'
 import { setDoc, doc, serverTimestamp, arrayUnion } from 'firebase/firestore'
@@ -174,12 +174,12 @@ async function deleteTeacher(teacher) {
 // ─── Budget edit ──────────────────────────────────────────────────────────────
 const showBudget     = ref(false)
 const budgetTeacher  = ref(null)
-const budgetAmount   = ref(DEFAULT_WEEKLY_BUDGET)
+const budgetAmount   = ref(DEFAULT_DAILY_BUDGET)
 const savingBudget   = ref(false)
 
 function openBudget(teacher) {
   budgetTeacher.value = teacher
-  budgetAmount.value  = teacher.coinsBudgetWeekly ?? DEFAULT_WEEKLY_BUDGET
+  budgetAmount.value  = teacher.coinsBudgetDaily ?? teacher.coinsBudgetWeekly ?? DEFAULT_DAILY_BUDGET
   showBudget.value    = true
 }
 
@@ -187,8 +187,8 @@ async function saveBudget() {
   if (!budgetAmount.value || budgetAmount.value < 0) { error('Введіть коректне значення'); return }
   savingBudget.value = true
   try {
-    await setTeacherWeeklyBudget(budgetTeacher.value.id, budgetAmount.value)
-    success(`Бюджет оновлено: ${budgetAmount.value} монет/тиждень`)
+    await setTeacherDailyBudget(budgetTeacher.value.id, budgetAmount.value)
+    success(`Бюджет оновлено: ${budgetAmount.value} монет/день`)
     showBudget.value = false
     teachers.value   = await getAllTeachers()
   } catch (e) {
@@ -392,7 +392,7 @@ async function saveEditTeacher() {
               <Copy :size="9" :stroke-width="2" class="opacity-0 group-hover:opacity-100 transition-opacity ml-0.5" />
             </button>
             <span class="text-slate-700 text-xs">·</span>
-            <span class="text-xs text-amber-400 font-bold">{{ t.coinsBudgetWeekly ?? DEFAULT_WEEKLY_BUDGET }} м/тиж</span>
+            <span class="text-xs text-amber-400 font-bold">{{ t.coinsBudgetDaily ?? t.coinsBudgetWeekly ?? DEFAULT_DAILY_BUDGET }} м/день</span>
           </div>
         </div>
 
@@ -577,22 +577,22 @@ async function saveEditTeacher() {
           Вчитель: <span class="font-bold text-white">{{ budgetTeacher?.displayName }}</span>
         </div>
         <div>
-          <label class="text-sm font-bold text-slate-300 block mb-2">Монет на тиждень</label>
+          <label class="text-sm font-bold text-slate-300 block mb-2">Монет на день</label>
           <input
-            v-model="budgetAmount" type="number" min="0" step="50"
+            v-model="budgetAmount" type="number" min="0" step="25"
             class="w-full bg-game-bg border border-white/[0.07] rounded-xl px-4 py-3 text-center text-2xl font-extrabold text-amber-400 focus:outline-none focus:border-amber-500"
           />
         </div>
         <div class="flex gap-2 flex-wrap">
           <button
-            v-for="v in [100, 250, 500, 1000, 2000]" :key="v"
+            v-for="v in [100, 200, 300, 400, 600]" :key="v"
             class="flex-1 py-2 rounded-xl text-sm font-bold transition-all"
             :class="budgetAmount == v ? 'bg-amber-500 text-slate-900' : 'bg-game-card text-slate-300 hover:bg-game-elevated'"
             @click="budgetAmount = v"
           >{{ v }}</button>
         </div>
         <div class="text-xs text-slate-500 text-center">
-          Бюджет оновлюється щопонеділка. Поточне значення: {{ budgetTeacher?.coinsBudgetWeekly ?? DEFAULT_WEEKLY_BUDGET }} монет
+          Бюджет оновлюється щодня. Поточне значення: {{ budgetTeacher?.coinsBudgetDaily ?? budgetTeacher?.coinsBudgetWeekly ?? DEFAULT_DAILY_BUDGET }} монет
         </div>
         <AppButton variant="primary" block :loading="savingBudget" @click="saveBudget">Зберегти бюджет</AppButton>
       </div>

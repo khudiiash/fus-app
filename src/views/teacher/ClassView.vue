@@ -159,7 +159,7 @@ async function doAward() {
   const total = targets.length * Number(awardAmount.value)
   const { remaining } = getTeacherBudgetInfo(auth.profile)
   if (total > remaining) {
-    error(`Недостатньо бюджету. Потрібно ${total} 🪙, залишок цього тижня: ${remaining} 🪙`)
+    error(`Недостатньо бюджету. Потрібно ${total} 🪙, залишок на сьогодні: ${remaining} 🪙`)
     return
   }
 
@@ -195,6 +195,8 @@ const QUICK_AMOUNTS = [5, 10, 25, 50, 100]
 const FINE_AMOUNTS  = [5, 10, 25, 50]
 
 const budgetInfo = computed(() => getTeacherBudgetInfo(auth.profile))
+const budgetLowThresh = computed(() => Math.max(15, Math.round((budgetInfo.value.budget || 1) * 0.1)))
+const budgetMidThresh = computed(() => Math.max(50, Math.round((budgetInfo.value.budget || 1) * 0.35)))
 const awardRecipientCount = computed(() => {
   if (!bulkMode.value) return awardTarget.value ? 1 : 0
   if (bulkFromCards.value) return selectedStudentIds.value.length
@@ -329,13 +331,16 @@ async function doFine() {
         </AppButton>
       </div>
 
-      <!-- Weekly budget meter -->
+      <!-- Daily budget meter -->
       <div class="glass-card p-2.5 flex flex-col gap-1.5">
         <div class="flex items-center justify-between text-xs">
           <span class="font-bold text-slate-300 flex items-center gap-1">
-            <Wallet :size="13" :stroke-width="2" class="text-amber-400" /> Тижневий бюджет
+            <Wallet :size="13" :stroke-width="2" class="text-amber-400" /> Денний бюджет
           </span>
-          <span class="font-extrabold" :class="budgetInfo.remaining < 50 ? 'text-red-400' : budgetInfo.remaining < 150 ? 'text-amber-400' : 'text-emerald-400'">
+          <span
+            class="font-extrabold"
+            :class="budgetInfo.remaining <= budgetLowThresh ? 'text-red-400' : budgetInfo.remaining <= budgetMidThresh ? 'text-amber-400' : 'text-emerald-400'"
+          >
             <span class="flex items-center gap-0.5 tabular-nums">
               {{ budgetInfo.remaining }} / {{ budgetInfo.budget }}
               <Coins :size="11" :stroke-width="2" />
@@ -345,12 +350,12 @@ async function doFine() {
         <div class="h-1.5 bg-game-bg rounded-full overflow-hidden">
           <div
             class="h-full rounded-full transition-all duration-500"
-            :class="budgetInfo.remaining < 50 ? 'bg-red-500' : budgetInfo.remaining < 150 ? 'bg-amber-500' : 'bg-emerald-500'"
+            :class="budgetInfo.remaining <= budgetLowThresh ? 'bg-red-500' : budgetInfo.remaining <= budgetMidThresh ? 'bg-amber-500' : 'bg-emerald-500'"
             :style="{ width: Math.round((budgetInfo.remaining / budgetInfo.budget) * 100) + '%' }"
           />
         </div>
         <div v-if="budgetInfo.remaining === 0" class="text-xs text-red-400 font-bold text-center">
-          Бюджет вичерпано. Оновлення в понеділок.
+          Бюджет на сьогодні вичерпано. Ліміт оновиться завтра.
         </div>
       </div>
     </div>
@@ -621,10 +626,10 @@ async function doFine() {
           <Gavel :size="16" :stroke-width="2" class="text-red-400 flex-shrink-0 mt-0.5" />
           <div class="text-xs text-red-300">
             <template v-if="fineBulkFromCards">
-              Кожному з обраних зніметься до {{ fineAmount }} монет (не більше його балансу). Монети повернуться до твого тижневого бюджету.
+              Кожному з обраних зніметься до {{ fineAmount }} монет (не більше його балансу). Монети повернуться до твого денного бюджету.
             </template>
             <template v-else>
-              Монети будуть знято з балансу учня і повернуті до твого тижневого бюджету.
+              Монети будуть знято з балансу учня і повернуті до твого денного бюджету.
             </template>
           </div>
         </div>

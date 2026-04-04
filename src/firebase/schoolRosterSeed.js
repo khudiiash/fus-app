@@ -13,7 +13,7 @@ import {
   getAllStudents,
   createAccessCode,
   updateClass,
-  DEFAULT_WEEKLY_BUDGET,
+  DEFAULT_DAILY_BUDGET,
 } from './collections'
 import { nameToEmail } from '../composables/useNameToEmail'
 
@@ -206,7 +206,7 @@ export async function seedSchoolRoster({ adminEmail, adminCode }) {
         inventory: [],
         badges: [],
         createdAt: serverTimestamp(),
-        coinsBudgetWeekly: DEFAULT_WEEKLY_BUDGET,
+        coinsBudgetDaily: DEFAULT_DAILY_BUDGET,
       })
       await createAccessCode(code, { email, uid, displayName, role: 'teacher', classId: null })
       existing.add(normName(displayName))

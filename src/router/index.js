@@ -58,6 +58,7 @@ const router = createRouter({
         { path: 'leaderboard', name: 'student-leaderboard', component: () => import('@/views/student/LeaderboardView.vue') },
         { path: 'achievements', name: 'student-achievements', component: () => import('@/views/student/AchievementsView.vue') },
         { path: 'history',     name: 'student-history',      component: () => import('@/views/student/HistoryView.vue') },
+        { path: 'quests',      name: 'student-quests',       component: () => import('@/views/student/TeacherQuestsView.vue') },
         { path: 'room',        name: 'student-room',         component: () => import('@/views/student/RoomView.vue') },
         { path: 'room/:uid',   name: 'student-room-other',   component: () => import('@/views/student/RoomView.vue') },
       ],

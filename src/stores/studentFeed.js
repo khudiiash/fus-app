@@ -19,7 +19,8 @@ function sortCompletionsDesc(list) {
 
 /**
  * Реалтайм-стрічка для учня: завдання вчителя, рішення по заявках, нагороди/штрафи.
- * + toast і системні сповіщення (як у trade store), без серверного FCM.
+ * Toast у застосунку + trySystemNotify там, де немає дубля з Cloud Functions (FCM).
+ * Нові завдання: лише toast — push уже шле `onQuestCreated` (schoolPush.js).
  */
 export const useStudentFeedStore = defineStore('studentFeed', () => {
   const teacherQuests = ref([])
@@ -82,8 +83,7 @@ export const useStudentFeedStore = defineStore('studentFeed', () => {
       }
       for (const q of list) {
         if (!prevQuestIds.has(q.id)) {
-          const who = q.teacherName ? ` (${q.teacherName})` : ''
-          void trySystemNotify('Нове завдання від вчителя', `${q.title}${who}`, { tag: `quest-${q.id}` })
+          // Не викликати trySystemNotify: інакше дубль з FCM (onQuestCreated) з іншим текстом тіла.
           toastInfo(`Нове завдання: ${q.title}`)
         }
       }
