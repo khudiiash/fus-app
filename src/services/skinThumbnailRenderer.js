@@ -3,6 +3,7 @@
  * Serial queue + memory cache + IndexedDB across sessions (thumbnailIndexedDb.js).
  */
 import { getPersistentThumbnail, setPersistentThumbnail } from '@/services/thumbnailIndexedDb'
+import { loadRemoteSkinForViewer } from '@/utils/loadRemoteSkinForViewer'
 import * as skinview3d from 'skinview3d'
 import * as THREE from 'three'
 
@@ -132,15 +133,7 @@ async function renderOnce(skinUrl, skinId, w, h) {
   viewer.renderer.setClearColor(0x000000, 0)
 
   const fallbackCanvas = generateSkinCanvas(skinId || 'default')
-  if (skinUrl) {
-    try {
-      await viewer.loadSkin(skinUrl)
-    } catch {
-      viewer.loadSkin(fallbackCanvas)
-    }
-  } else {
-    viewer.loadSkin(fallbackCanvas)
-  }
+  await loadRemoteSkinForViewer(viewer, skinUrl, fallbackCanvas)
 
   applyNearestFilterToSkin()
   viewer.resetCameraPose()

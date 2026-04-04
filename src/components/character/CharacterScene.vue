@@ -1,5 +1,6 @@
 <script setup>
 import '@/utils/enableThreeFileCache'
+import { loadRemoteSkinForViewer } from '@/utils/loadRemoteSkinForViewer'
 import { ref, onMounted, onUnmounted, watch } from 'vue'
 import * as skinview3d from 'skinview3d'
 import * as THREE from 'three'
@@ -601,64 +602,6 @@ function applyNearestFilterToSkin() {
   })
 }
 
-function isHttpSkinUrl(url) {
-  return typeof url === 'string' && /^https?:\/\//i.test(url)
-}
-
-/**
- * Remote skins (Firebase Storage) + Workbox: the first cross-origin image load
- * often fails (net::ERR_FAILED) while the SW fetch succeeds on a second attempt.
- * Fetch as blob → blob: URL so decoding is same-origin and WebGL upload is stable.
- */
-async function loadSkinForViewer(skinUrl, fallbackCanvas) {
-  if (!viewer) return
-  if (!skinUrl) {
-    viewer.loadSkin(fallbackCanvas)
-    return
-  }
-  if (!isHttpSkinUrl(skinUrl)) {
-    try {
-      await viewer.loadSkin(skinUrl)
-    } catch {
-      viewer.loadSkin(fallbackCanvas)
-    }
-    return
-  }
-  if (typeof navigator !== 'undefined' && navigator.serviceWorker?.ready) {
-    try {
-      await navigator.serviceWorker.ready
-    } catch {
-      /* ignore */
-    }
-  }
-  const fetchBlob = async () => {
-    const res = await fetch(skinUrl, { mode: 'cors', credentials: 'omit', cache: 'default' })
-    if (!res.ok) throw new Error(String(res.status))
-    return res.blob()
-  }
-  let blob = null
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      blob = await fetchBlob()
-      break
-    } catch {
-      if (attempt === 0) await new Promise((r) => setTimeout(r, 80))
-    }
-  }
-  if (!blob) {
-    viewer.loadSkin(fallbackCanvas)
-    return
-  }
-  const objectUrl = URL.createObjectURL(blob)
-  try {
-    await viewer.loadSkin(objectUrl)
-  } catch {
-    viewer.loadSkin(fallbackCanvas)
-  } finally {
-    URL.revokeObjectURL(objectUrl)
-  }
-}
-
 async function applyProfile() {
   if (!viewer || !props.profile) return
 
@@ -667,7 +610,7 @@ async function applyProfile() {
   // 1. Skin — skinOverrideUrl (tester) takes priority, then profile url, then palette fallback
   const fallbackCanvas = generateSkinCanvas(avatar.skinId || 'default')
   const skinUrl = props.skinOverrideUrl || avatar.skinUrl
-  await loadSkinForViewer(skinUrl, fallbackCanvas)
+  await loadRemoteSkinForViewer(viewer, skinUrl, fallbackCanvas)
   applyNearestFilterToSkin()
 
   // 2. Accessories on bones (profile accessories, then override if set)
@@ -769,7 +712,7 @@ async function applySkinOnly() {
   const avatar = props.profile?.avatar || {}
   const fallback = generateSkinCanvas(avatar.skinId || 'default')
   const skinUrl = props.skinOverrideUrl || avatar.skinUrl
-  await loadSkinForViewer(skinUrl, fallback)
+  await loadRemoteSkinForViewer(viewer, skinUrl, fallback)
   applyNearestFilterToSkin()
 }
 

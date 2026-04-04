@@ -2,12 +2,15 @@
 import { ref, onMounted, onUnmounted, watch } from 'vue'
 import * as skinview3d from 'skinview3d'
 import * as THREE from 'three'
+import { loadRemoteSkinForViewer } from '@/utils/loadRemoteSkinForViewer'
 
 const props = defineProps({
   skinUrl: { type: String, default: null },
   skinId:  { type: String, default: 'default' },
   width:   { type: Number, default: 100 },
   height:  { type: Number, default: 160 },
+  /** No panel fill — WebGL clear alpha 0 (e.g. shop modal over game background). */
+  transparentBackground: { type: Boolean, default: false },
 })
 
 // ─── Canvas-based fallback skin generation ───────────────────────────────────
@@ -94,9 +97,7 @@ async function initViewer() {
   // Slightly zoomed out so the full character is visible in the thumbnail
   viewer.zoom = 0.9
 
-  // Dark background matching the app theme
-  viewer.background = 0x0f0c24
-  viewer.nameTag    = null
+  viewer.nameTag = null
 
   await loadAndRender()
 }
@@ -105,6 +106,17 @@ function safeDispose() {
   if (!viewer) return
   try { viewer.dispose() } catch { /* r183 compat — dispose may throw */ }
   viewer = null
+}
+
+function applyViewerBackground() {
+  if (!viewer) return
+  if (props.transparentBackground) {
+    viewer.background = null
+    viewer.renderer.setClearColor(0x000000, 0)
+  } else {
+    viewer.background = 0x0f0c24
+    viewer.renderer.setClearColor(0x0f0c24, 1)
+  }
 }
 
 function applyNearestFilterToSkin() {
@@ -120,18 +132,10 @@ function applyNearestFilterToSkin() {
 
 async function loadAndRender() {
   if (!viewer) return
+  applyViewerBackground()
 
   const fallbackCanvas = generateSkinCanvas(props.skinId || 'default')
-
-  if (props.skinUrl) {
-    try {
-      await viewer.loadSkin(props.skinUrl)
-    } catch {
-      viewer.loadSkin(fallbackCanvas)
-    }
-  } else {
-    viewer.loadSkin(fallbackCanvas)
-  }
+  await loadRemoteSkinForViewer(viewer, props.skinUrl, fallbackCanvas)
 
   // Pixel-perfect Minecraft look
   applyNearestFilterToSkin()
@@ -149,7 +153,7 @@ onMounted(initViewer)
 onUnmounted(safeDispose)
 
 // Re-render whenever the skin URL or fallback ID changes
-watch(() => [props.skinUrl, props.skinId], loadAndRender)
+watch(() => [props.skinUrl, props.skinId, props.transparentBackground], loadAndRender)
 </script>
 
 <template>

@@ -158,16 +158,16 @@ export default defineConfig(({ mode }) => ({
             handler: 'NetworkFirst',
             options: { cacheName: 'firestore-cache' },
           },
-          // GLB / images from Firebase Storage. StaleWhileRevalidate serves the last copy immediately
-          // (fast re-entry to room / shop on mobile) while updating in the background. Skins use fetch→blob
-          // in CharacterScene, so we avoid the old <img>+SW first-load race. Only cache real 200 responses.
+          // Firebase Storage: NetworkFirst avoids first-hit flakiness with StaleWhileRevalidate when the
+          // cache is cold (skins use fetch→blob in app code; GLB still benefits from cache after first OK).
           {
             urlPattern: ({ url }) =>
               url.hostname === 'firebasestorage.googleapis.com' ||
               url.hostname === 'storage.googleapis.com',
-            handler: 'StaleWhileRevalidate',
+            handler: 'NetworkFirst',
             options: {
               cacheName: 'fus-storage-models',
+              networkTimeoutSeconds: 8,
               expiration: { maxEntries: 120, maxAgeSeconds: 60 * 60 * 24 * 30 },
               cacheableResponse: { statuses: [200] },
             },

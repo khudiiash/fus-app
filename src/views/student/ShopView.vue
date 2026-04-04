@@ -287,18 +287,24 @@ const THUMB_GLB_H = 176
     <AppModal :modelValue="!!selectedItem" :title="selectedItem?.name" @update:modelValue="v => { if (!v) selectedItem = null }">
       <div v-if="selectedItem" class="flex flex-col gap-4">
         <div
-          class="flex items-center justify-center py-4 rounded-xl"
-          :class="{
-            'bg-gradient-to-br from-amber-500/10 to-amber-900/20': selectedItem.rarity === 'legendary',
-            'bg-gradient-to-br from-purple-500/10 to-purple-900/20': selectedItem.rarity === 'epic',
-            'bg-gradient-to-br from-blue-500/10 to-blue-900/20': selectedItem.rarity === 'rare',
-            'bg-game-bg': selectedItem.rarity === 'common',
-          }"
+          class="flex items-center justify-center"
+          :class="
+            selectedItem.category === 'skin'
+              ? 'py-1'
+              : [
+                  'py-4 rounded-xl',
+                  selectedItem.rarity === 'legendary' && 'bg-gradient-to-br from-amber-500/10 to-amber-900/20',
+                  selectedItem.rarity === 'epic' && 'bg-gradient-to-br from-purple-500/10 to-purple-900/20',
+                  selectedItem.rarity === 'rare' && 'bg-gradient-to-br from-blue-500/10 to-blue-900/20',
+                  selectedItem.rarity === 'common' && 'bg-game-bg',
+                ].filter(Boolean)
+          "
         >
           <SkinPreview
             v-if="selectedItem.category === 'skin'"
             :skin-url="selectedItem.skinUrl" :skin-id="selectedItem.skinId"
             :width="140" :height="200"
+            transparent-background
           />
           <AccessoryPreview
             v-else-if="selectedItem.modelData"
@@ -383,7 +389,7 @@ const THUMB_GLB_H = 176
               :disabled="!canAfford(selectedItem)"
               @click="buyItem"
             >
-              {{ canAfford(selectedItem) ? `Купити · ${selectedItem.price} 🪙` : `Не вистачає ${selectedItem.price - (auth.profile?.coins || 0)}` }}
+              {{ canAfford(selectedItem) ? 'Купити' : `Не вистачає ${selectedItem.price - (auth.profile?.coins || 0)}` }}
             </AppButton>
           </div>
         </template>
@@ -409,7 +415,7 @@ const THUMB_GLB_H = 176
             :disabled="!canAfford(selectedItem)"
             @click="buyItem"
           >
-            {{ canAfford(selectedItem) ? `Купити за ${selectedItem.price}` : `Не вистачає ${selectedItem.price - (auth.profile?.coins || 0)}` }}
+            {{ canAfford(selectedItem) ? 'Купити' : `Не вистачає ${selectedItem.price - (auth.profile?.coins || 0)}` }}
           </AppButton>
         </template>
       </div>
