@@ -111,15 +111,8 @@ const peerChipLabel = computed(() => {
 
 const messageBodyText = computed(() => {
   if (props.tx.type === 'box_open') return ''
-  if (props.tx.type === 'badge_sent') {
-    const sub = (props.tx.subjectName || '').trim()
-    const name = (props.tx.note || '').trim()
-    if (sub && name) return `${name} · ${sub}`
-    if (props.teacherBadgeInbox) {
-      return sub || name || 'Учень передав значок після офлайн-активності на уроці'
-    }
-    return sub || name || 'Подяка вчителю за офлайн-активність'
-  }
+  /** Немає окремого тексту — предмет у чіпі peerChipLabel, itemIds дає прев’ю значка */
+  if (props.tx.type === 'badge_sent') return ''
   if (props.tx.type !== 'award') return (props.tx.note || '').trim()
   const peer = props.tx.peerProfile
   if (!peer || (peer.role !== 'teacher' && peer.role !== 'admin')) {

@@ -664,7 +664,7 @@ export async function sendSubjectBadge({ studentUid, itemId, teacherUid }) {
     itemIds: [itemId],
     subjectId: itemMeta.subjectId,
     subjectName: itemMeta.subjectName || '',
-    note: itemMeta.name || '',
+    note: '',
   })
   await updateQuestProgress(studentUid, 'badge_send', 1)
 }

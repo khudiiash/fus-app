@@ -138,11 +138,7 @@ function registerSchoolPushTriggers(region, exportsObj) {
         } catch {
           /* ignore */
         }
-        const badgeName = (t.note && String(t.note).trim()) || 'Предметний значок'
-        const subj = (t.subjectName && String(t.subjectName).trim()) || ''
-        let body = `${studentName} передав вам «${badgeName}»`
-        if (subj) body += ` · ${subj}`
-        body = body.slice(0, 180)
+        const body = `${studentName} передав вам предметний значок`.slice(0, 180)
         await sendPushToUser(teacherId, {
           title: 'Новий значок від учня',
           body,
