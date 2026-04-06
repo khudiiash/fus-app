@@ -430,6 +430,78 @@ const SEED_SUBJECTS = [
   'WOS',
 ]
 
+/**
+ * Предметні значки для магазину: збіг за назвою предмета з колекції `subjects`.
+ * Один запис = один товар на перший знайдений предмет із matchNames.
+ */
+export const SUBJECT_BADGE_DEFS = [
+  /** spriteIndex = кадр у src/assets/subjects.png (див. BADGE_SPRITE_LABELS). */
+  { matchNames: ['Математика', 'Математика (алгебра)', 'Математика (геометрія)', 'Геометрія', 'Алгебра'], name: 'Значок математики', emoji: '🔢', spriteIndex: 4, description: 'Легендарний значок за успіхи на уроках математики. Можна вручити вчителю предмета.', price: 1000 },
+  { matchNames: ['Фізика', 'Фізика і астрономія'], name: 'Значок фізики', emoji: '⚛️', spriteIndex: 5, description: 'Атом і зірки — для тих, хто тягнеться до законів природи. Передай вчителю фізики після офлайн-активності.', price: 1000 },
+  { matchNames: ['Хімія'], name: 'Значок хімії', emoji: '🧪', spriteIndex: 6, description: 'Колба з «реакцією» — подяка за експерименти на уроці. Усі значки легендарної якості.', price: 1000 },
+  { matchNames: ['Інформатика', 'Інтегрований курс STEM', 'Інтегрований курс "Дизайн та технології, STEM, Інформатика"'], name: 'Значок інформатики', emoji: '💻', spriteIndex: 11, description: 'Для майстрів коду та цифрових проєктів.', price: 1000 },
+  { matchNames: ['Українська мова', 'Українська література', 'Літературне читання', 'Читання'], name: 'Значок української', emoji: '📘', spriteIndex: 12, description: 'Рідна мова та література — гордість школи.', price: 1000 },
+  { matchNames: ['Німецька мова'], name: 'Значок німецької', emoji: '🥨', spriteIndex: 17, description: 'Deutsch mit Freude. Передай вчителю німецької.', price: 1000 },
+  { matchNames: ['Англійська мова', 'Англійська мова група 1', 'Англійська мова група 2', 'Іноземна мова (англійська мова)', 'Англійська мова (додаткова)'], name: 'Значок англійської', emoji: '📕', spriteIndex: 16, description: 'English vibes — подяка вчителю англійської.', price: 1000 },
+  { matchNames: ['Біологія', 'Біологія і екологія'], name: 'Значок біології', emoji: '🧬', spriteIndex: 8, description: 'Життя під мікроскопом і не тільки.', price: 1000 },
+  { matchNames: ['Пізнаємо природу', 'Інтегрований курс "Пізнаємо природу"'], name: 'Значок природознавства', emoji: '🌳', spriteIndex: 10, description: 'Для дослідників природи та інтегрованих курсів.', price: 1000 },
+  { matchNames: ['Географія'], name: 'Значок географії', emoji: '🌍', spriteIndex: 1, description: 'Планета в долоні — для дослідників карт.', price: 1000 },
+  { matchNames: ['Історія України', 'Історія', 'Всесвітня історія', 'Всесвітня історія. Історія України (інтегрований курс)', 'Історія. Інтегрований курс'], name: 'Значок історії', emoji: '🏛️', spriteIndex: 0, description: 'Минуле, що формує майбутнє.', price: 1000 },
+  { matchNames: ['Зарубіжна література'], name: 'Значок зарубіжної літератури', emoji: '📚', spriteIndex: 14, description: 'Світова класика та сучасність.', price: 1000 },
+  { matchNames: ['Мистецтво', 'Образотворче мистецтво', 'Малювання'], name: 'Значок образотворчого мистецтва', emoji: '🎨', spriteIndex: 19, description: 'Колір і натхнення на уроці малювання.', price: 1000 },
+  { matchNames: ['Музика', 'Музичне мистецтво'], name: 'Значок музики', emoji: '🎵', spriteIndex: 21, description: 'Звук, ритм і сцена.', price: 1000 },
+  { matchNames: ['Фізична культура'], name: 'Значок фізкультури', emoji: '⚽', spriteIndex: 22, description: 'Рух, команда, перемоги на уроці.', price: 1000 },
+  { matchNames: ['Правознавство', 'Основи правознавства'], name: 'Значок правознавства', emoji: '⚖️', spriteIndex: 2, description: 'Право та відповідальність.', price: 1000 },
+  { matchNames: ['Суспільствознавство'], name: 'Значок суспільствознавства', emoji: '👥', spriteIndex: 3, description: 'Люди, суспільство, спільнота.', price: 1000 },
+  { matchNames: ['Польська мова', 'Польська мова (додаткова)', 'Польська культура'], name: 'Значок польської мови', emoji: '🇵🇱', spriteIndex: 18, description: 'Cześć! Подяка вчителю польської.', price: 1000 },
+  { matchNames: ['Основи здоров\'я і життєдіяльності'], name: 'Значок основ здоров’я', emoji: '❤️', spriteIndex: 23, description: 'Здоров’я та безпека життя.', price: 1000 },
+  { matchNames: ['ЯДС', 'ЯДС STEM'], name: 'Значок захисту України', emoji: '🛡️', spriteIndex: 24, description: 'Патріотизм і готовність.', price: 1000 },
+]
+
+export async function seedSubjectBadges() {
+  const itemsSnap = await getDocs(collection(db, 'items'))
+  await Promise.all(
+    itemsSnap.docs.filter((d) => d.data().category === 'subject_badge').map((d) => deleteDoc(d.ref)),
+  )
+
+  const subSnap = await getDocs(collection(db, 'subjects'))
+  const byNameLower = new Map()
+  for (const d of subSnap.docs) {
+    const n = d.data().name?.trim().toLowerCase()
+    if (n) byNameLower.set(n, { id: d.id, name: d.data().name })
+  }
+
+  let added = 0
+  for (const def of SUBJECT_BADGE_DEFS) {
+    let subj = null
+    for (const n of def.matchNames) {
+      const k = n.trim().toLowerCase()
+      if (byNameLower.has(k)) {
+        subj = byNameLower.get(k)
+        break
+      }
+    }
+    if (!subj) continue
+    await addDoc(collection(db, 'items'), {
+      name: def.name,
+      description: def.description,
+      category: 'subject_badge',
+      rarity: 'legendary',
+      price: def.price ?? 1000,
+      subjectId: subj.id,
+      subjectName: subj.name,
+      badgeEmoji: def.emoji,
+      badgeSpriteIndex: typeof def.spriteIndex === 'number' ? def.spriteIndex : null,
+      active: true,
+      stock: null,
+      isLimited: false,
+      createdAt: new Date(),
+    })
+    added++
+  }
+  return { added, skipped: SUBJECT_BADGE_DEFS.length - added }
+}
+
 export async function seedShopItems() {
   const snap = await getDocs(collection(db, 'items'))
   await Promise.all(snap.docs.map(d => deleteDoc(d.ref)))

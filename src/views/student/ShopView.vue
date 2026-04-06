@@ -11,9 +11,8 @@ import AppModal from '@/components/ui/AppModal.vue'
 import CoinDisplay from '@/components/gamification/CoinDisplay.vue'
 import Skin3dThumbnail  from '@/components/character/Skin3dThumbnail.vue'
 import GlbThumbnail     from '@/components/character/GlbThumbnail.vue'
-import MysteryBoxSprite from '@/components/shop/MysteryBoxSprite.vue'
-import MysteryBoxRevealModal from '@/components/shop/MysteryBoxRevealModal.vue'
-import { ShoppingBag, Sparkles, Palette, ChefHat, Home, Package, CheckCircle2, Clock, Gift, PawPrint } from 'lucide-vue-next'
+import SubjectBadgeArt from '@/components/shop/SubjectBadgeArt.vue'
+import { ShoppingBag, Sparkles, Palette, ChefHat, Home, Package, CheckCircle2, Clock, Medal, PawPrint } from 'lucide-vue-next'
 
 const shop      = useShopStore()
 const auth      = useAuthStore()
@@ -24,14 +23,6 @@ const { coin: hapticCoin } = useHaptic()
 const activeCategory = ref('all')
 const selectedItem   = ref(null)
 const buying         = ref(false)
-const openingBox     = ref(false)
-const revealOpen     = ref(false)
-const revealed       = ref(null)
-const revealBoxRarity = ref('common')
-
-watch(revealOpen, (v) => {
-  if (!v) revealed.value = null
-})
 
 const CATEGORIES = [
   { key: 'all',          label: 'Усе',             Icon: Sparkles },
@@ -39,7 +30,7 @@ const CATEGORIES = [
   { key: 'accessory',    label: 'Аксесуари',       Icon: ChefHat  },
   { key: 'pet',          label: 'Улюбленці',       Icon: PawPrint },
   { key: 'room',         label: 'Кімнати',         Icon: Home },
-  { key: 'mystery_box',  label: 'Магічні коробки', Icon: Gift },
+  { key: 'subject_badge', label: 'Предметні значки', Icon: Medal },
 ]
 
 onMounted(async () => {
@@ -57,10 +48,10 @@ const sorted = computed(() => {
   return [...displayed.value].sort((a, b) => (rarityOrder[a.rarity] ?? 3) - (rarityOrder[b.rarity] ?? 3))
 })
 
-const CAT_LABEL = { skin: 'Скін', accessory: 'Аксесуар', pet: 'Улюбленець', room: 'Кімната', mystery_box: 'Магічна коробка' }
+const CAT_LABEL = { skin: 'Скін', accessory: 'Аксесуар', pet: 'Улюбленець', room: 'Кімната', subject_badge: 'Предметний значок' }
 
-function boxCount(itemId) {
-  return shop.mysteryBoxCount(itemId)
+function stackCount(itemId) {
+  return shop.inventoryStackCount(itemId)
 }
 
 function canAfford(item) { return (auth.profile?.coins || 0) >= item.price }
@@ -84,8 +75,8 @@ async function buyItem() {
     hapticCoin()
     const fresh = shop.items.find((i) => i.id === boughtId)
     if (fresh && selectedItem.value) selectedItem.value = fresh
-    if (selectedItem.value?.category === 'mystery_box') {
-      success(`Коробку «${selectedItem.value.name}» куплено! Натисни «Відкрити коробку» нижче.`)
+    if (selectedItem.value?.category === 'subject_badge') {
+      success(`Значок «${selectedItem.value.name}» додано! Передай його вчителю в «Профіль».`)
     } else {
       success(`🎉 ${selectedItem.value.name} розблоковано!`)
       selectedItem.value = null
@@ -94,34 +85,6 @@ async function buyItem() {
     error(e.message)
   } finally {
     buying.value = false
-  }
-}
-
-function resolveItemMeta(id) {
-  const fromShop = shop.items.find((i) => i.id === id)
-  if (fromShop) return fromShop
-  const fromAll = userStore.items.find((i) => i.id === id)
-  if (fromAll) return fromAll
-  return { id, name: id }
-}
-
-async function openMysteryBoxAction() {
-  if (!selectedItem.value || selectedItem.value.category !== 'mystery_box') return
-  revealBoxRarity.value = selectedItem.value.rarity || 'common'
-  openingBox.value = true
-  try {
-    const r = await shop.openBox(selectedItem.value.id)
-    await checkAndGrantAchievements(auth.profile.id)
-    hapticCoin()
-    revealed.value = {
-      coins: r.coins,
-      items: (r.itemIds || []).map((id) => resolveItemMeta(id)),
-    }
-    revealOpen.value = true
-  } catch (e) {
-    error(e.message)
-  } finally {
-    openingBox.value = false
   }
 }
 
@@ -251,10 +214,10 @@ const MODAL_SKIN_H = 200
               :height="THUMB_GLB_H"
             />
             <div
-              v-else-if="item.category === 'mystery_box'"
+              v-else-if="item.category === 'subject_badge'"
               class="relative z-[1] flex flex-col items-center justify-center py-2 min-h-[120px]"
             >
-              <MysteryBoxSprite :rarity="item.rarity || 'common'" :size="112" />
+              <SubjectBadgeArt :sprite-index="item.badgeSpriteIndex" :emoji="item.badgeEmoji || '🏅'" :size="112" />
             </div>
             <div v-else class="opacity-20 flex items-center justify-center w-full py-6">
               <Home v-if="item.category === 'room'" :size="56" :stroke-width="1" />
@@ -265,7 +228,7 @@ const MODAL_SKIN_H = 200
           <!-- Badges -->
           <div class="absolute top-2 left-2 flex flex-col gap-1">
             <div
-              v-if="isSoldOut(item) && !(item.category === 'mystery_box' && boxCount(item.id) > 0)"
+              v-if="isSoldOut(item)"
               class="text-[10px] font-extrabold bg-slate-700 text-slate-300 px-1.5 py-0.5 rounded-full tracking-wide"
             >Розпродано</div>
             <div v-else-if="item.isLimited" class="text-[10px] font-extrabold bg-red-500 text-white px-1.5 py-0.5 rounded-full tracking-wide">LTD</div>
@@ -273,17 +236,17 @@ const MODAL_SKIN_H = 200
           </div>
           <!-- Mystery box stack / owned check -->
           <div
-            v-if="item.category === 'mystery_box' && boxCount(item.id) > 0"
+            v-if="item.category === 'subject_badge' && stackCount(item.id) > 0"
             class="absolute bottom-2 right-2 min-w-[1.5rem] h-6 px-1.5 rounded-full bg-amber-500 flex items-center justify-center text-[10px] font-extrabold text-slate-900"
           >
-            ×{{ boxCount(item.id) }}
+            ×{{ stackCount(item.id) }}
           </div>
           <div v-else-if="shop.isOwned(item.id)" class="absolute bottom-2 right-2 w-6 h-6 rounded-full bg-emerald-500 flex items-center justify-center">
             <CheckCircle2 :size="14" :stroke-width="2.5" class="text-white" />
           </div>
           <!-- Sold out overlay (коробка: не затемнювати, якщо ще є в запасі) -->
           <div
-            v-if="isSoldOut(item) && !shop.isOwned(item.id) && !(item.category === 'mystery_box' && boxCount(item.id) > 0)"
+            v-if="isSoldOut(item) && !shop.isOwned(item.id) && !(item.category === 'subject_badge' && stackCount(item.id) > 0)"
             class="absolute inset-0 bg-black/50 rounded-t-2xl"
           />
         </div>
@@ -338,10 +301,13 @@ const MODAL_SKIN_H = 200
               :width="MODAL_GLB_W"
               :height="MODAL_GLB_H"
             />
-            <template v-else-if="selectedItem.category === 'mystery_box'">
-              <MysteryBoxSprite :rarity="selectedItem.rarity || 'common'" :size="100" />
+            <template v-else-if="selectedItem.category === 'subject_badge'">
+              <SubjectBadgeArt :sprite-index="selectedItem.badgeSpriteIndex" :emoji="selectedItem.badgeEmoji || '🏅'" :size="100" />
+              <p v-if="selectedItem.subjectName" class="text-[11px] text-amber-200/90 font-bold text-center px-2">
+                {{ selectedItem.subjectName }}
+              </p>
               <p class="text-[10px] text-slate-500 text-center px-2 max-w-[280px] leading-snug">
-                Монети та шанс на предмети за рідкістю коробки.
+                Легендарний значок. Купи кілька й передай вчителю цього предмета після офлайн-активності (Профіль → Значки).
               </p>
             </template>
             <div v-else class="opacity-20 py-4 flex items-center justify-center">
@@ -384,39 +350,26 @@ const MODAL_SKIN_H = 200
           <CoinDisplay :amount="selectedItem.price" size="md" />
         </div>
 
-        <!-- Магічна коробка: купити кілька + відкрити -->
-        <template v-if="selectedItem.category === 'mystery_box'">
+        <template v-if="selectedItem.category === 'subject_badge'">
           <div
-            v-if="boxCount(selectedItem.id) > 0"
+            v-if="stackCount(selectedItem.id) > 0"
             class="flex flex-col gap-0.5 rounded-xl p-2.5"
             style="background:rgba(251,191,36,0.08)"
           >
-            <div class="text-amber-400 font-extrabold text-xs">Коробок: {{ boxCount(selectedItem.id) }}</div>
-            <div class="text-[11px] text-slate-500 leading-snug">Натисни «Відкрити» нижче.</div>
+            <div class="text-amber-400 font-extrabold text-xs">У тебе: ×{{ stackCount(selectedItem.id) }}</div>
+            <div class="text-[11px] text-slate-500 leading-snug">Відкрий «Профіль» → вкладка «Значки», щоб надіслати вчителю.</div>
           </div>
-          <div class="grid grid-cols-1 gap-2">
-            <AppButton
-              v-if="boxCount(selectedItem.id) > 0"
-              variant="primary"
-              size="md"
-              block
-              :loading="openingBox"
-              @click="openMysteryBoxAction"
-            >
-              Відкрити коробку
-            </AppButton>
-            <AppButton
-              v-if="!isSoldOut(selectedItem)"
-              variant="coin"
-              size="md"
-              block
-              :loading="buying"
-              :disabled="!canAfford(selectedItem)"
-              @click="buyItem"
-            >
-              {{ canAfford(selectedItem) ? 'Купити' : `Не вистачає ${selectedItem.price - (auth.profile?.coins || 0)}` }}
-            </AppButton>
-          </div>
+          <AppButton
+            v-if="!isSoldOut(selectedItem)"
+            variant="coin"
+            size="lg"
+            block
+            :loading="buying"
+            :disabled="!canAfford(selectedItem)"
+            @click="buyItem"
+          >
+            {{ canAfford(selectedItem) ? 'Купити ще' : `Не вистачає ${selectedItem.price - (auth.profile?.coins || 0)}` }}
+          </AppButton>
         </template>
 
         <template v-else>
@@ -446,11 +399,6 @@ const MODAL_SKIN_H = 200
       </div>
     </AppModal>
 
-    <MysteryBoxRevealModal
-      v-model="revealOpen"
-      :revealed="revealed"
-      :box-rarity="revealBoxRarity"
-    />
   </div>
 </template>
 

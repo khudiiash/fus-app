@@ -100,6 +100,7 @@ service cloud.firestore {
     // Trade offers — no get() calls in read so query listeners work reliably
     match /tradeOffers/{offerId} {
       allow read: if isAuth() && (
+        isAdmin() ||
         resource.data.fromUid == request.auth.uid ||
         resource.data.toUid == request.auth.uid
       );
@@ -109,12 +110,14 @@ service cloud.firestore {
         resource.data.fromUid == request.auth.uid ||
         resource.data.toUid == request.auth.uid
       );
-      allow delete: if isAuth() && resource.data.fromUid == request.auth.uid;
+      allow delete: if isAdmin()
+        || (isAuth() && resource.data.fromUid == request.auth.uid);
     }
 
-    // Transactions / award history
+    // Transactions / award history (admin must list all for DevTools flush)
     match /transactions/{txId} {
       allow read: if isAuth() && (
+        isAdmin() ||
         resource.data.fromUid == request.auth.uid ||
         resource.data.toUid == request.auth.uid
       );

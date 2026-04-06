@@ -38,6 +38,7 @@ export const useShopStore = defineStore('shop', () => {
     await useUserStore().fetchQuests()
   }
 
+  /** Застаріло: магічні коробки; залишено для старих акаунтів. */
   async function openBox(itemId) {
     const auth = useAuthStore()
     if (!auth.profile?.id) throw new Error('Not signed in')
@@ -62,5 +63,22 @@ export const useShopStore = defineStore('shop', () => {
     return auth.profile?.mysteryBoxCounts?.[itemId] || 0
   }
 
-  return { items, loading, error, fetchItems, buy, openBox, itemsByCategory, isOwned, mysteryBoxCount }
+  function inventoryStackCount(itemId) {
+    const auth = useAuthStore()
+    if (!(auth.profile?.inventory || []).includes(itemId)) return 0
+    return auth.profile?.inventoryCounts?.[itemId] || 1
+  }
+
+  return {
+    items,
+    loading,
+    error,
+    fetchItems,
+    buy,
+    openBox,
+    itemsByCategory,
+    isOwned,
+    mysteryBoxCount,
+    inventoryStackCount,
+  }
 })

@@ -16,6 +16,7 @@ import {
   ScrollText, Wallet, Coins, School, User, Users, Trophy, Clock, Inbox,
   CheckCircle2, XCircle, ChevronDown, ChevronUp, X, Plus, TriangleAlert, Zap,
 } from 'lucide-vue-next'
+import { sortClassesByGradeAsc } from '@/utils/sortClasses'
 
 const auth = useAuthStore()
 const { success, error } = useToast()
@@ -62,7 +63,7 @@ const pendingCount = computed(() =>
 onMounted(async () => {
   const ids = auth.profile?.classIds || []
   const all = await Promise.all(ids.map(id => getClass(id)))
-  classes.value = all.filter(Boolean)
+  classes.value = sortClassesByGradeAsc(all.filter(Boolean))
   if (classes.value.length) form.value.classId = classes.value[0].id
 
   const subjIds = auth.profile?.subjectIds || []

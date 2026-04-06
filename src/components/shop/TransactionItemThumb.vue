@@ -6,6 +6,7 @@
 import Skin3dThumbnail from '@/components/character/Skin3dThumbnail.vue'
 import GlbThumbnail from '@/components/character/GlbThumbnail.vue'
 import MysteryBoxSprite from '@/components/shop/MysteryBoxSprite.vue'
+import SubjectBadgeArt from '@/components/shop/SubjectBadgeArt.vue'
 import { Package } from 'lucide-vue-next'
 
 defineProps({
@@ -56,6 +57,16 @@ defineProps({
       class="w-full h-full flex items-center justify-center"
     >
       <MysteryBoxSprite :rarity="item.rarity || 'common'" :size="Math.max(14, Math.min(w, h) - 2)" />
+    </div>
+    <div
+      v-else-if="item?.category === 'subject_badge'"
+      class="w-full h-full flex items-center justify-center scale-90"
+    >
+      <SubjectBadgeArt
+        :sprite-index="item.badgeSpriteIndex"
+        :emoji="item.badgeEmoji || '🏅'"
+        :size="Math.max(20, Math.min(w, h) - 2)"
+      />
     </div>
     <div v-else class="w-full h-full flex items-center justify-center text-slate-500">
       <Package :size="Math.min(14, Math.round(w * 0.45))" :stroke-width="1.5" />

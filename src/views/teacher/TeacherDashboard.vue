@@ -5,6 +5,7 @@ import { useAuthStore } from '@/stores/auth'
 import { getClass } from '@/firebase/collections'
 import { School, ChevronRight, Users } from 'lucide-vue-next'
 import { givenNameFromDisplayName } from '@/utils/personName'
+import { sortClassesByGradeAsc } from '@/utils/sortClasses'
 
 const auth   = useAuthStore()
 const router = useRouter()
@@ -13,7 +14,7 @@ const classes = ref([])
 onMounted(async () => {
   const ids = auth.profile?.classIds || []
   const all = await Promise.all(ids.map(id => getClass(id)))
-  classes.value = all.filter(Boolean)
+  classes.value = sortClassesByGradeAsc(all.filter(Boolean))
 })
 </script>
 

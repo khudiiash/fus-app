@@ -121,9 +121,42 @@ function registerSchoolPushTriggers(region, exportsObj) {
       const t = event.data?.data()
       if (!t || !t.toUid) return
       if (t.type === 'quest_reward') return
-      if (t.type !== 'award' && t.type !== 'fine') return
 
       const txId = event.params.txId
+
+      /** Учень передав предметний значок вчителю — push вчителю (toUid). */
+      if (t.type === 'badge_sent') {
+        const teacherId = t.toUid
+        const studentId = t.fromUid
+        if (!teacherId || !studentId || teacherId === studentId) return
+        let studentName = 'Учень'
+        try {
+          const st = await db.collection('users').doc(studentId).get()
+          if (st.exists) {
+            studentName = String(st.data()?.displayName || '').trim() || studentName
+          }
+        } catch {
+          /* ignore */
+        }
+        const badgeName = (t.note && String(t.note).trim()) || 'Предметний значок'
+        const subj = (t.subjectName && String(t.subjectName).trim()) || ''
+        let body = `${studentName} передав вам «${badgeName}»`
+        if (subj) body += ` · ${subj}`
+        body = body.slice(0, 180)
+        await sendPushToUser(teacherId, {
+          title: 'Новий значок від учня',
+          body,
+          data: {
+            type: 'badge_received',
+            txId,
+            tag: `badge-received-${txId}`,
+          },
+        })
+        return
+      }
+
+      if (t.type !== 'award' && t.type !== 'fine') return
+
       const isFine = t.type === 'fine'
       const title = isFine ? 'Штраф від вчителя' : 'Нагорода від вчителя'
       let body = ''

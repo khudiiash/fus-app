@@ -5,6 +5,7 @@
 import Skin3dThumbnail from '@/components/character/Skin3dThumbnail.vue'
 import GlbThumbnail from '@/components/character/GlbThumbnail.vue'
 import MysteryBoxSprite from '@/components/shop/MysteryBoxSprite.vue'
+import SubjectBadgeArt from '@/components/shop/SubjectBadgeArt.vue'
 import { Package, Home, PawPrint } from 'lucide-vue-next'
 
 defineProps({
@@ -50,6 +51,12 @@ defineProps({
         v-else-if="item.category === 'mystery_box'"
         :rarity="item.rarity || 'common'"
         :size="Math.round(Math.min(width, height) * 0.92)"
+      />
+      <SubjectBadgeArt
+        v-else-if="item.category === 'subject_badge'"
+        :sprite-index="item.badgeSpriteIndex"
+        :emoji="item.badgeEmoji || '🏅'"
+        :size="Math.round(Math.min(width, height))"
       />
       <div v-else class="flex items-center justify-center w-full h-full text-slate-600">
         <Home v-if="item.category === 'room'" :size="Math.min(18, width * 0.45)" :stroke-width="1.5" />

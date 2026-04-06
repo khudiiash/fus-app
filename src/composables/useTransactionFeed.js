@@ -31,10 +31,13 @@ export async function resolveUserProfile(uid) {
 }
 
 /**
- * Other party for the viewer (student feed: query is always toUid === me).
+ * Other party for the viewer (вхідні події або надісланий значок вчителю).
  */
 function peerForTransaction(tx, myUid) {
   if (!myUid) return null
+  if (tx.type === 'badge_sent' && tx.fromUid === myUid && tx.toUid) {
+    return profileCache[tx.toUid] || null
+  }
   if (tx.toUid !== myUid) return null
   if (!tx.fromUid || tx.fromUid === myUid) return null
   return profileCache[tx.fromUid] || null
@@ -67,4 +70,29 @@ export async function enrichTeacherAwardRows(txs) {
     ...tx,
     studentProfile: tx.toUid ? profileCache[tx.toUid] : null,
   }))
+}
+
+/**
+ * Журнал вчителя: для award — учень у toUid; для badge_sent — учень у fromUid.
+ * peerProfile — для HistoryTransactionCard (аватар учня).
+ */
+export async function enrichTeacherJournalTransactions(txs, teacherUid) {
+  const uids = new Set()
+  for (const t of txs) {
+    if (t.type === 'award' && t.fromUid === teacherUid && t.toUid) uids.add(t.toUid)
+    if (t.type === 'badge_sent' && t.toUid === teacherUid && t.fromUid) uids.add(t.fromUid)
+  }
+  await Promise.all([...uids].map((uid) => resolveUserProfile(uid)))
+  return txs.map((tx) => {
+    let peerProfile = null
+    let studentProfile = null
+    if (tx.type === 'award' && tx.fromUid === teacherUid) {
+      studentProfile = tx.toUid ? profileCache[tx.toUid] : null
+      peerProfile = studentProfile
+    } else if (tx.type === 'badge_sent' && tx.toUid === teacherUid) {
+      studentProfile = tx.fromUid ? profileCache[tx.fromUid] : null
+      peerProfile = studentProfile
+    }
+    return { ...tx, peerProfile, studentProfile }
+  })
 }

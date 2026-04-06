@@ -21,6 +21,10 @@ import { Bell, X } from 'lucide-vue-next'
 const DISMISS_MS = 7 * 24 * 60 * 60 * 1000
 const STORAGE_KEY = 'fus_push_optin_dismissed_at'
 
+/** localStorage/sessionStorage не реактивні — інкремент змушує computed перечитати ключі */
+const optInDismissTick = ref(0)
+const deniedHintTick = ref(0)
+
 const auth = useAuthStore()
 const { success, error } = useToast()
 
@@ -46,6 +50,7 @@ watch(
 )
 
 const dismissedRecently = computed(() => {
+  void optInDismissTick.value
   const t = Number(localStorage.getItem(STORAGE_KEY) || '0')
   return t > 0 && Date.now() - t < DISMISS_MS
 })
@@ -62,6 +67,7 @@ const showOptIn = computed(() => {
 
 /** Підказка, якщо вже відмовили */
 const showDeniedHint = computed(() => {
+  void deniedHintTick.value
   if (!auth.profile?.id) return false
   if (!hasFcmVapidConfigured()) return false
   if (!envOk.value) return false
@@ -71,10 +77,12 @@ const showDeniedHint = computed(() => {
 
 function dismissOptIn() {
   localStorage.setItem(STORAGE_KEY, String(Date.now()))
+  optInDismissTick.value += 1
 }
 
 function closeDeniedHint() {
   sessionStorage.setItem('fus_push_denied_hint_closed', '1')
+  deniedHintTick.value += 1
 }
 
 async function enablePush() {

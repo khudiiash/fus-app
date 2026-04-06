@@ -2,7 +2,7 @@
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { getAllStudents, getAllTeachers, getAllClasses, getAllItems } from '@/firebase/collections'
-import { runFullSeed, seedSubjects } from '@/firebase/seedData'
+import { runFullSeed, seedSubjects, seedSubjectBadges } from '@/firebase/seedData'
 import AppCard from '@/components/ui/AppCard.vue'
 import AppButton from '@/components/ui/AppButton.vue'
 import { useToast } from '@/composables/useToast'
@@ -12,6 +12,7 @@ const router  = useRouter()
 const { success, error } = useToast()
 const seeding         = ref(false)
 const seedingSubjects = ref(false)
+const seedingSubjectBadges = ref(false)
 const stats   = ref({ students: 0, teachers: 0, classes: 0, items: 0 })
 const topStudents = ref([])
 const exportingStudents = ref(false)
@@ -103,6 +104,22 @@ async function doSeedSubjects() {
     error(e.message)
   } finally {
     seedingSubjects.value = false
+  }
+}
+
+async function doSeedSubjectBadges() {
+  seedingSubjectBadges.value = true
+  try {
+    const { added, skipped } = await seedSubjectBadges()
+    success(
+      `Додано ${added} предметних значків у магазин.${skipped ? ` Не знайдено предметів для ${skipped} шаблонів (спочатку «Додати всі предмети» або створіть subjects вручну).` : ''}`,
+    )
+    const items = await getAllItems()
+    stats.value.items = items.length
+  } catch (e) {
+    error(e.message)
+  } finally {
+    seedingSubjectBadges.value = false
   }
 }
 
@@ -250,6 +267,13 @@ const statCards = [
           <div class="text-xs text-slate-400 mt-0.5">Завантажує повний список предметів із авто-іконками. Вже існуючі пропускаються.</div>
         </div>
         <AppButton variant="secondary" size="sm" :loading="seedingSubjects" @click="doSeedSubjects">Додати</AppButton>
+      </div>
+      <div class="border-t border-white/[0.07] mt-3 pt-3 flex items-center justify-between gap-4">
+        <div>
+          <div class="font-semibold text-sm">🎖️ Предметні значки в магазині</div>
+          <div class="text-xs text-slate-400 mt-0.5">Створює товари категорії «значок» для кожного відомого предмета. Спочатку мають бути записи в <span class="text-slate-300">subjects</span>. Існуючі значки цієї категорії замінюються.</div>
+        </div>
+        <AppButton variant="secondary" size="sm" :loading="seedingSubjectBadges" @click="doSeedSubjectBadges">Створити</AppButton>
       </div>
     </AppCard>
   </div>

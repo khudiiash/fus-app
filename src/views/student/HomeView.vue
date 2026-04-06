@@ -89,7 +89,13 @@ function formatDate(ts) {
         <div class="text-xs text-slate-400">Оновлюються опівночі</div>
       </div>
       <div class="flex flex-col gap-3">
-        <QuestCard v-for="quest in userStore.quests" :key="quest.type" :quest="quest" />
+        <QuestCard
+          v-for="quest in userStore.quests"
+          :key="quest.type"
+          :quest="quest"
+          :busy="userStore.claimingQuestType === quest.type"
+          @claim="userStore.claimQuest(quest.type)"
+        />
         <div v-if="userStore.quests.length === 0" class="text-center py-8 text-slate-600">
           <Zap :size="36" :stroke-width="1" class="mx-auto mb-2 opacity-30" />
           <div class="text-sm text-slate-500">Завдань поки немає. Заходь завтра!</div>

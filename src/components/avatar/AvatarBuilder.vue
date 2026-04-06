@@ -1,22 +1,19 @@
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed } from 'vue'
 import { useUserStore } from '@/stores/user'
 import { useAuthStore } from '@/stores/auth'
-import { useShopStore } from '@/stores/shop'
 import AvatarDisplay from './AvatarDisplay.vue'
 import Skin3dThumbnail from '@/components/character/Skin3dThumbnail.vue'
 import GlbThumbnail from '@/components/character/GlbThumbnail.vue'
-import MysteryBoxSprite from '@/components/shop/MysteryBoxSprite.vue'
-import MysteryBoxRevealModal from '@/components/shop/MysteryBoxRevealModal.vue'
+import SubjectBadgeArt from '@/components/shop/SubjectBadgeArt.vue'
 import AppModal from '@/components/ui/AppModal.vue'
 import { useToast } from '@/composables/useToast'
 import { useHaptic } from '@/composables/useHaptic'
-import { checkAndGrantAchievements } from '@/firebase/collections'
-import { Palette, ChefHat, Home, Camera, Package, Gift, PawPrint } from 'lucide-vue-next'
+import { getTeachersForSubject, sendSubjectBadge } from '@/firebase/collections'
+import { Palette, ChefHat, Home, Camera, Package, Medal, PawPrint } from 'lucide-vue-next'
 
 const userStore = useUserStore()
 const auth = useAuthStore()
-const shop = useShopStore()
 const { success, error } = useToast()
 const { coin: hapticCoin } = useHaptic()
 
@@ -26,71 +23,58 @@ const tabs = [
   { key: 'accessory',   label: 'Аксесуари',   Icon: ChefHat },
   { key: 'pet',         label: 'Улюбленці',   Icon: PawPrint },
   { key: 'room',        label: 'Кімнати',     Icon: Home },
-  { key: 'mystery_box', label: 'Коробки',     Icon: Gift },
+  { key: 'subject_badge', label: 'Значки', Icon: Medal },
 ]
 
 const ownedItems = computed(() => userStore.ownedItems(auth.profile))
 const categoryItems = computed(() => ownedItems.value.filter(i => i.category === activeTab.value))
 
-/** Магічні коробки з профілю (mysteryBoxCounts) + метадані з каталогу */
-const ownedMysteryBoxes = computed(() => {
-  const counts = auth.profile?.mysteryBoxCounts || {}
-  return Object.entries(counts)
-    .filter(([, n]) => n > 0)
-    .map(([id, count]) => {
-      const meta = userStore.items.find((i) => i.id === id)
-      if (!meta) return null
-      return { ...meta, stackCount: count }
-    })
-    .filter(Boolean)
-})
+const sendBadgeModalItem = ref(null)
+const teachersForBadge = ref([])
+const loadingTeachers = ref(false)
+const sendingBadge = ref(false)
 
-const confirmOpenBox = ref(null)
-const openingBox = ref(false)
-const revealOpen = ref(false)
-const revealed = ref(null)
-const revealBoxRarity = ref('common')
-
-watch(revealOpen, (v) => {
-  if (!v) revealed.value = null
-})
-
-function resolveItemMeta(id) {
-  const fromAll = userStore.items.find((i) => i.id === id)
-  if (fromAll) return fromAll
-  return { id, name: id }
-}
-
-async function confirmOpenMystery() {
-  const box = confirmOpenBox.value
-  if (!box || !auth.profile?.id) return
-  const boxId = box.id
-  revealBoxRarity.value = box.rarity || 'common'
-  openingBox.value = true
-  confirmOpenBox.value = null
+async function openSendBadgeModal(item) {
+  if (!item?.subjectId || !auth.profile?.id) return
+  sendBadgeModalItem.value = item
+  loadingTeachers.value = true
+  teachersForBadge.value = []
   try {
-    const r = await shop.openBox(boxId)
-    await checkAndGrantAchievements(auth.profile.id)
-    hapticCoin()
-    revealed.value = {
-      coins: r.coins,
-      items: (r.itemIds || []).map((id) => resolveItemMeta(id)),
+    teachersForBadge.value = await getTeachersForSubject(item.subjectId)
+    if (!teachersForBadge.value.length) {
+      error('Немає вчителя з цим предметом у школі. Попроси адміна призначити предмет вчителю.')
+      sendBadgeModalItem.value = null
     }
-    revealOpen.value = true
   } catch (e) {
     error(e.message)
+    sendBadgeModalItem.value = null
   } finally {
-    openingBox.value = false
+    loadingTeachers.value = false
   }
 }
 
-function onMysteryCardClick(box) {
-  if (openingBox.value) return
-  confirmOpenBox.value = box
+async function confirmSendBadge(teacherUid) {
+  const item = sendBadgeModalItem.value
+  if (!item || !auth.profile?.id) return
+  sendingBadge.value = true
+  try {
+    await sendSubjectBadge({
+      studentUid: auth.profile.id,
+      itemId: item.id,
+      teacherUid,
+    })
+    hapticCoin()
+    success('Значок передано вчителю!')
+    sendBadgeModalItem.value = null
+    await userStore.fetchItems()
+  } catch (e) {
+    error(e.message)
+  } finally {
+    sendingBadge.value = false
+  }
 }
 
 function stackQty(item) {
-  if (item.category === 'mystery_box' && item.stackCount != null) return item.stackCount
   return auth.profile?.inventoryCounts?.[item.id] || 1
 }
 
@@ -270,32 +254,38 @@ const THUMB_GLB_H = 124
       </button>
     </div>
 
-    <!-- Магічні коробки (профіль) -->
-    <div v-if="activeTab === 'mystery_box' && ownedMysteryBoxes.length > 0" class="grid grid-cols-3 gap-2">
+    <!-- Предметні значки: передати вчителю предмета (офлайн-активність) -->
+    <div v-if="activeTab === 'subject_badge' && categoryItems.length > 0" class="grid grid-cols-3 gap-2">
       <div
-        v-for="box in ownedMysteryBoxes"
-        :key="box.id"
-        class="glass-card p-2 flex flex-col items-center gap-1 cursor-pointer transition-all duration-150 active:scale-95 relative"
-        @click="onMysteryCardClick(box)"
+        v-for="item in categoryItems"
+        :key="item.id"
+        class="glass-card flex flex-col relative overflow-hidden rounded-2xl border border-amber-500/25 shadow-[0_0_12px_rgba(251,191,36,0.16),0_0_24px_rgba(251,191,36,0.05),inset_0_0_0_1px_rgba(251,191,36,0.12)]"
       >
-        <div class="w-[92px] h-[92px] flex items-center justify-center">
-          <MysteryBoxSprite :rarity="box.rarity || 'common'" :size="88" />
+        <div class="relative flex flex-col items-center gap-1.5 p-2">
+          <SubjectBadgeArt :sprite-index="item.badgeSpriteIndex" :emoji="item.badgeEmoji || '🏅'" :size="72" />
+          <div class="text-[10px] font-bold text-center truncate w-full leading-tight text-amber-100/90">{{ item.name }}</div>
+          <div v-if="item.subjectName" class="text-[9px] text-slate-500 text-center truncate w-full">{{ item.subjectName }}</div>
+          <div
+            v-if="stackQty(item) > 1"
+            class="absolute top-1.5 right-1.5 min-w-[1.25rem] h-5 px-1 rounded-full bg-amber-500 flex items-center justify-center text-[9px] font-extrabold text-slate-900"
+          >
+            ×{{ stackQty(item) }}
+          </div>
         </div>
-        <div class="text-[11px] font-bold text-center truncate w-full leading-tight">{{ box.name }}</div>
-        <div class="text-[10px] text-amber-400/90 font-bold">відкрити</div>
-        <div
-          v-if="box.stackCount > 1"
-          class="absolute top-1.5 right-1.5 min-w-[1.25rem] h-5 px-1 rounded-full bg-amber-500 flex items-center justify-center text-[9px] font-extrabold text-slate-900"
+        <button
+          type="button"
+          class="w-full py-1.5 rounded-none rounded-b-2xl border-t border-amber-900/25 text-[10px] font-extrabold bg-gradient-to-r from-amber-500 to-amber-600 text-slate-900 active:scale-[0.99] transition-transform"
+          @click="openSendBadgeModal(item)"
         >
-          ×{{ box.stackCount }}
-        </div>
+          Надіслати вчителю
+        </button>
       </div>
     </div>
 
-    <div v-else-if="activeTab === 'mystery_box'" class="text-center py-8 text-slate-600">
-      <Gift :size="36" :stroke-width="1.2" class="mx-auto mb-2 opacity-40 text-amber-400" />
-      <div class="text-sm font-bold text-slate-500">Немає магічних коробок</div>
-      <div class="text-xs mt-1">Купи їх у магазині</div>
+    <div v-else-if="activeTab === 'subject_badge'" class="text-center py-8 text-slate-600">
+      <Medal :size="36" :stroke-width="1.2" class="mx-auto mb-2 opacity-40 text-amber-400" />
+      <div class="text-sm font-bold text-slate-500">Немає предметних значків</div>
+      <div class="text-xs mt-1">Купи їх у магазині (категорія «Предметні значки»)</div>
     </div>
 
     <!-- Єдина сітка: стандарт / «без …» + куплені предмети (без розриву між рядками) -->
@@ -487,46 +477,40 @@ const THUMB_GLB_H = 124
     </div>
 
     <AppModal
-      :model-value="!!confirmOpenBox"
-      title="Відкрити коробку?"
-      @update:model-value="(v) => { if (!v) confirmOpenBox = null }"
+      :model-value="!!sendBadgeModalItem"
+      title="Кому передати значок?"
+      @update:model-value="(v) => { if (!v) sendBadgeModalItem = null }"
     >
-      <div v-if="confirmOpenBox" class="flex flex-col gap-4">
-        <div class="flex flex-col items-center gap-2 py-2">
-          <MysteryBoxSprite :rarity="confirmOpenBox.rarity || 'common'" :size="96" />
-          <p class="text-sm text-slate-300 text-center font-bold">{{ confirmOpenBox.name }}</p>
-          <p v-if="confirmOpenBox.stackCount > 1" class="text-xs text-slate-500">
-            У тебе: {{ confirmOpenBox.stackCount }} шт.
-          </p>
+      <div v-if="sendBadgeModalItem" class="flex flex-col gap-4">
+        <div class="flex flex-col items-center gap-2 py-1">
+          <SubjectBadgeArt :sprite-index="sendBadgeModalItem.badgeSpriteIndex" :emoji="sendBadgeModalItem.badgeEmoji || '🏅'" :size="88" />
+          <p class="text-sm text-slate-200 text-center font-bold">{{ sendBadgeModalItem.name }}</p>
+          <p v-if="sendBadgeModalItem.subjectName" class="text-xs text-amber-200/80">{{ sendBadgeModalItem.subjectName }}</p>
         </div>
         <p class="text-xs text-slate-500 text-center leading-relaxed">
-          Вміст випадковий: монети та шанс на предмети з магазину.
+          Обери вчителя, який викладає цей предмет. Один натискання — один значок (після офлайн-активності на уроці).
         </p>
-        <div class="flex gap-2">
+        <div v-if="loadingTeachers" class="text-center text-sm text-slate-500 py-4">Завантаження…</div>
+        <div v-else class="flex flex-col gap-2 max-h-56 overflow-y-auto">
           <button
+            v-for="t in teachersForBadge"
+            :key="t.id"
             type="button"
-            class="flex-1 py-3 rounded-xl font-bold text-sm text-slate-400 bg-white/[0.06]"
-            @click="confirmOpenBox = null"
+            class="w-full text-left px-4 py-3 rounded-xl font-bold text-sm bg-white/[0.06] hover:bg-white/[0.1] border border-white/[0.08] transition-colors disabled:opacity-50"
+            :disabled="sendingBadge"
+            @click="confirmSendBadge(t.id)"
           >
-            Скасувати
-          </button>
-          <button
-            type="button"
-            class="flex-1 py-3 rounded-xl font-extrabold text-sm text-slate-900"
-            style="background: linear-gradient(135deg, var(--accent), #34d399)"
-            :disabled="openingBox"
-            @click="confirmOpenMystery"
-          >
-            {{ openingBox ? '…' : 'Відкрити' }}
+            {{ t.displayName || t.email || t.id }}
           </button>
         </div>
+        <button
+          type="button"
+          class="w-full py-3 rounded-xl font-bold text-sm text-slate-400 bg-white/[0.06]"
+          @click="sendBadgeModalItem = null"
+        >
+          Скасувати
+        </button>
       </div>
     </AppModal>
-
-    <MysteryBoxRevealModal
-      v-model="revealOpen"
-      :revealed="revealed"
-      :box-rarity="revealBoxRarity"
-    />
   </div>
 </template>

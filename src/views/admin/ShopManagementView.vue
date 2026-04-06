@@ -3,7 +3,7 @@ import '@/utils/enableThreeFileCache'
 import { ref, onMounted, computed } from 'vue'
 import { getAuth } from 'firebase/auth'
 import { useAuthStore } from '@/stores/auth'
-import { getAllItems, createItem, updateItem, archiveItem, restoreItem, deleteItem, deleteAllShopItems } from '@/firebase/collections'
+import { getAllItems, getAllSubjects, createItem, updateItem, archiveItem, restoreItem, deleteItem, deleteAllShopItems } from '@/firebase/collections'
 import SkinPreview      from '@/components/character/SkinPreview.vue'
 import Skin3dThumbnail from '@/components/character/Skin3dThumbnail.vue'
 import AccessoryPreview from '@/components/character/AccessoryPreview.vue'
@@ -12,12 +12,13 @@ import AppModal from '@/components/ui/AppModal.vue'
 import AppInput from '@/components/ui/AppInput.vue'
 import { useToast } from '@/composables/useToast'
 import { Archive, RotateCcw, Package, Layers, Infinity, Trash2, Pencil, Search, X, ShoppingBag, Download } from 'lucide-vue-next'
-import MysteryBoxSprite from '@/components/shop/MysteryBoxSprite.vue'
+import SubjectBadgeArt from '@/components/shop/SubjectBadgeArt.vue'
 import GlbThumbnail from '@/components/character/GlbThumbnail.vue'
 import { seedSkinsFromFiles, seedGlbShopItemsFromFiles } from '@/firebase/seedData'
 import { uploadShopGlb, uploadSkinTextureFile } from '@/firebase/shopAssetStorage'
 import { syncShopStorageClaim } from '@/firebase/syncShopStorageClaim'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
+import { BADGE_SPRITE_LABELS } from '@/utils/subjectBadgeSprite'
 
 const { success, error } = useToast()
 const authStore = useAuthStore()
@@ -54,8 +55,8 @@ const roomGlbInput      = ref(null)
 const accGlbInput       = ref(null)
 const petGlbInput       = ref(null)
 
-const CATS   = ['skin', 'accessory', 'pet', 'room', 'mystery_box']
-const CAT_LABELS = { skin: 'Скіни', accessory: 'Аксесуари', pet: 'Улюбленці', room: 'Кімнати', mystery_box: 'Магічні коробки' }
+const CATS   = ['skin', 'accessory', 'pet', 'room', 'subject_badge']
+const CAT_LABELS = { skin: 'Скіни', accessory: 'Аксесуари', pet: 'Улюбленці', room: 'Кімнати', subject_badge: 'Предметні значки' }
 const RARITIES = ['common', 'rare', 'epic', 'legendary']
 const RARITY_LABELS = { common: 'Звичайний', rare: 'Рідкісний', epic: 'Епічний', legendary: 'Легендарний' }
 const rarityColor    = { common: 'text-slate-400', rare: 'text-blue-400', epic: 'text-purple-400', legendary: 'text-amber-400' }
@@ -65,13 +66,17 @@ const form = ref({
   name: '', description: '', category: 'skin', rarity: 'common',
   price: 100, isLimited: false, limitedStock: false, stock: 10,
   skinUrl: '', skinId: '', modelData: '', brightnessMultiplier: 1.0,
+  subjectId: '', subjectName: '', badgeEmoji: '🔢',
+  /** -1 = тільки емодзі; 0–24 = кадр subjects.png */
+  badgeSpriteIndex: 0,
 })
 
 const isSkin        = computed(() => form.value.category === 'skin')
 const isAccessory   = computed(() => form.value.category === 'accessory')
 const isRoom        = computed(() => form.value.category === 'room')
 const isPet         = computed(() => form.value.category === 'pet')
-const isMysteryBox  = computed(() => form.value.category === 'mystery_box')
+const isSubjectBadge = computed(() => form.value.category === 'subject_badge')
+const subjectsList = ref([])
 
 const activeItems   = computed(() => items.value.filter(i => i.active !== false))
 const archivedItems = computed(() => items.value.filter(i => i.active === false))
@@ -97,6 +102,11 @@ const grouped = computed(() =>
 
 onMounted(async () => {
   await fetchItems()
+  try {
+    subjectsList.value = await getAllSubjects()
+  } catch {
+    subjectsList.value = []
+  }
   if (!authStore.isAdmin) return
   try {
     await syncShopStorageClaim()
@@ -112,6 +122,17 @@ onMounted(async () => {
 })
 async function fetchItems() { items.value = await getAllItems() }
 
+function setCategory(cat) {
+  form.value.category = cat
+  if (cat === 'subject_badge') {
+    form.value.rarity = 'legendary'
+    form.value.price = 1000
+    if (form.value.badgeSpriteIndex == null || form.value.badgeSpriteIndex < -1) {
+      form.value.badgeSpriteIndex = 0
+    }
+  }
+}
+
 function stockLabel(item) {
   if (item.stock == null) return null
   if (item.stock === 0)   return { text: 'Розпродано', cls: 'text-red-400' }
@@ -125,6 +146,7 @@ function openCreate() {
     name: '', description: '', category: 'skin', rarity: 'common',
     price: 100, isLimited: false, limitedStock: false, stock: 10,
     skinUrl: '', skinId: '', modelData: '', brightnessMultiplier: 1.0,
+    subjectId: '', subjectName: '', badgeEmoji: '🔢', badgeSpriteIndex: 0,
   }
   showModal.value = true
 }
@@ -139,12 +161,26 @@ function openEdit(item) {
     stock: hasStock ? item.stock : 10,
     skinUrl: item.skinUrl || '', skinId: item.skinId || '', modelData: item.modelData || '',
     brightnessMultiplier: item.brightnessMultiplier ?? 1.0,
+    subjectId: item.subjectId || '', subjectName: item.subjectName || '', badgeEmoji: item.badgeEmoji || '🏅',
+    badgeSpriteIndex:
+      item.badgeSpriteIndex != null && item.badgeSpriteIndex >= 0 ? item.badgeSpriteIndex : -1,
   }
   showModal.value = true
 }
 
+function syncSubjectNameFromId() {
+  const id = form.value.subjectId
+  const s = subjectsList.value.find((x) => x.id === id)
+  form.value.subjectName = s?.name || ''
+}
+
 async function save() {
   if (!form.value.name.trim()) { error('Введіть назву'); return }
+  if (form.value.category === 'subject_badge') {
+    if (!form.value.subjectId) { error('Оберіть предмет для значка'); return }
+    syncSubjectNameFromId()
+    if (!form.value.subjectName) { error('Некоректний предмет'); return }
+  }
   saving.value = true
   try {
     if (pendingModelFile.value && (form.value.category === 'accessory' || form.value.category === 'room' || form.value.category === 'pet')) {
@@ -168,6 +204,13 @@ async function save() {
       skinId:    form.value.category === 'skin'                          ? (form.value.skinId    || null) : null,
       modelData: ['accessory', 'room', 'pet'].includes(form.value.category) ? (form.value.modelData || null) : null,
       brightnessMultiplier: form.value.category === 'room' ? Number(form.value.brightnessMultiplier) : null,
+      subjectId: form.value.category === 'subject_badge' ? form.value.subjectId : null,
+      subjectName: form.value.category === 'subject_badge' ? (form.value.subjectName || null) : null,
+      badgeEmoji: form.value.category === 'subject_badge' ? (form.value.badgeEmoji || '🏅') : null,
+      badgeSpriteIndex:
+        form.value.category === 'subject_badge' && form.value.badgeSpriteIndex >= 0
+          ? Number(form.value.badgeSpriteIndex)
+          : null,
     }
     if (editItem.value) { await updateItem(editItem.value.id, data); success('Товар оновлено!') }
     else                { await createItem(data);                     success('Товар додано!')   }
@@ -490,7 +533,12 @@ function onModelFileSelect(e) {
                 :width="41"
                 :height="56"
               />
-              <MysteryBoxSprite v-else-if="item.category === 'mystery_box'" :rarity="item.rarity || 'common'" :size="34" />
+              <SubjectBadgeArt
+                v-else-if="item.category === 'subject_badge'"
+                :sprite-index="item.badgeSpriteIndex"
+                :emoji="item.badgeEmoji || '🏅'"
+                :size="34"
+              />
               <GlbThumbnail
                 v-else-if="item.modelData && ['accessory', 'room', 'pet'].includes(item.category)"
                 :model-data="item.modelData"
@@ -587,11 +635,11 @@ function onModelFileSelect(e) {
               v-for="cat in CATS" :key="cat"
               class="min-w-[calc(50%-4px)] flex-1 py-2 rounded-xl font-bold text-sm transition-all"
               :class="form.category === cat ? 'tab-active' : 'bg-game-card text-slate-400 hover:text-white'"
-              @click="form.category = cat"
+              @click="setCategory(cat)"
             >{{ CAT_LABELS[cat] }}</button>
           </div>
-          <p v-if="isMysteryBox" class="text-[11px] text-slate-500 mt-2 leading-relaxed">
-            Без моделі чи текстури. Учні купують коробку за монети; при відкритті випадають монети (до ~1,5× ціни коробки) та/або випадкові скіни, аксесуари, улюбленці чи кімнати залежно від рідкості.
+          <p v-if="isSubjectBadge" class="text-[11px] text-slate-500 mt-2 leading-relaxed">
+            Значок прив’язаний до предмета: учень купує його в магазині й може надіслати вчителю цього предмета (офлайн-активність). Без 3D-моделі — лише емодзі на золотій рамці.
           </p>
         </div>
 
@@ -615,7 +663,7 @@ function onModelFileSelect(e) {
         </div>
 
         <!-- Skin fields -->
-        <template v-if="isSkin && !isMysteryBox">
+        <template v-if="isSkin && !isSubjectBadge">
           <div>
             <label class="text-sm font-bold text-slate-300 block mb-1.5">Текстура скіна (PNG)</label>
             <label
@@ -640,7 +688,7 @@ function onModelFileSelect(e) {
         </template>
 
         <!-- Accessory / Pet / Room GLB -->
-        <template v-else-if="(isAccessory || isPet || isRoom) && !isMysteryBox">
+        <template v-else-if="(isAccessory || isPet || isRoom) && !isSubjectBadge">
           <div>
             <label class="text-sm font-bold text-slate-300 block mb-1.5">
               {{ isRoom ? '3D модель кімнати (.glb)' : isPet ? '3D модель улюбленця (.glb)' : '3D модель аксесуара (.glb)' }}
@@ -674,6 +722,44 @@ function onModelFileSelect(e) {
               <span class="text-sm font-mono text-amber-400 w-10 text-right">{{ Number(form.brightnessMultiplier).toFixed(2) }}</span>
             </div>
             <p class="text-[11px] text-slate-500 mt-1">Множник яскравості сцени. 1.0 = нейтральний.</p>
+          </div>
+        </template>
+
+        <template v-else-if="isSubjectBadge">
+          <div>
+            <label class="text-sm font-bold text-slate-300 block mb-1.5">Предмет (з колекції subjects)</label>
+            <select
+              v-model="form.subjectId"
+              class="w-full bg-game-bg border border-white/[0.07] rounded-xl px-4 py-3 text-white font-semibold focus:outline-none"
+              @change="syncSubjectNameFromId"
+            >
+              <option value="" disabled>— оберіть предмет —</option>
+              <option v-for="s in subjectsList" :key="s.id" :value="s.id">{{ s.name }}</option>
+            </select>
+          </div>
+          <div>
+            <label class="text-sm font-bold text-slate-300 block mb-1.5">Зображення з листа (subjects.png)</label>
+            <select
+              v-model.number="form.badgeSpriteIndex"
+              class="w-full bg-game-bg border border-white/[0.07] rounded-xl px-4 py-3 text-white font-semibold focus:outline-none"
+            >
+              <option :value="-1">Лише емодзі (без спрайта)</option>
+              <option v-for="(label, i) in BADGE_SPRITE_LABELS" :key="i" :value="i">
+                {{ i }}. {{ label }}
+              </option>
+            </select>
+          </div>
+          <AppInput v-model="form.badgeEmoji" label="Емодзі (запасний варіант)" placeholder="⚛️" />
+          <div class="flex items-center gap-4 p-3 bg-game-card rounded-xl">
+            <SubjectBadgeArt
+              :sprite-index="form.badgeSpriteIndex >= 0 ? form.badgeSpriteIndex : undefined"
+              :emoji="form.badgeEmoji || '🏅'"
+              :size="72"
+            />
+            <div class="text-sm text-slate-400">
+              <div class="text-amber-400 font-bold mb-1">Прев’ю (легендарна рамка)</div>
+              <div>Предмет: {{ form.subjectName || '—' }}</div>
+            </div>
           </div>
         </template>
 

@@ -10,7 +10,7 @@ import TransactionItemThumb from '@/components/shop/TransactionItemThumb.vue'
 import MysteryBoxSprite from '@/components/shop/MysteryBoxSprite.vue'
 import {
   Coins, ArrowLeftRight, ShoppingBag, Trophy, Flame, ScrollText, Star,
-  Gavel, Gift,
+  Gavel, Gift, Medal,
 } from 'lucide-vue-next'
 
 const props = defineProps({
@@ -18,6 +18,8 @@ const props = defineProps({
   items: { type: Array, default: () => [] },
   /** Tighter padding / smaller lead for home “остання активність” */
   compact: { type: Boolean, default: false },
+  /** Учитель: вхідний предметний значок (інший заголовок) */
+  teacherBadgeInbox: { type: Boolean, default: false },
 })
 
 const TX = {
@@ -26,6 +28,7 @@ const TX = {
   trade:              { Icon: ArrowLeftRight, label: 'Обмін',             color: 'text-sky-400',     bg: 'bg-sky-500/12',     ring: 'ring-sky-500/25'     },
   purchase:           { Icon: ShoppingBag,    label: 'Покупка',           color: 'text-violet-400',  bg: 'bg-violet-500/12',  ring: 'ring-violet-500/25'  },
   box_open:           { Icon: Gift,           label: 'Магічна коробка',   color: 'text-amber-400',   bg: 'bg-amber-500/12',   ring: 'ring-amber-500/25'   },
+  badge_sent:         { Icon: Medal,          label: 'Передано значок',   color: 'text-amber-300',   bg: 'bg-amber-500/12',   ring: 'ring-amber-500/30'   },
   achievement_reward: { Icon: Trophy,         label: 'Досягнення',        color: 'text-emerald-400', bg: 'bg-emerald-500/12', ring: 'ring-emerald-500/25' },
   streak_bonus:       { Icon: Flame,          label: 'Бонус серії',       color: 'text-orange-400',  bg: 'bg-orange-500/12',  ring: 'ring-orange-500/25'  },
   quest_reward:       { Icon: ScrollText,     label: 'Завдання виконано', color: 'text-violet-300',  bg: 'bg-violet-500/12',  ring: 'ring-violet-500/25'  },
@@ -34,6 +37,13 @@ const TX = {
 function cfg(t) {
   return TX[t] || { Icon: Star, label: t, color: 'text-slate-400', bg: 'bg-slate-500/12', ring: 'ring-slate-500/20' }
 }
+
+const rowLabel = computed(() => {
+  if (props.teacherBadgeInbox && props.tx.type === 'badge_sent') {
+    return 'Значок від учня'
+  }
+  return cfg(props.tx.type).label
+})
 
 function getItem(id) {
   return props.items.find((i) => i.id === id) || null
@@ -88,6 +98,10 @@ const peerChipLabel = computed(() => {
   const peer = props.tx.peerProfile
   if (!peer) return ''
   const r = peer.role
+  if (props.tx.type === 'badge_sent') {
+    const sub = (props.tx.subjectName || '').trim()
+    return sub || roleLabel(r)
+  }
   if (props.tx.type === 'award' && (r === 'teacher' || r === 'admin')) {
     const { subject } = parseTeacherAwardNote(props.tx)
     if (subject) return subject
@@ -97,6 +111,15 @@ const peerChipLabel = computed(() => {
 
 const messageBodyText = computed(() => {
   if (props.tx.type === 'box_open') return ''
+  if (props.tx.type === 'badge_sent') {
+    const sub = (props.tx.subjectName || '').trim()
+    const name = (props.tx.note || '').trim()
+    if (sub && name) return `${name} · ${sub}`
+    if (props.teacherBadgeInbox) {
+      return sub || name || 'Учень передав значок після офлайн-активності на уроці'
+    }
+    return sub || name || 'Подяка вчителю за офлайн-активність'
+  }
   if (props.tx.type !== 'award') return (props.tx.note || '').trim()
   const peer = props.tx.peerProfile
   if (!peer || (peer.role !== 'teacher' && peer.role !== 'admin')) {
@@ -155,7 +178,7 @@ const subjectInChip = computed(() => {
         <div class="flex items-start justify-between gap-2">
           <div class="min-w-0">
             <div class="font-extrabold text-[15px] text-white leading-tight tracking-tight">
-              {{ cfg(tx.type).label }}
+              {{ rowLabel }}
             </div>
             <div v-if="tx.peerProfile" class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5">
               <span class="text-sm font-semibold text-slate-200 truncate">{{ tx.peerProfile.displayName }}</span>
@@ -168,7 +191,13 @@ const subjectInChip = computed(() => {
               </span>
             </div>
           </div>
-          <CoinDisplay :amount="tx.amount" :show-sign="tx.amount > 0" size="sm" class="shrink-0 pt-0.5" />
+          <CoinDisplay
+            v-if="tx.type !== 'badge_sent' && tx.amount !== 0"
+            :amount="tx.amount"
+            :show-sign="tx.amount > 0"
+            size="sm"
+            class="shrink-0 pt-0.5"
+          />
         </div>
 
         <!-- Message / note (box name lives in the box chip below) -->

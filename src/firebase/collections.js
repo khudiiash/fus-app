@@ -361,15 +361,34 @@ export async function logTransaction(data) {
   if (data.toUid) pruneTransactions(data.toUid) // async, no await intentional
 }
 
+function txTimeMs(t) {
+  const ts = t.timestamp
+  if (ts?.toMillis) return ts.toMillis()
+  if (ts?.seconds) return ts.seconds * 1000
+  return 0
+}
+
+/** Вхідні події + надіслані вчителю предметні значки (fromUid == я). */
 export async function getTransactionHistory(uid, limitCount = 20) {
-  const q = query(
-    txCol(),
-    where('toUid', '==', uid),
-    orderBy('timestamp', 'desc'),
-    limit(limitCount),
-  )
-  const snap = await getDocs(q)
-  return snap.docs.map(d => ({ id: d.id, ...d.data() }))
+  const chunk = Math.max(limitCount, 40)
+  const [incSnap, badgeSnap] = await Promise.all([
+    getDocs(query(txCol(), where('toUid', '==', uid), orderBy('timestamp', 'desc'), limit(chunk))),
+    getDocs(
+      query(
+        txCol(),
+        where('fromUid', '==', uid),
+        where('type', '==', 'badge_sent'),
+        orderBy('timestamp', 'desc'),
+        limit(chunk),
+      ),
+    ),
+  ])
+  const byId = new Map()
+  incSnap.docs.forEach((d) => byId.set(d.id, { id: d.id, ...d.data() }))
+  badgeSnap.docs.forEach((d) => byId.set(d.id, { id: d.id, ...d.data() }))
+  return [...byId.values()]
+    .sort((a, b) => txTimeMs(b) - txTimeMs(a))
+    .slice(0, limitCount)
 }
 
 export async function getAwardHistory(fromUid, limitCount = 50) {
@@ -382,6 +401,49 @@ export async function getAwardHistory(fromUid, limitCount = 50) {
   )
   const snap = await getDocs(q)
   return snap.docs.map(d => ({ id: d.id, ...d.data() }))
+}
+
+/**
+ * Журнал вчителя: власні нарахування учням (award) + предметні значки, отримані від учнів (badge_sent → toUid).
+ * Вхідні події читаємо лише за (toUid + timestamp) — такий індекс уже в firestore.indexes.json;
+ * type=badge_sent відфільтровуємо клієнтно (без окремого композитного індексу toUid+type+timestamp).
+ */
+export async function getTeacherJournalHistory(teacherUid, limitCount = 50) {
+  if (!teacherUid) return []
+  const chunk = Math.max(limitCount, 40)
+  const incomingCap = Math.min(300, Math.max(chunk * 5, 120))
+
+  const [awardSnap, incomingSnap] = await Promise.all([
+    getDocs(
+      query(
+        txCol(),
+        where('fromUid', '==', teacherUid),
+        where('type', '==', 'award'),
+        orderBy('timestamp', 'desc'),
+        limit(chunk),
+      ),
+    ),
+    getDocs(
+      query(
+        txCol(),
+        where('toUid', '==', teacherUid),
+        orderBy('timestamp', 'desc'),
+        limit(incomingCap),
+      ),
+    ),
+  ])
+
+  const badgeRows = incomingSnap.docs
+    .map((d) => ({ id: d.id, ...d.data() }))
+    .filter((t) => t.type === 'badge_sent')
+    .slice(0, chunk)
+
+  const byId = new Map()
+  awardSnap.docs.forEach((d) => byId.set(d.id, { id: d.id, ...d.data() }))
+  badgeRows.forEach((t) => byId.set(t.id, t))
+  return [...byId.values()]
+    .sort((a, b) => txTimeMs(b) - txTimeMs(a))
+    .slice(0, limitCount)
 }
 
 // ─── Achievement helpers ──────────────────────────────────────────────────────
@@ -548,6 +610,63 @@ export async function purchaseItem({ uid, itemId, price }) {
 
   const spent = Number(price) || 0
   if (spent > 0) await updateQuestProgress(uid, 'spend', spent)
+}
+
+/** Вчителі, які викладають цей предмет (за subjectId з Firestore). */
+export async function getTeachersForSubject(subjectId) {
+  if (!subjectId) return []
+  const q = query(usersCol(), where('role', '==', 'teacher'))
+  const snap = await getDocs(q)
+  return snap.docs
+    .map((d) => ({ id: d.id, ...d.data() }))
+    .filter((t) => (t.subjectIds || []).includes(subjectId))
+}
+
+/**
+ * Учень передає один предметний значок вчителю (офлайн-активність + запис у журналі).
+ */
+export async function sendSubjectBadge({ studentUid, itemId, teacherUid }) {
+  let itemMeta = null
+  await runTransaction(db, async (tx) => {
+    const sRef = doc(db, 'users', studentUid)
+    const tRef = doc(db, 'users', teacherUid)
+    const iRef = doc(db, 'items', itemId)
+    const [sSnap, tSnap, iSnap] = await Promise.all([tx.get(sRef), tx.get(tRef), tx.get(iRef)])
+    if (!sSnap.exists()) throw new Error('Користувача не знайдено')
+    if (!tSnap.exists()) throw new Error('Вчителя не знайдено')
+    if (!iSnap.exists()) throw new Error('Предмет не знайдено')
+
+    const student = sSnap.data()
+    const teacher = tSnap.data()
+    const item = { id: iSnap.id, ...iSnap.data() }
+    if (item.category !== 'subject_badge') throw new Error('Це не предметний значок')
+    if (!item.subjectId) throw new Error('Некоректний значок')
+    if (teacher.role !== 'teacher') throw new Error('Оберіть вчителя')
+    if (!(teacher.subjectIds || []).includes(item.subjectId)) {
+      throw new Error('Цей вчитель не викладає цей предмет')
+    }
+
+    const consumed = consumeOneFromInventory(student.inventory, student.inventoryCounts, itemId)
+    if (!consumed) throw new Error('У вас немає цього значка')
+
+    tx.update(sRef, {
+      inventory: consumed.inventory,
+      inventoryCounts: consumed.inventoryCounts,
+    })
+    itemMeta = item
+  })
+
+  await logTransaction({
+    type: 'badge_sent',
+    fromUid: studentUid,
+    toUid: teacherUid,
+    amount: 0,
+    itemIds: [itemId],
+    subjectId: itemMeta.subjectId,
+    subjectName: itemMeta.subjectName || '',
+    note: itemMeta.name || '',
+  })
+  await updateQuestProgress(studentUid, 'badge_send', 1)
 }
 
 /** Зняти один екземпляр предмета з інвентарю (з урахуванням inventoryCounts). */
@@ -861,11 +980,12 @@ const QUEST_TYPES = [
   { type: 'spend',      label: 'Витратити монети у магазині',    target: 50, rewardCoins: 15, rewardXp: 30 },
   { type: 'receive',    label: 'Отримати монети від вчителя',   target: 1,  rewardCoins: 5,  rewardXp: 15 },
   { type: 'send_trade', label: 'Надіслати пропозицію обміну',   target: 1,  rewardCoins: 10, rewardXp: 20 },
+  { type: 'badge_send', label: 'Передати значок вчителю предмета', target: 1, rewardCoins: 15, rewardXp: 25 },
 ]
 
 export function generateDailyQuests() {
   const shuffled = [...QUEST_TYPES].sort(() => Math.random() - 0.5)
-  return shuffled.slice(0, 3).map(q => ({ ...q, progress: 0, completed: false }))
+  return shuffled.slice(0, 3).map(q => ({ ...q, progress: 0, completed: false, claimed: false }))
 }
 
 export async function getDailyQuests(uid) {
@@ -877,11 +997,52 @@ export async function getDailyQuests(uid) {
     if (d.ownerUid == null || d.ownerUid !== uid) {
       await updateDoc(ref, { ownerUid: uid })
     }
-    return d.quests
+    return (d.quests || []).filter(q => !q.claimed)
   }
   const quests = generateDailyQuests()
   await setDoc(ref, { ownerUid: uid, quests, createdAt: serverTimestamp() })
-  return quests
+  return quests.filter(q => !q.claimed)
+}
+
+/** Забрати монети/XP за виконаний щоденний квест; повертає список квестів без забраних (для UI). */
+export async function claimDailyQuestReward(uid, questType) {
+  const today = new Date().toISOString().split('T')[0]
+  const dqRef = doc(db, 'dailyQuests', `${uid}_${today}`)
+  const dqSnap = await getDoc(dqRef)
+  if (!dqSnap.exists()) return null
+
+  const quests = dqSnap.data().quests || []
+  const idx = quests.findIndex(q => q.type === questType && q.completed === true && !q.claimed)
+  if (idx < 0) return null
+
+  const q = quests[idx]
+  const rewardCoins = q.rewardCoins || 0
+  const rewardXp = q.rewardXp || 0
+  const userRef = doc(db, 'users', uid)
+  const userSnap = await getDoc(userRef)
+  if (!userSnap.exists()) return null
+
+  const user = userSnap.data()
+  const newXp = (user.xp || 0) + rewardXp
+  const newLevel = calcLevel(newXp)
+  const newQuests = quests.map((x, i) => (i === idx ? { ...x, claimed: true } : x))
+
+  const batch = writeBatch(db)
+  batch.update(dqRef, { ownerUid: uid, quests: newQuests })
+  batch.update(userRef, {
+    coins: increment(rewardCoins),
+    xp: newXp,
+    level: newLevel,
+  })
+  await batch.commit()
+  await logTransaction({
+    type: 'daily_quest',
+    fromUid: uid,
+    toUid: uid,
+    amount: rewardCoins,
+    note: q.label || questType,
+  })
+  return newQuests.filter(x => !x.claimed)
 }
 
 export async function updateQuestProgress(uid, questType, amount = 1) {
@@ -896,7 +1057,7 @@ export async function updateQuestProgress(uid, questType, amount = 1) {
     return { ...q, progress: newProgress, completed: newProgress >= q.target }
   })
   await updateDoc(ref, { ownerUid: uid, quests })
-  return quests
+  return quests.filter(q => !q.claimed)
 }
 
 // ─── Streak helpers ───────────────────────────────────────────────────────────

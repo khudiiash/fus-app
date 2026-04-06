@@ -1,12 +1,24 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { useAuthStore } from './auth'
-import { updateUser, getAllItems, getDailyQuests, updateQuestProgress, xpForLevel, xpToNextLevel } from '@/firebase/collections'
+import {
+  updateUser,
+  getAllItems,
+  getDailyQuests,
+  updateQuestProgress,
+  claimDailyQuestReward,
+  calcLevel,
+  xpForLevel,
+  xpToNextLevel,
+} from '@/firebase/collections'
+import { useToast } from '@/composables/useToast'
 
 export const useUserStore = defineStore('user', () => {
   const items       = ref([])
   const quests      = ref([])
   const loadingItems = ref(false)
+  /** Тип щоденного квесту, для якого зараз виконується claim (анти-подвійний клік). */
+  const claimingQuestType = ref(null)
 
   /** Single in-flight catalog fetch (layout + room + shop mounting together). */
   let itemsFetchPromise = null
@@ -60,6 +72,35 @@ export const useUserStore = defineStore('user', () => {
     if (!auth.profile) return
     const updated = await updateQuestProgress(auth.profile.id, type, amount)
     if (updated) quests.value = updated
+  }
+
+  async function claimQuest(questType) {
+    const auth = useAuthStore()
+    const { success, error } = useToast()
+    if (!auth.profile || claimingQuestType.value) return
+    const q = quests.value.find((x) => x.type === questType && x.completed)
+    if (!q) return
+    claimingQuestType.value = questType
+    try {
+      const updated = await claimDailyQuestReward(auth.profile.id, questType)
+      if (updated == null) {
+        error('Не вдалося забрати нагороду')
+        return
+      }
+      quests.value = updated
+      if (auth.profile) {
+        auth.profile.coins = (auth.profile.coins || 0) + (q.rewardCoins || 0)
+        const newXp = (auth.profile.xp || 0) + (q.rewardXp || 0)
+        auth.profile.xp = newXp
+        auth.profile.level = calcLevel(newXp)
+      }
+      success(`+${q.rewardCoins || 0} монет за завдання`)
+    } catch (e) {
+      console.warn('[claimQuest]', e?.message)
+      error('Не вдалося забрати нагороду')
+    } finally {
+      claimingQuestType.value = null
+    }
   }
 
   async function equipItem(category, itemId) {
@@ -184,8 +225,8 @@ export const useUserStore = defineStore('user', () => {
   }
 
   return {
-    items, quests, loadingItems,
-    fetchItems, fetchQuests, progressQuest, equipItem, unequipItem, setDefaultRoom, setNoPet, setNoAccessory, getXpProgress, ownedItems,
+    items, quests, loadingItems, claimingQuestType,
+    fetchItems, fetchQuests, progressQuest, claimQuest, equipItem, unequipItem, setDefaultRoom, setNoPet, setNoAccessory, getXpProgress, ownedItems,
     uploadPhoto, removePhoto,
   }
 })

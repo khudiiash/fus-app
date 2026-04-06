@@ -8,6 +8,7 @@ import AvatarDisplay from '@/components/avatar/AvatarDisplay.vue'
 import CoinDisplay from '@/components/gamification/CoinDisplay.vue'
 import AppCard from '@/components/ui/AppCard.vue'
 import { Trophy, Crown, Zap, Flame, Inbox, LayoutDashboard } from 'lucide-vue-next'
+import { sortClassesByGradeAsc } from '@/utils/sortClasses'
 
 const auth      = useAuthStore()
 const userStore = useUserStore()
@@ -24,7 +25,7 @@ onMounted(async () => {
 
   const ids = auth.profile?.classIds || []
   const all = await Promise.all(ids.map(id => getClass(id)))
-  classes.value = all.filter(Boolean)
+  classes.value = sortClassesByGradeAsc(all.filter(Boolean))
 
   if (classes.value.length > 0) {
     selectedClassId.value = classes.value[0].id

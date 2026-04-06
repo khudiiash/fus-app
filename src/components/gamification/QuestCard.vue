@@ -1,18 +1,35 @@
 <script setup>
 import { computed } from 'vue'
-import { LogIn, ArrowLeftRight, ShoppingBag, Coins, Send, Star, CheckCircle2 } from 'lucide-vue-next'
+import { LogIn, ArrowLeftRight, ShoppingBag, Coins, Send, Star, CheckCircle2, Medal } from 'lucide-vue-next'
 import CoinDisplay from '@/components/gamification/CoinDisplay.vue'
 
 const props = defineProps({
   quest: { type: Object, required: true },
+  busy: { type: Boolean, default: false },
 })
 
+const emit = defineEmits(['claim'])
+
+const canClaim = computed(() => props.quest.completed === true && !props.busy)
+
+function onActivate() {
+  if (!canClaim.value) return
+  emit('claim')
+}
+
+function onKeydown(e) {
+  if (e.key !== 'Enter' && e.key !== ' ') return
+  e.preventDefault()
+  onActivate()
+}
+
 const iconMap = {
-  login:      LogIn,
-  trade:      ArrowLeftRight,
-  spend:      ShoppingBag,
-  receive:    Coins,
-  send_trade: Send,
+  login:       LogIn,
+  trade:       ArrowLeftRight,
+  spend:       ShoppingBag,
+  receive:     Coins,
+  send_trade:  Send,
+  badge_send:  Medal,
 }
 
 const questIcon = computed(() => iconMap[props.quest.type] || Star)
@@ -22,7 +39,16 @@ const progress  = computed(() => Math.min(100, Math.round((props.quest.progress 
 <template>
   <div
     class="glass-card p-4 flex items-center gap-3.5 transition-all duration-300"
-    :class="quest.completed ? 'glow-xp' : ''"
+    :class="[
+      quest.completed ? 'glow-xp' : '',
+      canClaim ? 'cursor-pointer active:scale-[0.99] hover:ring-1 hover:ring-emerald-500/30' : '',
+    ]"
+    :tabindex="canClaim ? 0 : undefined"
+    :role="canClaim ? 'button' : undefined"
+    :aria-busy="busy"
+    :aria-label="canClaim ? 'Забрати нагороду за завдання' : undefined"
+    @click="onActivate"
+    @keydown="onKeydown"
   >
     <!-- Icon cell -->
     <div
@@ -56,6 +82,10 @@ const progress  = computed(() => Math.min(100, Math.round((props.quest.progress 
         <span class="tabular-nums">{{ quest.progress }}&thinsp;/&thinsp;{{ quest.target }}</span>
         <CoinDisplay :amount="quest.rewardCoins" :show-sign="true" size="sm" />
       </div>
+      <div v-if="canClaim" class="text-[10px] font-bold text-emerald-400/90 mt-1.5">
+        Натисни, щоб забрати нагороду
+      </div>
+      <div v-else-if="quest.completed && busy" class="text-[10px] text-slate-500 mt-1.5">Зачекай…</div>
     </div>
   </div>
 </template>
