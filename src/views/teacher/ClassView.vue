@@ -315,7 +315,7 @@ async function doFine() {
 </script>
 
 <template>
-  <div class="flex flex-col gap-2.5">
+  <div class="flex flex-col gap-2.5 pb-6">
     <!-- Header -->
     <div class="flex flex-col gap-2">
       <div class="flex items-start justify-between gap-2 flex-wrap">
