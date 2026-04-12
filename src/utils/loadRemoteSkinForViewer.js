@@ -1,9 +1,9 @@
 /**
  * Remote skins (Firebase Storage) + Workbox: cross-origin `img.src` loads used by
- * skinview3d often fail once (net::ERR_FAILED) while a later attempt succeeds.
+ * Remote image loads often fail once (net::ERR_FAILED) while a later attempt succeeds.
  * Fetch as blob → blob: URL so decode is same-origin and WebGL upload is stable.
  *
- * @param {*} viewer skinview3d SkinViewer
+ * @param {{ loadSkin: Function }} viewer MinecraftSkinHost (or compatible loadSkin)
  * @param {string|null|undefined} skinUrl
  * @param {HTMLCanvasElement} fallbackCanvas
  */

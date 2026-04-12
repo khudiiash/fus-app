@@ -1,6 +1,6 @@
 <script setup>
 /**
- * Baked full-body skin preview (shared skinview3d + queue). PNG with alpha.
+ * Baked full-body skin preview (shared MinecraftSkinHost + queue). PNG with alpha.
  */
 import { ref, watch } from 'vue'
 import { requestSkinThumbnail } from '@/services/skinThumbnailRenderer'

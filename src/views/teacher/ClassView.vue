@@ -3,7 +3,17 @@ import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useUserStore } from '@/stores/user'
-import { watchClass, getUsersByClass, awardCoins, fineStudent, checkAndGrantAchievements, getAllSubjects, getTeacherBudgetInfo } from '@/firebase/collections'
+import {
+  watchClass,
+  getUsersByClass,
+  awardCoins,
+  fineStudent,
+  checkAndGrantAchievements,
+  getAllSubjects,
+  getTeacherBudgetInfo,
+  FINE_AMOUNT_OPTIONS,
+  hasTeacherFinedStudentToday,
+} from '@/firebase/collections'
 import { getSubjectIcon } from '@/composables/useSubjectIcon'
 import AppButton from '@/components/ui/AppButton.vue'
 import AppModal from '@/components/ui/AppModal.vue'
@@ -192,7 +202,6 @@ async function doAward() {
 }
 
 const QUICK_AMOUNTS = [5, 10, 25, 50, 100]
-const FINE_AMOUNTS  = [5, 10, 25, 50]
 
 const budgetInfo = computed(() => getTeacherBudgetInfo(auth.profile))
 const budgetLowThresh = computed(() => Math.max(15, Math.round((budgetInfo.value.budget || 1) * 0.1)))
@@ -253,7 +262,7 @@ const fineSelectedMinCoins = computed(() => {
 function openFine(student) {
   fineBulkFromCards.value = false
   fineTarget.value = student
-  fineAmount.value = 10
+  fineAmount.value = 20
   fineReason.value = ''
   showFine.value   = true
 }
@@ -265,13 +274,17 @@ function openFineSelected() {
   }
   fineBulkFromCards.value = true
   fineTarget.value = null
-  fineAmount.value = 10
+  fineAmount.value = 20
   fineReason.value = ''
   showFine.value = true
 }
 
 async function doFine() {
-  if (!fineAmount.value || fineAmount.value < 1) { error('Введіть суму штрафу'); return }
+  const amt = Number(fineAmount.value)
+  if (!FINE_AMOUNT_OPTIONS.includes(amt)) {
+    error('Оберіть суму штрафу: 10, 20 або 30 монет')
+    return
+  }
   if (!fineReason.value.trim()) { error('Вкажіть причину штрафу'); return }
 
   const targets = fineBulkFromCards.value
@@ -285,10 +298,16 @@ async function doFine() {
     return
   }
 
+  for (const s of targets) {
+    if (await hasTeacherFinedStudentToday(auth.profile.id, s.id)) {
+      error(`Сьогодні штраф для «${s.displayName || 'учня'}» вже накладено`)
+      return
+    }
+  }
+
   fining.value = true
   try {
     const reason = fineReason.value.trim()
-    const amt = Number(fineAmount.value)
     for (const s of targets) {
       await fineStudent({
         fromUid: auth.profile.id,
@@ -481,11 +500,14 @@ async function doFine() {
 
         <!-- Actions: компактний ряд -->
         <div
-          class="grid grid-cols-3 gap-1.5 border-t border-white/[0.06] pt-2"
+          class="grid grid-cols-2 sm:grid-cols-4 gap-1.5 border-t border-white/[0.06] pt-2"
         >
           <AppButton variant="secondary" size="sm" block class="!text-xs !px-2 !py-1.5 !rounded-lg" @click.stop="router.push(`/teacher/room/${s.id}`)">
             <LayoutDashboard :size="14" :stroke-width="2" />
             Кімната
+          </AppButton>
+          <AppButton variant="ghost" size="sm" block class="!text-xs !px-2 !py-1.5 !rounded-lg !text-violet-300" @click.stop="router.push(`/teacher/student/${s.id}/history`)">
+            Журнал
           </AppButton>
           <AppButton variant="coin" size="sm" block class="!text-xs !px-2 !py-1.5 !rounded-lg" @click.stop="openAward(s)">
             <Coins :size="14" :stroke-width="2" />
@@ -662,22 +684,18 @@ async function doFine() {
           <label class="text-sm font-bold text-slate-300 flex items-center gap-1.5 mb-2">
             Сума штрафу <Coins :size="13" :stroke-width="2" class="text-red-400" />
           </label>
-          <div class="flex gap-2 flex-wrap mb-3">
+          <div class="flex gap-2 flex-wrap">
             <button
-              v-for="a in FINE_AMOUNTS"
+              v-for="a in FINE_AMOUNT_OPTIONS"
               :key="a"
+              type="button"
               class="px-4 py-2 rounded-xl font-bold text-sm transition-all"
               :class="fineAmount === a ? 'bg-red-600 text-white' : 'bg-game-card text-slate-300 hover:bg-game-border'"
               @click="fineAmount = a"
-            >−{{ a }}</button>
+            >
+              −{{ a }}
+            </button>
           </div>
-          <input
-            v-model="fineAmount"
-            type="number"
-            min="1"
-            :max="fineBulkFromCards ? 999999 : (fineTarget?.coins || 9999)"
-            class="w-full bg-game-bg border border-red-500/30 rounded-xl px-4 py-3 text-center text-2xl font-extrabold text-red-400 focus:outline-none focus:border-red-500"
-          />
         </div>
 
         <!-- Reason (required) -->

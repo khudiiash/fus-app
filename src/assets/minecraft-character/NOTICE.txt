@@ -1,0 +1,7 @@
+The files model.js, animation.js, and nametag.js in this folder are copied from
+skinview3d (https://github.com/bs-community/skinview3d), version 3.4.1, under the MIT License.
+
+Copyright (c) 2014-2018 Kent Rasmussen
+Copyright (c) 2017-2022 Haowei Wen, Sean Boult and contributors
+
+See https://github.com/bs-community/skinview3d/blob/master/LICENSE

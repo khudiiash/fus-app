@@ -107,7 +107,7 @@ export default defineConfig(({ mode }) => ({
       output: {
         manualChunks(id) {
           if (!id.includes('node_modules')) return
-          if (id.includes('three') || id.includes('skinview3d')) return 'vendor-three'
+          if (id.includes('three') || id.includes('skinview-utils')) return 'vendor-three'
           if (id.includes('firebase') || id.includes('@firebase')) return 'vendor-firebase'
           if (
             id.includes('/vue/') ||
@@ -192,9 +192,8 @@ export default defineConfig(({ mode }) => ({
   ],
   resolve: {
     alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
-    // Force all packages (including skinview3d) to share a single three.js
-    // instance so our post-processing passes and skinview3d's scene use the
-    // same class constructors.
+    // Force a single three.js instance so post-processing and the skin host scene
+    // share the same class constructors.
     dedupe: ['three'],
   },
 }))

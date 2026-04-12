@@ -2,7 +2,12 @@
 import '@/utils/enableThreeFileCache'
 import { loadRemoteSkinForViewer } from '@/utils/loadRemoteSkinForViewer'
 import { ref, onMounted, onUnmounted, watch } from 'vue'
-import * as skinview3d from 'skinview3d'
+import {
+  MinecraftSkinHost,
+  IdleAnimation,
+  WaveAnimation,
+  HitAnimation,
+} from '@/character/minecraftSkinHost.js'
 import * as THREE from 'three'
 import { Coins } from 'lucide-vue-next'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
@@ -43,9 +48,9 @@ let _emoteTimer    = null
 // WaveAnimation plays one arm-raise cycle ≈ 2.4 s at default speed = 1.
 // HitAnimation plays one flinch cycle     ≈ 0.9 s at default speed = 1.
 const EMOTES = [
-  { make: () => new skinview3d.WaveAnimation('right'), ms: 2400 },
-  { make: () => new skinview3d.WaveAnimation('left'),  ms: 2400 },
-  { make: () => new skinview3d.HitAnimation(),         ms: 900  },
+  { make: () => new WaveAnimation('right'), ms: 2400 },
+  { make: () => new WaveAnimation('left'),  ms: 2400 },
+  { make: () => new HitAnimation(),         ms: 900  },
 ]
 
 function scheduleEmote() {
@@ -59,7 +64,7 @@ function scheduleEmote() {
     // After the emote finishes, return to idle then queue the next one
     _emoteTimer = setTimeout(() => {
       if (!viewer) return
-      viewer.animation = new skinview3d.IdleAnimation()
+      viewer.animation = new IdleAnimation()
       scheduleEmote()
     }, emote.ms)
   }, idleMs)
@@ -277,7 +282,7 @@ function disposePet() {
   _petRoot = null
 }
 
-/** Inline copy of SkinViewer.draw() plus pet mixer tick (avoids double clock.getDelta). */
+/** Inline copy of MinecraftSkinHost.draw() plus pet mixer tick (avoids double clock.getDelta). */
 function installPetAwareDraw(viewerInstance) {
   if (!viewerInstance || viewerInstance._fusPetDrawInstalled) return
   viewerInstance._fusPetDrawInstalled = true
@@ -443,7 +448,7 @@ function initViewer() {
   const w = props.width  || containerRef.value?.clientWidth  || 320
   const h = props.height || containerRef.value?.clientHeight || 420
 
-  viewer = new skinview3d.SkinViewer({
+  viewer = new MinecraftSkinHost({
     canvas:  canvasRef.value,
     width:   w,
     height:  h,
@@ -461,7 +466,7 @@ function initViewer() {
 
 
   // ── Patch for three.js r183 compatibility ───────────────────────────────────
-  // skinview3d dispose() calls fxaaPass.fsQuad.dispose() but r183 ShaderPass
+  // MinecraftSkinHost dispose() calls fxaaPass.fsQuad.dispose() but r183 ShaderPass
   // renamed the property from .fsQuad to ._fsQuad (private).
   if (viewer.fxaaPass && viewer.fxaaPass._fsQuad && !viewer.fxaaPass.fsQuad) {
     Object.defineProperty(viewer.fxaaPass, 'fsQuad', {
@@ -529,7 +534,7 @@ function initViewer() {
   viewer.controls.autoRotate   = false
 
   // ── Animation ───────────────────────────────────────────────────────────────
-  viewer.animation = new skinview3d.IdleAnimation()
+  viewer.animation = new IdleAnimation()
 
   // No built-in name tag — we use the HTML overlay instead
   viewer.nameTag = null
@@ -551,7 +556,7 @@ function initViewer() {
 }
 
 // ─── Post-processing (GTAO + Bloom) ───────────────────────────────────────────
-// Injected into skinview3d's EffectComposer so the existing animation loop,
+// Injected into the host EffectComposer so the existing animation loop,
 // controls, and skin system keep working unchanged.
 //
 // Pipeline:
@@ -583,7 +588,7 @@ function setupPostProcessing() {
     0.55   // threshold — only near-white pixels bloom
   )
 
-  // Rebuild: skinview3d has [RenderPass, FXAAShader] → we want [RenderPass, GTAO, Bloom, FXAAShader]
+  // Rebuild: default host passes [RenderPass, FXAAShader] → we want [RenderPass, Bloom, FXAAShader]
   viewer.composer.passes = [
     viewer.renderPass,
     _bloomPass,
@@ -813,7 +818,7 @@ onUnmounted(() => {
   disposePet()
 
   if (viewer) {
-    // try/catch: skinview3d r3.4.1 dispose() accesses fxaaPass.fsQuad which
+    // try/catch: dispose() accesses fxaaPass.fsQuad which
     // was renamed to _fsQuad in three.js r183 (we patch it above but guard anyway)
     try { viewer.dispose() } catch (_) { viewer.renderer?.dispose?.() }
     viewer = null

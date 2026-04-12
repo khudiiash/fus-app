@@ -1,6 +1,6 @@
 <script setup>
 import { ref, onMounted, onUnmounted, watch } from 'vue'
-import * as skinview3d from 'skinview3d'
+import { MinecraftSkinHost } from '@/character/minecraftSkinHost.js'
 import * as THREE from 'three'
 import { loadRemoteSkinForViewer } from '@/utils/loadRemoteSkinForViewer'
 
@@ -63,7 +63,7 @@ async function initViewer() {
   if (!canvasRef.value) return
   safeDispose()
 
-  viewer = new skinview3d.SkinViewer({
+  viewer = new MinecraftSkinHost({
     canvas:       canvasRef.value,
     width:        props.width,
     height:       props.height,
@@ -71,7 +71,7 @@ async function initViewer() {
   })
 
   // three.js r183 renamed ShaderPass.fsQuad → ._fsQuad (private).
-  // skinview3d's dispose() still calls .fsQuad.dispose(), so patch it back.
+  // Host dispose() still calls .fsQuad.dispose(), so patch it back.
   if (viewer.fxaaPass?._fsQuad && !viewer.fxaaPass.fsQuad) {
     Object.defineProperty(viewer.fxaaPass, 'fsQuad', {
       get() { return this._fsQuad },

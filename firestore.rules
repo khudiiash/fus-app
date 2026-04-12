@@ -48,6 +48,28 @@ service cloud.firestore {
       return isAuth() && request.auth.uid == uid;
     }
 
+    /** Учень з цим uid і classId входить до одного з класів вчителя (перегляд журналу / транзакцій). */
+    function studentInTeachersClasses(studentUid) {
+      return isTeacher()
+        && exists(/databases/$(database)/documents/users/$(studentUid))
+        && get(/databases/$(database)/documents/users/$(studentUid)).data.role == 'student'
+        && 'classId' in get(/databases/$(database)/documents/users/$(studentUid)).data
+        && get(/databases/$(database)/documents/users/$(studentUid)).data.classId is string
+        && 'classIds' in get(userDoc()).data
+        && get(userDoc()).data.classIds is list
+        && get(userDoc()).data.classIds.hasAny([
+          get(/databases/$(database)/documents/users/$(studentUid)).data.classId
+        ]);
+    }
+
+    function teacherMayReadTransactionForClassJournal() {
+      return isTeacher()
+        && (
+          (resource.data.fromUid is string && studentInTeachersClasses(resource.data.fromUid))
+          || (resource.data.toUid is string && studentInTeachersClasses(resource.data.toUid))
+        );
+    }
+
     // Access codes — public read so unauthenticated users can look up their code before login
     match /accessCodes/{code} {
       allow read: if true;
@@ -65,6 +87,13 @@ service cloud.firestore {
         || (isAuth() && request.resource.data.diff(resource.data).affectedKeys()
               .hasOnly(['coins', 'inventory', 'inventoryCounts', 'xp', 'level', 'avatar']));
       allow delete: if isAdmin();
+
+      /** Один штраф на учня від цього вчителя за календарний день (док. id = {studentUid}_{yyyy-mm-dd}). */
+      match /finesAppliedToday/{strikeId} {
+        allow read: if isOwner(uid) || isAdmin();
+        allow create: if isOwner(uid) || isAdmin();
+        allow update, delete: if isAdmin();
+      }
     }
 
     // Classes
@@ -119,7 +148,8 @@ service cloud.firestore {
       allow read: if isAuth() && (
         isAdmin() ||
         resource.data.fromUid == request.auth.uid ||
-        resource.data.toUid == request.auth.uid
+        resource.data.toUid == request.auth.uid ||
+        teacherMayReadTransactionForClassJournal()
       );
       allow create: if isAuth();
       allow update, delete: if isAdmin();

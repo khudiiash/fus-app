@@ -3,7 +3,7 @@ import { ref } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import AppButton from '@/components/ui/AppButton.vue'
-import { BarChart2, School, Users, GraduationCap, BookOpen, ShoppingBag, Terminal, Boxes } from 'lucide-vue-next'
+import { BarChart2, School, Users, GraduationCap, BookOpen, ShoppingBag, Terminal, Boxes, Activity } from 'lucide-vue-next'
 
 const auth     = useAuthStore()
 const route    = useRoute()
@@ -18,6 +18,7 @@ const navItems = [
   { to: '/admin/subjects',  Icon: BookOpen,      label: 'Предмети'               },
   { to: '/admin/shop',      Icon: ShoppingBag,   label: 'Магазин'                },
   { to: '/admin/rooms',     Icon: Boxes,         label: 'Примірочна'             },
+  { to: '/admin/activity',  Icon: Activity,      label: 'Активність'             },
   { to: '/admin/devtools',  Icon: Terminal,      label: 'Інструменти'            },
 ]
 

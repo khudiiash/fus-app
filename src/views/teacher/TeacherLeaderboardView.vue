@@ -4,21 +4,23 @@ import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useUserStore } from '@/stores/user'
 import { getLeaderboard, getClass } from '@/firebase/collections'
+import { useToast } from '@/composables/useToast'
 import AvatarDisplay from '@/components/avatar/AvatarDisplay.vue'
 import CoinDisplay from '@/components/gamification/CoinDisplay.vue'
-import AppCard from '@/components/ui/AppCard.vue'
 import { Trophy, Crown, Zap, Flame, Inbox, LayoutDashboard } from 'lucide-vue-next'
 import { sortClassesByGradeAsc } from '@/utils/sortClasses'
 
 const auth      = useAuthStore()
 const userStore = useUserStore()
 const router    = useRouter()
+const { error: toastError } = useToast()
 
-const scope     = ref('class')
-const sortBy    = ref('coins')
+const scope     = ref('global')
+const sortBy    = ref('xp')
 const students  = ref([])
 const classes   = ref([])
 const selectedClassId = ref(null)
+const leaderboardLoading = ref(false)
 
 onMounted(async () => {
   await userStore.fetchItems()
@@ -35,20 +37,27 @@ onMounted(async () => {
 })
 
 async function fetchLeaderboard() {
-  const classId = scope.value === 'class' ? selectedClassId.value : null
-  students.value = await getLeaderboard(classId, 50)
+  leaderboardLoading.value = true
+  try {
+    const classId = scope.value === 'class' ? selectedClassId.value : null
+    students.value = await getLeaderboard(classId, 50, sortBy.value)
+  } catch (e) {
+    console.warn('[TeacherLeaderboard]', e?.code, e?.message)
+    students.value = []
+    const m = String(e?.message || '')
+    const indexBuilding = e?.code === 'failed-precondition' || m.includes('index')
+    toastError(
+      indexBuilding
+        ? 'Індекс у базі ще будується. Зачекайте хвилину й оновіть сторінку або спробуйте знову.'
+        : 'Не вдалося завантажити рейтинг.',
+    )
+  } finally {
+    leaderboardLoading.value = false
+  }
 }
 
-const sorted = computed(() => {
-  return [...students.value].sort((a, b) => {
-    if (sortBy.value === 'xp')     return (b.xp     || 0) - (a.xp     || 0)
-    if (sortBy.value === 'streak') return (b.streak  || 0) - (a.streak  || 0)
-    return (b.coins || 0) - (a.coins || 0)
-  })
-})
-
-const podium = computed(() => sorted.value.slice(0, 3))
-const rest   = computed(() => sorted.value.slice(3))
+const podium = computed(() => students.value.slice(0, 3))
+const rest   = computed(() => students.value.slice(3))
 
 const rankColor = (i) => {
   if (i === 0) return 'text-amber-400'
@@ -57,8 +66,11 @@ const rankColor = (i) => {
   return 'text-slate-500'
 }
 
-watch(scope, fetchLeaderboard)
-watch(selectedClassId, () => { if (scope.value === 'class') fetchLeaderboard() })
+watch(scope, () => { void fetchLeaderboard() })
+watch(sortBy, () => { void fetchLeaderboard() })
+watch(selectedClassId, () => {
+  if (scope.value === 'class') void fetchLeaderboard()
+})
 </script>
 
 <template>
@@ -77,14 +89,14 @@ watch(selectedClassId, () => { if (scope.value === 'class') fetchLeaderboard() }
       <div class="flex p-1 bg-game-card rounded-xl">
         <button
           class="flex-1 py-1.5 rounded-lg text-sm font-bold transition-all"
-          :class="scope === 'class' ? 'bg-violet-600 text-white' : 'text-slate-400'"
-          @click="scope = 'class'"
-        >Мій клас</button>
-        <button
-          class="flex-1 py-1.5 rounded-lg text-sm font-bold transition-all"
           :class="scope === 'global' ? 'bg-violet-600 text-white' : 'text-slate-400'"
           @click="scope = 'global'"
         >Вся школа</button>
+        <button
+          class="flex-1 py-1.5 rounded-lg text-sm font-bold transition-all"
+          :class="scope === 'class' ? 'bg-violet-600 text-white' : 'text-slate-400'"
+          @click="scope = 'class'"
+        >Мій клас</button>
       </div>
 
       <div class="flex gap-2">
@@ -101,14 +113,19 @@ watch(selectedClassId, () => { if (scope.value === 'class') fetchLeaderboard() }
           class="bg-game-card border border-game-border rounded-xl px-3 py-2 text-sm font-bold text-white focus:outline-none"
           :class="scope === 'class' && classes.length > 1 ? '' : 'flex-1'"
         >
-          <option value="coins">Монети</option>
           <option value="xp">Досвід</option>
+          <option value="coins">Монети</option>
           <option value="streak">Серія</option>
         </select>
       </div>
     </div>
 
-    <div v-if="students.length === 0" class="text-center py-16 text-slate-600">
+    <div v-if="leaderboardLoading" class="text-center py-16 text-slate-600">
+      <Inbox :size="40" :stroke-width="1" class="mx-auto mb-3 opacity-20 animate-pulse" />
+      <div class="text-sm font-bold text-slate-500">Завантаження…</div>
+    </div>
+
+    <div v-else-if="students.length === 0" class="text-center py-16 text-slate-600">
       <Inbox :size="48" :stroke-width="1" class="mx-auto mb-3 opacity-30" />
       <div class="font-bold text-slate-500">Учнів не знайдено</div>
     </div>
@@ -123,7 +140,13 @@ watch(selectedClassId, () => { if (scope.value === 'class') fetchLeaderboard() }
           </div>
           <div class="bg-gradient-to-b from-slate-400/30 to-slate-600/10 border border-slate-400/30 rounded-xl px-4 py-2 text-center w-20 h-16 flex flex-col items-center justify-center">
             <div class="text-xl font-extrabold text-slate-300">2</div>
-            <CoinDisplay :amount="podium[1]?.coins || 0" size="sm" />
+            <CoinDisplay v-if="sortBy === 'coins'" :amount="podium[1]?.coins || 0" size="sm" />
+            <div v-else-if="sortBy === 'xp'" class="flex items-center gap-0.5 text-emerald-400 font-extrabold text-sm">
+              <Zap :size="13" :stroke-width="2" />{{ podium[1]?.xp || 0 }}
+            </div>
+            <div v-else class="flex items-center gap-0.5 text-orange-400 font-extrabold text-sm">
+              <Flame :size="13" :stroke-width="2" />{{ podium[1]?.streak || 0 }}
+            </div>
           </div>
         </div>
         <!-- 1st place -->
@@ -134,7 +157,13 @@ watch(selectedClassId, () => { if (scope.value === 'class') fetchLeaderboard() }
           </div>
           <div class="bg-gradient-to-b from-amber-500/30 to-amber-900/10 border border-amber-500/40 rounded-xl px-4 py-2 text-center w-24 h-20 flex flex-col items-center justify-center glow-legendary">
             <div class="text-2xl font-extrabold text-amber-400">1</div>
-            <CoinDisplay :amount="podium[0]?.coins || 0" size="sm" />
+            <CoinDisplay v-if="sortBy === 'coins'" :amount="podium[0]?.coins || 0" size="sm" />
+            <div v-else-if="sortBy === 'xp'" class="flex items-center gap-0.5 text-emerald-400 font-extrabold text-base">
+              <Zap :size="15" :stroke-width="2" />{{ podium[0]?.xp || 0 }}
+            </div>
+            <div v-else class="flex items-center gap-0.5 text-orange-400 font-extrabold text-base">
+              <Flame :size="15" :stroke-width="2" />{{ podium[0]?.streak || 0 }}
+            </div>
           </div>
         </div>
         <!-- 3rd place -->
@@ -144,7 +173,13 @@ watch(selectedClassId, () => { if (scope.value === 'class') fetchLeaderboard() }
           </div>
           <div class="bg-gradient-to-b from-amber-700/20 to-amber-900/10 border border-amber-700/30 rounded-xl px-4 py-2 text-center w-20 h-14 flex flex-col items-center justify-center">
             <div class="text-lg font-extrabold text-amber-700">3</div>
-            <CoinDisplay :amount="podium[2]?.coins || 0" size="sm" />
+            <CoinDisplay v-if="sortBy === 'coins'" :amount="podium[2]?.coins || 0" size="sm" />
+            <div v-else-if="sortBy === 'xp'" class="flex items-center gap-0.5 text-emerald-400 font-extrabold text-sm">
+              <Zap :size="13" :stroke-width="2" />{{ podium[2]?.xp || 0 }}
+            </div>
+            <div v-else class="flex items-center gap-0.5 text-orange-400 font-extrabold text-sm">
+              <Flame :size="13" :stroke-width="2" />{{ podium[2]?.streak || 0 }}
+            </div>
           </div>
         </div>
       </div>
@@ -152,7 +187,7 @@ watch(selectedClassId, () => { if (scope.value === 'class') fetchLeaderboard() }
       <!-- Rest of list -->
       <div class="flex flex-col gap-2">
         <div
-          v-for="(s, i) in (podium.length >= 3 ? rest : sorted)"
+          v-for="(s, i) in (podium.length >= 3 ? rest : students)"
           :key="s.id"
           class="glass-card flex items-center gap-3 p-3 cursor-pointer hover:border-violet-500/40 transition-all"
           @click="router.push(`/teacher/room/${s.id}`)"

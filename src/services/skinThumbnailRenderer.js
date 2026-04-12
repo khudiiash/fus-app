@@ -1,10 +1,10 @@
 /**
- * One shared skinview3d SkinViewer — bakes character + skin to PNG (shop grids).
+ * One shared MinecraftSkinHost — bakes character + skin to PNG (shop grids).
  * Serial queue + memory cache + IndexedDB across sessions (thumbnailIndexedDb.js).
  */
 import { getPersistentThumbnail, setPersistentThumbnail } from '@/services/thumbnailIndexedDb'
 import { loadRemoteSkinForViewer } from '@/utils/loadRemoteSkinForViewer'
-import * as skinview3d from 'skinview3d'
+import { MinecraftSkinHost } from '@/character/minecraftSkinHost.js'
 import * as THREE from 'three'
 
 const MAX_CACHE_ENTRIES = 96
@@ -74,7 +74,7 @@ function ensureViewer(w, h) {
 
   safeDisposeViewer()
   canvas = document.createElement('canvas')
-  viewer = new skinview3d.SkinViewer({
+  viewer = new MinecraftSkinHost({
     canvas,
     width:  w,
     height: h,

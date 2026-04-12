@@ -19,6 +19,15 @@ const loading        = ref(true)
 
 const isOwnRoom = computed(() => !route.params.uid || route.params.uid === auth.profile?.id)
 
+const viewedStudentUid = computed(() => (route.params.uid ? String(route.params.uid) : ''))
+
+const showTeacherStudentHistory = computed(
+  () =>
+    auth.profile?.role === 'teacher'
+    && !!viewedStudentUid.value
+    && viewedStudentUid.value !== auth.profile?.id,
+)
+
 /** У layout (студент / вчитель) висоту дає flex-1; лише автономний /room/:uid (напр. адмін) — повний екран */
 const isEmbeddedRoom = computed(
   () => route.path.startsWith('/student/room') || route.path.startsWith('/teacher/room'),
@@ -78,12 +87,21 @@ onMounted(async () => {
         <ArrowLeft :size="16" :stroke-width="2.5" />
         Назад
       </button>
-      <div class="flex-1 text-center">
-        <div class="font-extrabold text-sm text-slate-300">
+      <div class="flex-1 text-center min-w-0">
+        <div class="font-extrabold text-sm text-slate-300 truncate px-1">
           {{ isOwnRoom ? 'Моя кімната' : `Кімната: ${targetProfile?.displayName || '...'}` }}
         </div>
       </div>
-      <div class="w-20" />
+      <div class="w-20 shrink-0 flex justify-end">
+        <button
+          v-if="showTeacherStudentHistory"
+          type="button"
+          class="text-[11px] font-extrabold text-violet-400 hover:text-violet-300 px-2 py-1 rounded-lg bg-violet-500/15 border border-violet-500/25"
+          @click="router.push(`/teacher/student/${viewedStudentUid}/history`)"
+        >
+          Журнал
+        </button>
+      </div>
     </div>
 
     <!-- 3D scene: flex-1 дає висоту; absolute дочірній блок заповнює її повністю -->

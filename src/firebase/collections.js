@@ -29,6 +29,15 @@ export async function getUser(uid) {
   return snap.exists() ? { id: snap.id, ...snap.data() } : null
 }
 
+/** Вчитель може переглядати профіль/журнал учня свого класу. */
+export function teacherMayAccessStudentProfile(teacherProfile, studentProfile) {
+  if (!teacherProfile || !studentProfile) return false
+  if (teacherProfile.role !== 'teacher' || studentProfile.role !== 'student') return false
+  const cid = studentProfile.classId
+  const ids = teacherProfile.classIds || []
+  return !!(cid && ids.includes(cid))
+}
+
 const FUNCTIONS_REGION = import.meta.env.VITE_FUNCTIONS_REGION || 'europe-west1'
 
 /** Store FCM token for the signed-in user only; removes the same token from other user docs (shared browser). */
@@ -389,6 +398,72 @@ export async function getTransactionHistory(uid, limitCount = 20) {
   return [...byId.values()]
     .sort((a, b) => txTimeMs(b) - txTimeMs(a))
     .slice(0, limitCount)
+}
+
+/** Усі транзакції, де учень сторона from або to (журнал для вчителя / адміна). */
+export async function getStudentActivityTransactions(studentUid, limitCount = 80) {
+  if (!studentUid) return []
+  const chunk = Math.max(limitCount, 60)
+  const [toSnap, fromSnap] = await Promise.all([
+    getDocs(query(txCol(), where('toUid', '==', studentUid), orderBy('timestamp', 'desc'), limit(chunk))),
+    getDocs(query(txCol(), where('fromUid', '==', studentUid), orderBy('timestamp', 'desc'), limit(chunk))),
+  ])
+  const byId = new Map()
+  toSnap.docs.forEach((d) => byId.set(d.id, { id: d.id, ...d.data() }))
+  fromSnap.docs.forEach((d) => byId.set(d.id, { id: d.id, ...d.data() }))
+  return [...byId.values()]
+    .sort((a, b) => txTimeMs(b) - txTimeMs(a))
+    .slice(0, limitCount)
+}
+
+/** Останні транзакції школи (лише адмін; правила Firestore). */
+export async function getAdminRecentTransactions(limitCount = 250) {
+  const snap = await getDocs(query(txCol(), orderBy('timestamp', 'desc'), limit(limitCount)))
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }))
+}
+
+/** Журнал вихідних/вхідних подій вчителя (нарахування, штрафи, значки від учнів). */
+export async function getTeacherActivityTransactions(teacherUid, limitCount = 120) {
+  if (!teacherUid) return []
+  const cap = Math.max(limitCount, 60)
+  const [fromSnap, toSnap] = await Promise.all([
+    getDocs(query(txCol(), where('fromUid', '==', teacherUid), orderBy('timestamp', 'desc'), limit(cap))),
+    getDocs(query(txCol(), where('toUid', '==', teacherUid), orderBy('timestamp', 'desc'), limit(cap))),
+  ])
+  const byId = new Map()
+  fromSnap.docs.forEach((d) => byId.set(d.id, { id: d.id, ...d.data() }))
+  toSnap.docs.forEach((d) => byId.set(d.id, { id: d.id, ...d.data() }))
+  return [...byId.values()]
+    .sort((a, b) => txTimeMs(b) - txTimeMs(a))
+    .slice(0, limitCount)
+}
+
+/**
+ * Сума монет з нарахувань від вчителів/адміна за предметом (subjectName у транзакції award).
+ */
+export async function aggregateStudentAwardCoinsBySubject(studentUid, cap = 400) {
+  if (!studentUid) return []
+  const snap = await getDocs(
+    query(
+      txCol(),
+      where('toUid', '==', studentUid),
+      where('type', '==', 'award'),
+      orderBy('timestamp', 'desc'),
+      limit(cap),
+    ),
+  )
+  const sums = new Map()
+  for (const d of snap.docs) {
+    const t = d.data()
+    const n = Number(t.amount) || 0
+    if (n <= 0) continue
+    const key = (t.subjectName && String(t.subjectName).trim()) || ''
+    const label = key || 'Без предмета'
+    sums.set(label, (sums.get(label) || 0) + n)
+  }
+  return [...sums.entries()]
+    .map(([subjectName, coins]) => ({ subjectName, coins }))
+    .sort((a, b) => b.coins - a.coins)
 }
 
 export async function getAwardHistory(fromUid, limitCount = 50) {
@@ -779,23 +854,40 @@ export async function openMysteryBox(uid, boxItemId) {
   return result
 }
 
+/** Допустимі суми штрафу (монети). */
+export const FINE_AMOUNT_OPTIONS = [10, 20, 30]
+
+/** Чи вчитель уже штрафував цього учня сьогодні (локальний календарний день як у бюджеті). */
+export async function hasTeacherFinedStudentToday(teacherUid, studentUid) {
+  if (!teacherUid || !studentUid) return false
+  const today = getCurrentBudgetDayDate()
+  const capRef = doc(db, 'users', teacherUid, 'finesAppliedToday', `${studentUid}_${today}`)
+  const snap = await getDoc(capRef)
+  return snap.exists()
+}
+
 // ─── Fine student (transactional) ────────────────────────────────────────────
 export async function fineStudent({ fromUid, toUid, amount, reason = '' }) {
   const today = getCurrentBudgetDayDate()
+  const amt = Number(amount)
+  if (!FINE_AMOUNT_OPTIONS.includes(amt)) {
+    throw new Error('Неприпустима сума штрафу (лише 10, 20 або 30 монет)')
+  }
 
-  await runTransaction(db, async tx => {
+  await runTransaction(db, async (tx) => {
+    const capRef = doc(db, 'users', fromUid, 'finesAppliedToday', `${toUid}_${today}`)
     const uRef = doc(db, 'users', toUid)
     const tRef = doc(db, 'users', fromUid)
-    const [uSnap, tSnap] = await Promise.all([tx.get(uRef), tx.get(tRef)])
+    const [capSnap, uSnap, tSnap] = await Promise.all([tx.get(capRef), tx.get(uRef), tx.get(tRef)])
 
+    if (capSnap.exists()) throw new Error('Ви вже наклали штраф на цього учня сьогодні')
     if (!uSnap.exists()) throw new Error('Учня не знайдено')
 
-    const student   = uSnap.data()
-    const deduction = Math.min(amount, student.coins || 0)
+    const student = uSnap.data()
+    const deduction = Math.min(amt, student.coins || 0)
 
     tx.update(uRef, { coins: increment(-deduction) })
 
-    // Return the deducted coins to the teacher's daily spent budget
     if (tSnap.exists() && tSnap.data().role === 'teacher') {
       const teacher = tSnap.data()
       if (teacher.budgetDayStart === today) {
@@ -803,9 +895,11 @@ export async function fineStudent({ fromUid, toUid, amount, reason = '' }) {
         tx.update(tRef, { coinsUsedToday: newUsed })
       }
     }
+
+    tx.set(capRef, { studentUid: toUid, day: today, createdAt: serverTimestamp() })
   })
 
-  await logTransaction({ type: 'fine', fromUid, toUid, amount: -amount, note: reason })
+  await logTransaction({ type: 'fine', fromUid, toUid, amount: -amt, note: reason })
 }
 
 /** Unequip room/pet/accessory/skin that are no longer owned after a trade. */
@@ -962,15 +1056,23 @@ export function xpToNextLevel(level) {
 }
 
 // ─── Leaderboard ─────────────────────────────────────────────────────────────
-export async function getLeaderboard(classId = null, limitCount = 20) {
+/** @param {'xp'|'coins'|'streak'} sortBy — за замовчуванням досвід (XP). */
+export async function getLeaderboard(classId = null, limitCount = 20, sortBy = 'xp') {
+  const field = sortBy === 'coins' ? 'coins' : sortBy === 'streak' ? 'streak' : 'xp'
   let q
   if (classId) {
-    q = query(usersCol(), where('classId', '==', classId), where('role', '==', 'student'), orderBy('coins', 'desc'), limit(limitCount))
+    q = query(
+      usersCol(),
+      where('classId', '==', classId),
+      where('role', '==', 'student'),
+      orderBy(field, 'desc'),
+      limit(limitCount),
+    )
   } else {
-    q = query(usersCol(), where('role', '==', 'student'), orderBy('coins', 'desc'), limit(limitCount))
+    q = query(usersCol(), where('role', '==', 'student'), orderBy(field, 'desc'), limit(limitCount))
   }
   const snap = await getDocs(q)
-  return snap.docs.map(d => ({ id: d.id, ...d.data() }))
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }))
 }
 
 // ─── Daily quests ─────────────────────────────────────────────────────────────

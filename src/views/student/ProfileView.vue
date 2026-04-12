@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useAuthStore }  from '@/stores/auth'
 import { useUserStore }  from '@/stores/user'
 import { useRouter }     from 'vue-router'
@@ -7,7 +7,9 @@ import { useGameification } from '@/composables/useGameification'
 import AvatarBuilder from '@/components/avatar/AvatarBuilder.vue'
 import CharacterScene from '@/components/character/CharacterScene.vue'
 import AppButton from '@/components/ui/AppButton.vue'
-import { Star, Coins, Flame, Award, Package, LogOut, ArrowRight, Palette } from 'lucide-vue-next'
+import { Star, Coins, Flame, Award, Package, LogOut, ArrowRight, Palette, GraduationCap } from 'lucide-vue-next'
+import { aggregateStudentAwardCoinsBySubject } from '@/firebase/collections'
+import CoinDisplay from '@/components/gamification/CoinDisplay.vue'
 import { currentAccent, setAccent, ACCENT_PRESETS } from '@/composables/useAccentColor'
 
 const auth      = useAuthStore()
@@ -16,7 +18,18 @@ const router    = useRouter()
 const profile   = computed(() => auth.profile)
 const { level, coins, streak, xpProgress } = useGameification(profile)
 
-onMounted(() => userStore.fetchItems())
+const subjectCoins = ref([])
+
+onMounted(async () => {
+  await userStore.fetchItems()
+  if (auth.profile?.id) {
+    try {
+      subjectCoins.value = await aggregateStudentAwardCoinsBySubject(auth.profile.id)
+    } catch {
+      subjectCoins.value = []
+    }
+  }
+})
 
 function totalInventoryUnits(p) {
   if (!p) return 0
@@ -102,6 +115,27 @@ async function logout() {
         <div class="text-[9px] text-slate-500 font-bold leading-none">{{ stat.label }}</div>
       </div>
     </div>
+
+    <section
+      v-if="subjectCoins.length > 0"
+      class="glass-card p-4 rounded-2xl border border-white/[0.07]"
+    >
+      <div class="flex items-center gap-2 mb-2">
+        <GraduationCap :size="18" :stroke-width="2" class="text-violet-400" />
+        <h2 class="font-extrabold text-base text-slate-200">Монети за предметами</h2>
+      </div>
+      <p class="text-[11px] text-slate-500 mb-3">Нарахування від вчителів з вказаним предметом</p>
+      <div class="flex flex-col gap-1.5">
+        <div
+          v-for="row in subjectCoins"
+          :key="row.subjectName"
+          class="flex items-center justify-between gap-2 rounded-xl bg-white/[0.04] px-3 py-2"
+        >
+          <span class="text-sm font-semibold text-slate-200 truncate">{{ row.subjectName }}</span>
+          <CoinDisplay :amount="row.coins" size="sm" />
+        </div>
+      </div>
+    </section>
 
     <!-- ── Avatar builder ─────────────────────────────────────────────────── -->
     <section>

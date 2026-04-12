@@ -26,6 +26,7 @@ const router = createRouter({
         { path: 'shop',     name: 'admin-shop',     component: () => import('@/views/admin/ShopManagementView.vue') },
         { path: 'devtools', name: 'admin-devtools', component: () => import('@/views/admin/DevToolsView.vue') },
         { path: 'rooms',    name: 'admin-rooms',    component: () => import('@/views/admin/RoomTesterView.vue') },
+        { path: 'activity', name: 'admin-activity', component: () => import('@/views/admin/AdminActivityView.vue') },
       ],
     },
 
@@ -42,6 +43,7 @@ const router = createRouter({
         { path: 'quests',      name: 'teacher-quests',      component: () => import('@/views/teacher/TeacherQuestsView.vue') },
         { path: 'profile',     name: 'teacher-profile',     component: () => import('@/views/teacher/TeacherProfileView.vue') },
         { path: 'room/:uid',   name: 'teacher-room-student', component: () => import('@/views/student/RoomView.vue') },
+        { path: 'student/:studentId/history', name: 'teacher-student-history', component: () => import('@/views/teacher/TeacherStudentHistoryView.vue') },
       ],
     },
 
