@@ -153,10 +153,11 @@ export default defineConfig(({ mode }) => ({
         globPatterns: ['**/*.{js,css,html,png,woff2,ico}', '**/manifest.webmanifest', 'icons/*.png', 'icons/*.svg'],
         globIgnores: ['**/*.map'],
         runtimeCaching: [
+          // Firestore uses long‑lived Write/Listen "channel" fetches — never cache or
+          // NetworkFirst them; that breaks streams and spams "No route found" / flaky sync.
           {
-            urlPattern: /^https:\/\/firestore\.googleapis\.com\/.*/i,
-            handler: 'NetworkFirst',
-            options: { cacheName: 'firestore-cache' },
+            urlPattern: ({ url }) => url.hostname === 'firestore.googleapis.com',
+            handler: 'NetworkOnly',
           },
           // Firebase Storage: NetworkFirst avoids first-hit flakiness with StaleWhileRevalidate when the
           // cache is cold (skins use fetch→blob in app code; GLB still benefits from cache after first OK).

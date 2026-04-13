@@ -210,5 +210,19 @@ service cloud.firestore {
       allow update: if isAdmin() || isTeacher();
       allow delete: if isAdmin();
     }
+
+    // Shared voxel world (multiplayer prototype). Any signed-in user may read/write
+    // the world doc and block list; presence is per-uid (own doc only).
+    match /sharedWorlds/{worldId} {
+      allow read: if isAuth();
+      allow create, update: if isAuth();
+      allow delete: if isAdmin();
+
+      match /presence/{uid} {
+        allow read: if isAuth();
+        allow create, update: if isAuth() && request.auth.uid == uid;
+        allow delete: if isAdmin() || (isAuth() && request.auth.uid == uid);
+      }
+    }
   }
 }

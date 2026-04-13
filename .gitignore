@@ -27,3 +27,6 @@ dist-ssr
 dev-dist
 
 .env
+
+# Upstream clone used only for refreshing vendored minebase (not committed)
+_upstream_minecraft_threejs

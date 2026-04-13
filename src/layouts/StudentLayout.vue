@@ -1,7 +1,9 @@
 <script setup>
 import { computed, watch, onMounted, onUnmounted } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
+import { storeToRefs } from 'pinia'
 import { useAuthStore }  from '@/stores/auth'
+import { useBlockWorldSession } from '@/stores/blockWorldSession'
 import { useTradeStore } from '@/stores/trade'
 import { useStudentFeedStore } from '@/stores/studentFeed'
 import { useUserStore }  from '@/stores/user'
@@ -10,13 +12,15 @@ import { useToast } from '@/composables/useToast'
 import AvatarDisplay from '@/components/avatar/AvatarDisplay.vue'
 import PushOptInBanner from '@/components/notifications/PushOptInBanner.vue'
 import {
-  Home, ShoppingBag, ArrowLeftRight, Trophy, LayoutDashboard, User, Coins,
+  Home, ShoppingBag, ArrowLeftRight, Trophy, LayoutDashboard, User, Coins, Boxes,
 } from 'lucide-vue-next'
 
 const auth        = useAuthStore()
 const trade       = useTradeStore()
 const studentFeed = useStudentFeedStore()
 const userStore   = useUserStore()
+const bwSession   = useBlockWorldSession()
+const { immersive: bwImmersive } = storeToRefs(bwSession)
 const route     = useRoute()
 const { coin: toastCoin, info: toastInfo } = useToast()
 
@@ -28,6 +32,7 @@ const navItems = [
   { to: '/student/shop',        Icon: ShoppingBag,      label: 'Магазин'              },
   { to: '/student/trade',       Icon: ArrowLeftRight,   label: 'Обмін',    badge: true },
   { to: '/student/leaderboard', Icon: Trophy,           label: 'Рейтинг'              },
+  { to: '/student/world',       Icon: Boxes,            label: 'Світ'                 },
   { to: '/student/room',        Icon: LayoutDashboard,  label: 'Кімната'              },
   { to: '/student/profile',     Icon: User,             label: 'Профіль'              },
 ]
@@ -72,6 +77,9 @@ const isActive = (item) => item.exact ? route.path === item.to : route.path.star
 
 /** Кімната: без pt/px у main — інакше залишаються смуги; flex-1 заповнює область під хедером і над таббаром */
 const isStudentRoom = computed(() => route.path.startsWith('/student/room'))
+const isStudentWorld = computed(() => route.path.startsWith('/student/world'))
+/** Voxel world play mode: hide header + tab bar and drop main padding so the canvas fills the viewport. */
+const hideStudentChrome = computed(() => isStudentWorld.value && bwImmersive.value)
 
 watch(
   () => (auth.profile?.role === 'student' ? auth.profile.id : null),
@@ -103,7 +111,7 @@ onUnmounted(() => {
   <div class="flex flex-col h-dvh max-h-dvh min-h-0 overflow-hidden bg-game-bg">
 
     <!-- ── Top bar ──────────────────────────────────────────────────────── -->
-    <header class="top-bar shrink-0 z-40 px-4 pb-2">
+    <header v-show="!hideStudentChrome" class="top-bar shrink-0 z-40 px-4 pb-2">
       <div class="flex items-center gap-3 max-w-lg mx-auto">
 
         <!-- Avatar -->
@@ -149,19 +157,21 @@ onUnmounted(() => {
     <!-- ── Page content ─────────────────────────────────────────────────── -->
     <main
       class="flex-1 min-h-0 w-full flex flex-col min-w-0"
-      :class="isStudentRoom
-        ? 'max-w-none mx-0 px-0 pt-0 overflow-hidden pb-[calc(4rem+env(safe-area-inset-bottom,0px))]'
+      :class="(isStudentRoom || isStudentWorld)
+        ? hideStudentChrome
+          ? 'max-w-none mx-0 px-0 pt-0 pb-0 overflow-hidden'
+          : 'max-w-none mx-0 px-0 pt-0 overflow-hidden pb-[calc(4rem+env(safe-area-inset-bottom,0px))]'
         : 'max-w-lg mx-auto px-4 pt-4 overflow-y-auto overscroll-y-contain pb-[calc(5.5rem+env(safe-area-inset-bottom,0px))]'"
     >
-      <!-- Room: гарантуємо flex-ланцюг до RoomView; інакше висота інколи не тягнеться -->
-      <div v-if="isStudentRoom" class="flex flex-1 flex-col min-h-0 min-w-0 w-full">
+      <!-- Room / voxel world: flex chain so the view fills under header and above tab bar -->
+      <div v-if="isStudentRoom || isStudentWorld" class="flex flex-1 flex-col min-h-0 min-w-0 w-full">
         <RouterView />
       </div>
       <RouterView v-else />
     </main>
 
     <!-- ── Bottom navigation ─────────────────────────────────────────────── -->
-    <nav class="bottom-nav fixed bottom-0 left-0 right-0 z-40">
+    <nav v-show="!hideStudentChrome" class="bottom-nav fixed bottom-0 left-0 right-0 z-40">
       <div class="flex max-w-lg mx-auto px-2 py-1">
         <RouterLink
           v-for="item in navItems"

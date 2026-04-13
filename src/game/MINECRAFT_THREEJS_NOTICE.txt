@@ -1,0 +1,7 @@
+Vendored game engine code lives under src/game/minebase/ (TypeScript), adapted from:
+
+  minecraft-threejs — https://github.com/vyse12138/minecraft-threejs
+  MIT License — see LICENSE-minecraft-threejs.txt in minebase (copied from upstream).
+
+The Fus app embeds this engine inside Vue; multiplayer, Firebase sync, and remote
+player avatars are implemented separately under src/game/.

@@ -32,6 +32,7 @@ const TX = {
   achievement_reward: { Icon: Trophy,         label: 'Досягнення',        color: 'text-emerald-400', bg: 'bg-emerald-500/12', ring: 'ring-emerald-500/25' },
   streak_bonus:       { Icon: Flame,          label: 'Бонус серії',       color: 'text-orange-400',  bg: 'bg-orange-500/12',  ring: 'ring-orange-500/25'  },
   quest_reward:       { Icon: ScrollText,     label: 'Завдання виконано', color: 'text-violet-300',  bg: 'bg-violet-500/12',  ring: 'ring-violet-500/25'  },
+  daily_quest:        { Icon: ScrollText,     label: 'Щоденне завдання',  color: 'text-violet-300',  bg: 'bg-violet-500/12',  ring: 'ring-violet-500/25'  },
 }
 
 function cfg(t) {
@@ -41,6 +42,10 @@ function cfg(t) {
 const rowLabel = computed(() => {
   if (props.teacherBadgeInbox && props.tx.type === 'badge_sent') {
     return 'Значок від учня'
+  }
+  if (props.tx.type === 'daily_quest') {
+    const n = (props.tx.note || '').trim()
+    return n || cfg('daily_quest').label
   }
   return cfg(props.tx.type).label
 })
@@ -113,6 +118,8 @@ const messageBodyText = computed(() => {
   if (props.tx.type === 'box_open') return ''
   /** Немає окремого тексту — предмет у чіпі peerChipLabel, itemIds дає прев’ю значка */
   if (props.tx.type === 'badge_sent') return ''
+  /** Назва квесту вже в заголовку (note = q.label з claimDailyQuestReward). */
+  if (props.tx.type === 'daily_quest') return ''
   if (props.tx.type !== 'award') return (props.tx.note || '').trim()
   const peer = props.tx.peerProfile
   if (!peer || (peer.role !== 'teacher' && peer.role !== 'admin')) {

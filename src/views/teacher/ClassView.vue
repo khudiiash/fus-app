@@ -23,7 +23,15 @@ import AvatarDisplay from '@/components/avatar/AvatarDisplay.vue'
 import CoinDisplay from '@/components/gamification/CoinDisplay.vue'
 import { useToast } from '@/composables/useToast'
 import { useHaptic } from '@/composables/useHaptic'
-import { Coins, Wallet, Flame, LayoutDashboard, Gavel, Check } from 'lucide-vue-next'
+import {
+  Coins,
+  Wallet,
+  Flame,
+  LayoutDashboard,
+  Gavel,
+  Check,
+  ScrollText,
+} from 'lucide-vue-next'
 
 const route  = useRoute()
 const router = useRouter()
@@ -401,7 +409,7 @@ async function doFine() {
         </div>
       </div>
       <div class="flex flex-wrap items-center gap-1.5 shrink-0">
-        <AppButton variant="ghost" size="sm" @click="clearCardSelection">
+        <AppButton variant="secondary" size="sm" @click="clearCardSelection">
           Скинути
         </AppButton>
         <AppButton variant="coin" size="sm" @click="openAwardSelected">
@@ -409,9 +417,9 @@ async function doFine() {
           Нарахувати
         </AppButton>
         <AppButton
-          variant="ghost"
+          variant="secondary"
           size="sm"
-          class="!text-red-300 hover:!bg-red-500/15 hover:!text-red-200 border border-red-500/30"
+          class="!border !border-red-500/45 !bg-red-600/15 !text-red-100 hover:!bg-red-600/25 hover:!border-red-400/55"
           @click="openFineSelected"
         >
           <Gavel :size="14" :stroke-width="2" />
@@ -502,11 +510,25 @@ async function doFine() {
         <div
           class="grid grid-cols-2 sm:grid-cols-4 gap-1.5 border-t border-white/[0.06] pt-2"
         >
-          <AppButton variant="secondary" size="sm" block class="!text-xs !px-2 !py-1.5 !rounded-lg" @click.stop="router.push(`/teacher/room/${s.id}`)">
+          <AppButton
+            variant="secondary"
+            size="sm"
+            block
+            class="!text-xs !px-2 !py-1.5 !rounded-lg !border !border-white/[0.12]"
+            @click.stop="router.push(`/teacher/room/${s.id}`)"
+          >
             <LayoutDashboard :size="14" :stroke-width="2" />
             Кімната
           </AppButton>
-          <AppButton variant="ghost" size="sm" block class="!text-xs !px-2 !py-1.5 !rounded-lg !text-violet-300" @click.stop="router.push(`/teacher/student/${s.id}/history`)">
+          <AppButton
+            variant="secondary"
+            size="sm"
+            block
+            class="!text-xs !px-2 !py-1.5 !rounded-lg !border !border-violet-400/45 !bg-violet-600/18 !text-violet-100 hover:!bg-violet-600/28 hover:!border-violet-300/50"
+            :aria-label="`Журнал: ${s.displayName || 'учень'}`"
+            @click.stop="router.push(`/teacher/student/${s.id}/history`)"
+          >
+            <ScrollText :size="14" :stroke-width="2" />
             Журнал
           </AppButton>
           <AppButton variant="coin" size="sm" block class="!text-xs !px-2 !py-1.5 !rounded-lg" @click.stop="openAward(s)">
@@ -514,10 +536,11 @@ async function doFine() {
             Монети
           </AppButton>
           <AppButton
-            variant="ghost"
+            variant="secondary"
             size="sm"
             block
-            class="!text-xs !px-2 !py-1.5 !rounded-lg !text-red-300 hover:!bg-red-500/10 hover:!text-red-200"
+            class="!text-xs !px-2 !py-1.5 !rounded-lg !border !border-red-500/45 !bg-red-600/15 !text-red-100 hover:!bg-red-600/26 hover:!border-red-400/55"
+            :aria-label="`Штраф: ${s.displayName || 'учень'}`"
             @click.stop="openFine(s)"
           >
             <Gavel :size="14" :stroke-width="2" />

@@ -29,6 +29,8 @@
     "vue-router": "^4.6.4"
   },
   "devDependencies": {
+    "@types/three": "^0.183.0",
+    "typescript": "^5.9.3",
     "@tailwindcss/vite": "^4.2.2",
     "@vitejs/plugin-vue": "^6.0.5",
     "firebase-admin": "^13.0.0",

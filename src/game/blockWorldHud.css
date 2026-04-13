@@ -1,0 +1,211 @@
+/* Embedded block world HUD */
+.fus-bw-hud {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  pointer-events: none;
+}
+
+.fus-bw-crosshair {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -52%);
+  font-size: clamp(1.75rem, 5vw, 2.5rem);
+  font-weight: 300;
+  color: rgba(255, 255, 255, 0.92);
+  text-shadow: 0 0 3px rgba(0, 0, 0, 0.85);
+  user-select: none;
+  pointer-events: none;
+  line-height: 1;
+}
+
+.fus-bw-look {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.fus-bw-look-hint {
+  position: absolute;
+  left: 50%;
+  bottom: 8px;
+  transform: translateX(-50%);
+  max-width: 90%;
+  text-align: center;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: rgba(255, 255, 255, 0.55);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+  pointer-events: none;
+}
+
+.fus-bw-bottom {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  pointer-events: none;
+}
+
+.fus-bw-controls {
+  /* Let touch-look receive drags in the gap between stick and action buttons */
+  pointer-events: none;
+  display: flex;
+  flex-direction: row;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 10px 4px;
+}
+
+.fus-bw-stick-wrap {
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.fus-bw-stick-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: rgba(255, 255, 255, 0.65);
+}
+
+.fus-bw-stick-base {
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.35);
+  border: 2px solid rgba(255, 255, 255, 0.22);
+  box-shadow: inset 0 2px 12px rgba(0, 0, 0, 0.45);
+  position: relative;
+  touch-action: none;
+}
+
+.fus-bw-stick-knob {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 52px;
+  height: 52px;
+  margin-left: -26px;
+  margin-top: -26px;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle at 30% 25%,
+    rgba(255, 255, 255, 0.35),
+    rgba(120, 200, 255, 0.55) 40%,
+    rgba(40, 100, 180, 0.85)
+  );
+  border: 2px solid rgba(255, 255, 255, 0.45);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.4);
+  transform: translate(0px, 0px);
+  pointer-events: none;
+}
+
+.fus-bw-actions {
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: stretch;
+  align-content: end;
+  min-width: 108px;
+}
+
+.fus-bw-text-btn {
+  min-height: 44px;
+  padding: 0 12px;
+  border-radius: 12px;
+  border: 2px solid rgba(255, 255, 255, 0.22);
+  background: rgba(0, 0, 0, 0.42);
+  color: rgba(255, 255, 255, 0.95);
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  touch-action: manipulation;
+  cursor: pointer;
+  box-shadow: inset 0 2px 10px rgba(0, 0, 0, 0.35);
+}
+
+.fus-bw-text-btn:active {
+  transform: scale(0.97);
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.fus-bw-text-btn--break {
+  border-color: rgba(248, 113, 113, 0.55);
+}
+
+.fus-bw-text-btn--build {
+  border-color: rgba(52, 211, 153, 0.55);
+}
+
+.fus-bw-text-btn--jump {
+  border-color: rgba(96, 165, 250, 0.55);
+}
+
+.fus-bw-text-btn--active {
+  border-color: rgba(255, 255, 255, 0.75);
+  background: rgba(255, 255, 255, 0.14);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.25),
+    inset 0 2px 10px rgba(0, 0, 0, 0.35);
+}
+
+.fus-bw-hotbar {
+  pointer-events: auto;
+  align-self: center;
+  display: flex;
+  flex-direction: row;
+  gap: 4px;
+  padding: 6px 8px 8px;
+  margin: 0;
+  border-radius: 12px 12px 0 0;
+  background: rgba(15, 15, 26, 0.88);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-bottom: none;
+  box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.35);
+}
+
+.fus-bw-hotbar-item {
+  width: 40px;
+  height: 40px;
+  border: 2px solid rgba(140, 140, 150, 0.85);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.28);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.fus-bw-hotbar-item--selected {
+  border-color: rgba(255, 255, 255, 0.95);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.45);
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.fus-bw-hotbar-item--tool {
+  border-color: rgba(56, 189, 248, 0.65);
+}
+
+.fus-bw-hotbar-icon {
+  width: 30px;
+  height: 30px;
+  image-rendering: pixelated;
+  pointer-events: none;
+}

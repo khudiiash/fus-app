@@ -1,39 +1,52 @@
 /**
- * Remote skins (Firebase Storage) + Workbox: cross-origin `img.src` loads used by
- * Remote image loads often fail once (net::ERR_FAILED) while a later attempt succeeds.
- * Fetch as blob → blob: URL so decode is same-origin and WebGL upload is stable.
+ * Remote skins (Firebase Storage) + Workbox: fetch as blob, decode with
+ * {@link createImageBitmap}, then pass an ImageBitmap into `loadSkin` so we use the
+ * same synchronous skinview-utils path as canvas uploads (avoids blob: + `<img>`
+ * decode issues that broke remote PlayerObject skins while CharacterScene still worked).
  *
  * @param {{ loadSkin: Function }} viewer MinecraftSkinHost (or compatible loadSkin)
  * @param {string|null|undefined} skinUrl
  * @param {HTMLCanvasElement} fallbackCanvas
  */
 export function isHttpSkinUrl(url) {
-  return typeof url === 'string' && /^https?:\/\//i.test(url)
+  return typeof url === 'string' && /^https?:\/\//i.test(url.trim())
+}
+
+function sanitizeSkinUrlString(url) {
+  if (typeof url !== 'string') return ''
+  return url
+    .replace(/^\uFEFF/, '')
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .trim()
+}
+
+/** @param {{ loadSkin: Function }} viewer @param {unknown} source */
+async function awaitLoadSkin(viewer, source) {
+  const ret = viewer.loadSkin(source)
+  if (ret != null && typeof ret.then === 'function') await ret
 }
 
 export async function loadRemoteSkinForViewer(viewer, skinUrl, fallbackCanvas) {
   if (!viewer) return
+  skinUrl = sanitizeSkinUrlString(skinUrl)
   if (!skinUrl) {
     viewer.loadSkin(fallbackCanvas)
     return
   }
   if (!isHttpSkinUrl(skinUrl)) {
     try {
-      await viewer.loadSkin(skinUrl)
+      await awaitLoadSkin(viewer, skinUrl)
     } catch {
       viewer.loadSkin(fallbackCanvas)
     }
     return
   }
-  if (typeof navigator !== 'undefined' && navigator.serviceWorker?.ready) {
-    try {
-      await navigator.serviceWorker.ready
-    } catch {
-      /* ignore */
-    }
-  }
   const fetchBlob = async () => {
-    const res = await fetch(skinUrl, { mode: 'cors', credentials: 'omit', cache: 'default' })
+    const res = await fetch(skinUrl, {
+      mode: 'cors',
+      credentials: 'omit',
+      cache: 'default',
+    })
     if (!res.ok) throw new Error(String(res.status))
     return res.blob()
   }
@@ -52,21 +65,39 @@ export async function loadRemoteSkinForViewer(viewer, skinUrl, fallbackCanvas) {
     viewer.loadSkin(fallbackCanvas)
     return
   }
+  if (typeof createImageBitmap === 'function') {
+    let bitmap = null
+    try {
+      bitmap = await createImageBitmap(blob)
+    } catch {
+      viewer.loadSkin(fallbackCanvas)
+      return
+    }
+    try {
+      await awaitLoadSkin(viewer, bitmap)
+    } catch {
+      viewer.loadSkin(fallbackCanvas)
+    } finally {
+      try {
+        bitmap.close()
+      } catch {
+        /* ignore */
+      }
+    }
+    return
+  }
   const objectUrl = URL.createObjectURL(blob)
   try {
-    await viewer.loadSkin(objectUrl)
+    await awaitLoadSkin(viewer, objectUrl)
   } catch {
     viewer.loadSkin(fallbackCanvas)
   } finally {
-    const u = objectUrl
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        try {
-          URL.revokeObjectURL(u)
-        } catch {
-          /* ignore */
-        }
-      })
-    })
+    setTimeout(() => {
+      try {
+        URL.revokeObjectURL(objectUrl)
+      } catch {
+        /* ignore */
+      }
+    }, 8000)
   }
 }
