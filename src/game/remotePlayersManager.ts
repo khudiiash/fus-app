@@ -77,9 +77,9 @@ const MODEL_SCALE = (PLAYER_EYE_HEIGHT + 0.12) / REMOTE_NATIVE_HEIGHT
 const REMOTE_WORLD_HEIGHT = REMOTE_NATIVE_HEIGHT * MODEL_SCALE
 /** Snap teleport if network correction is huge (respawn / bad packet). */
 const TELEPORT_DIST = 28
-/** Position smoothing (~14 → responsive but not jittery). */
-const POS_SMOOTH = 14
-const ROT_SMOOTH = 12
+/** Position smoothing (higher → catches sparse network presence updates faster). */
+const POS_SMOOTH = 22
+const ROT_SMOOTH = 18
 
 /** Shift angle by multiples of 2π so it lies within π of `reference` (smooth yaw interpolation, no long spins). */
 function unwrapAngleNear(reference: number, angle: number): number {

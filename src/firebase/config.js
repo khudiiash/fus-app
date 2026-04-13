@@ -7,8 +7,10 @@ import {
   persistentMultipleTabManager,
 } from 'firebase/firestore'
 import { getStorage } from 'firebase/storage'
+import { getDatabase } from 'firebase/database'
 
 // Replace with your Firebase project config from https://console.firebase.google.com
+const databaseURL = import.meta.env.VITE_FIREBASE_DATABASE_URL
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
@@ -16,6 +18,7 @@ const firebaseConfig = {
   storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
   messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
   appId: import.meta.env.VITE_FIREBASE_APP_ID,
+  ...(databaseURL ? { databaseURL } : {}),
 }
 
 const app = initializeApp(firebaseConfig)
@@ -48,4 +51,9 @@ function createFirestore() {
 
 export const db = createFirestore()
 export const storage = getStorage(app)
+/**
+ * Realtime Database (block-world presence). Create DB in Firebase Console → Build →
+ * Realtime Database; set `VITE_FIREBASE_DATABASE_URL` (e.g. https://&lt;project&gt;-default-rtdb.europe-west1.firebasedatabase.app).
+ */
+export const rtdb = databaseURL ? getDatabase(app, databaseURL) : null
 export default app

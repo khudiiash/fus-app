@@ -155,19 +155,20 @@ onUnmounted(() => {
     <PushOptInBanner layout="student" />
 
     <!-- ── Page content ─────────────────────────────────────────────────── -->
-    <main
-      class="flex-1 min-h-0 w-full flex flex-col min-w-0"
-      :class="(isStudentRoom || isStudentWorld)
-        ? hideStudentChrome
-          ? 'max-w-none mx-0 px-0 pt-0 pb-0 overflow-hidden'
-          : 'max-w-none mx-0 px-0 pt-0 overflow-hidden pb-[calc(4rem+env(safe-area-inset-bottom,0px))]'
-        : 'max-w-lg mx-auto px-4 pt-4 min-h-0 overflow-y-auto overscroll-y-contain touch-pan-y pb-[calc(6.75rem+env(safe-area-inset-bottom,0px))]'"
-    >
-      <!-- Room / voxel world: flex chain so the view fills under header and above tab bar -->
-      <div v-if="isStudentRoom || isStudentWorld" class="flex flex-1 flex-col min-h-0 min-w-0 w-full">
+    <main class="flex flex-1 min-h-0 w-full min-w-0 flex-col">
+      <div
+        v-if="isStudentRoom || isStudentWorld"
+        class="flex min-h-0 w-full flex-1 flex-col"
+        :class="hideStudentChrome ? 'overflow-hidden' : 'overflow-hidden pb-[calc(4rem+env(safe-area-inset-bottom,0px))]'"
+      >
         <RouterView />
       </div>
-      <RouterView v-else />
+      <div
+        v-else
+        class="student-app-scroll mx-auto w-full max-w-lg flex-1 min-h-0 overflow-y-auto overscroll-y-contain px-4 pt-4 pb-[calc(6.75rem+env(safe-area-inset-bottom,0px))] touch-pan-y"
+      >
+        <RouterView />
+      </div>
     </main>
 
     <!-- ── Bottom navigation ─────────────────────────────────────────────── -->
@@ -230,5 +231,9 @@ onUnmounted(() => {
   -webkit-backdrop-filter: blur(20px);
   box-shadow: 0 -1px 0 rgba(255, 255, 255, 0.06);
   padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.student-app-scroll {
+  -webkit-overflow-scrolling: touch;
 }
 </style>

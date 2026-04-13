@@ -43,7 +43,15 @@ const router = createRouter({
         { path: 'quests',      name: 'teacher-quests',      component: () => import('@/views/teacher/TeacherQuestsView.vue') },
         { path: 'profile',     name: 'teacher-profile',     component: () => import('@/views/teacher/TeacherProfileView.vue') },
         { path: 'room/:uid',   name: 'teacher-room-student', component: () => import('@/views/student/RoomView.vue') },
-        { path: 'student/:studentId/history', name: 'teacher-student-history', component: () => import('@/views/teacher/TeacherStudentHistoryView.vue') },
+        {
+          path: 'student/:studentId/history',
+          redirect: (to) => ({ path: `/teacher/student/${to.params.studentId}/profile`, replace: true }),
+        },
+        {
+          path: 'student/:studentId/profile',
+          name: 'teacher-student-profile',
+          component: () => import('@/views/student/StudentProfileView.vue'),
+        },
       ],
     },
 
@@ -54,7 +62,12 @@ const router = createRouter({
       meta: { requiresAuth: true, role: 'student' },
       children: [
         { path: '', name: 'student-home', component: () => import('@/views/student/HomeView.vue') },
-        { path: 'profile', name: 'student-profile', component: () => import('@/views/student/ProfileView.vue') },
+        { path: 'profile', name: 'student-profile', component: () => import('@/views/student/StudentProfileView.vue') },
+        {
+          path: 'profile/:uid',
+          name: 'student-profile-peer',
+          component: () => import('@/views/student/StudentProfileView.vue'),
+        },
         { path: 'shop', name: 'student-shop', component: () => import('@/views/student/ShopView.vue') },
         { path: 'trade', name: 'student-trade', component: () => import('@/views/student/TradeView.vue') },
         { path: 'leaderboard', name: 'student-leaderboard', component: () => import('@/views/student/LeaderboardView.vue') },

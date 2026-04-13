@@ -35,6 +35,7 @@ const conditionLabel = (ach) => {
   if (type === 'coins')  return `Зароби ${threshold} монет`
   if (type === 'level')  return `Досягни рівня ${threshold}`
   if (type === 'streak') return `${threshold} днів входу поспіль`
+  if (type === 'trades') return `Заверши ${threshold} обмін(ів)`
   return 'Виконай особливі завдання'
 }
 </script>

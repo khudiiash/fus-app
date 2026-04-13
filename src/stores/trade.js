@@ -10,7 +10,10 @@ import {
   executeTrade,
   getAllStudents,
   getTrade,
+  updateQuestProgress,
+  checkAndGrantAchievements,
 } from '@/firebase/collections'
+import { useUserStore } from './user'
 import { useAuthStore } from './auth'
 import { trySystemNotify } from '@/utils/systemNotify'
 import { useToast } from '@/composables/useToast'
@@ -107,6 +110,14 @@ export const useTradeStore = defineStore('trade', () => {
                   'Твою пропозицію прийнято 🤝',
                   { tag: `trade-done-${id}` },
                 )
+                try {
+                  const granted = await checkAndGrantAchievements(uid)
+                  if (granted?.length > 0) auth.newAchievements = granted
+                  await updateQuestProgress(uid, 'trade')
+                  await useUserStore().fetchQuests()
+                } catch (e) {
+                  console.warn('[trade] post-accept sync:', e?.message || e)
+                }
               } else if (t?.status === 'declined' && t.declinedBy === 'to') {
                 toastInfo('Пропозицію обміну відхилено')
                 await trySystemNotify(

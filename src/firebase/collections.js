@@ -38,6 +38,15 @@ export function teacherMayAccessStudentProfile(teacherProfile, studentProfile) {
   return !!(cid && ids.includes(cid))
 }
 
+/** Учень може переглядати профіль однокласника (той самий classId). */
+export function studentMayAccessStudentProfile(viewerProfile, targetProfile) {
+  if (!viewerProfile || !targetProfile) return false
+  if (viewerProfile.role !== 'student' || targetProfile.role !== 'student') return false
+  const a = viewerProfile.classId
+  const b = targetProfile.classId
+  return !!(a && b && a === b)
+}
+
 const FUNCTIONS_REGION = import.meta.env.VITE_FUNCTIONS_REGION || 'europe-west1'
 
 /** Store FCM token for the signed-in user only; removes the same token from other user docs (shared browser). */
@@ -1004,6 +1013,7 @@ export async function executeTrade(tradeId) {
       inventoryCounts: fromCounts,
       xp: fromNewXp,
       level: calcLevel(fromNewXp),
+      tradesCompleted: increment(1),
     }
     if (!avatarEquipVisualEquals(from.avatar, fromAvatarNext)) {
       fromPatch.avatar = fromAvatarNext
@@ -1015,6 +1025,7 @@ export async function executeTrade(tradeId) {
       inventoryCounts: toCounts,
       xp: toNewXp,
       level: calcLevel(toNewXp),
+      tradesCompleted: increment(1),
     }
     if (!avatarEquipVisualEquals(to.avatar, toAvatarNext)) {
       toPatch.avatar = toAvatarNext
@@ -1209,6 +1220,7 @@ export async function checkAndGrantAchievements(uid) {
     if (type === 'coins' && (user.coins || 0) >= threshold) qualifies = true
     if (type === 'level' && (user.level || 1) >= threshold) qualifies = true
     if (type === 'streak' && (user.streak || 0) >= threshold) qualifies = true
+    if (type === 'trades' && (user.tradesCompleted || 0) >= threshold) qualifies = true
 
     if (qualifies) {
       grants.push(ach)

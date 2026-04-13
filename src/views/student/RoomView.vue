@@ -21,7 +21,7 @@ const isOwnRoom = computed(() => !route.params.uid || route.params.uid === auth.
 
 const viewedStudentUid = computed(() => (route.params.uid ? String(route.params.uid) : ''))
 
-const showTeacherStudentHistory = computed(
+const showTeacherStudentProfile = computed(
   () =>
     auth.profile?.role === 'teacher'
     && !!viewedStudentUid.value
@@ -94,12 +94,12 @@ onMounted(async () => {
       </div>
       <div class="w-20 shrink-0 flex justify-end">
         <button
-          v-if="showTeacherStudentHistory"
+          v-if="showTeacherStudentProfile"
           type="button"
           class="text-[11px] font-extrabold text-violet-400 hover:text-violet-300 px-2 py-1 rounded-lg bg-violet-500/15 border border-violet-500/25"
-          @click="router.push(`/teacher/student/${viewedStudentUid}/history`)"
+          @click="router.push(`/teacher/student/${viewedStudentUid}/profile`)"
         >
-          Журнал
+          Профіль
         </button>
       </div>
     </div>

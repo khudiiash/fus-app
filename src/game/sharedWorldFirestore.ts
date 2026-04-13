@@ -1,19 +1,28 @@
 import {
   doc,
   setDoc,
-  deleteDoc,
   onSnapshot,
   getDoc,
   serverTimestamp,
-  collection,
-  query,
 } from 'firebase/firestore'
-import { db } from '@/firebase/config'
+import {
+  ref,
+  onValue,
+  set,
+  remove,
+  serverTimestamp as rtdbServerTimestamp,
+  onDisconnect,
+} from 'firebase/database'
+import { db, rtdb } from '@/firebase/config'
 import type Terrain from './minebase/terrain'
 import Block from './minebase/terrain/mesh/block'
 import type { BlockType } from './minebase/terrain'
 
 const WORLD_COLLECTION = 'sharedWorlds'
+/** Realtime DB path for ephemeral player poses (Firestore keeps world blocks). */
+const RTDB_PRESENCE_ROOT = 'worldPresence'
+
+let activePresenceDisconnect: ReturnType<typeof onDisconnect> | null = null
 
 export type SharedWorldSeeds = {
   noise: number
@@ -218,38 +227,91 @@ export type PresenceDoc = {
   left?: boolean
 }
 
+/** Hide presence if no heartbeat (tab killed / network lost) — normal play updates every ≤200ms. */
+const STALE_PRESENCE_MS = 120_000
+
+function presenceUpdatedAtMs(v: Record<string, unknown>): number {
+  const u = v.updatedAt
+  if (typeof u === 'number' && Number.isFinite(u)) return u
+  return 0
+}
+
+function parsePresenceChild(
+  v: Partial<PresenceDoc> & Record<string, unknown>,
+  now: number,
+): PresenceDoc | null {
+  if (v?.left === true) return null
+  const updatedMs = presenceUpdatedAtMs(v)
+  if (updatedMs > 0 && now - updatedMs > STALE_PRESENCE_MS) return null
+  const slotRaw = Number(v.slot)
+  const slot =
+    Number.isFinite(slotRaw) && slotRaw >= 0 && slotRaw <= 7
+      ? Math.floor(slotRaw)
+      : 0
+  const swingRaw = Number(v.handSwingSeq)
+  const handSwingSeq =
+    Number.isFinite(swingRaw) && swingRaw >= 0 ? Math.floor(swingRaw) : 0
+  return {
+    x: Number(v.x) || 0,
+    y: Number(v.y) || 0,
+    z: Number(v.z) || 0,
+    ry: Number(v.ry) || 0,
+    moving: Boolean(v.moving),
+    skinUrl: typeof v.skinUrl === 'string' ? v.skinUrl : null,
+    photoUrl: typeof v.photoUrl === 'string' ? v.photoUrl : null,
+    displayName: typeof v.displayName === 'string' ? v.displayName : '',
+    mode: v.mode === 'build' ? 'build' : 'mine',
+    slot,
+    handSwingSeq,
+  }
+}
+
+/**
+ * When the client disconnects abruptly, remove their RTDB node so remotes do not ghost.
+ * Call once after joining; {@link deletePresence} cancels this before a normal remove.
+ */
+export async function bindPresenceDisconnectRemove(worldId: string, uid: string) {
+  await unbindPresenceDisconnectRemove()
+  if (!rtdb) return
+  const r = ref(rtdb, `${RTDB_PRESENCE_ROOT}/${worldId}/${uid}`)
+  activePresenceDisconnect = onDisconnect(r)
+  await activePresenceDisconnect.remove()
+}
+
+export async function unbindPresenceDisconnectRemove() {
+  if (!activePresenceDisconnect) return
+  try {
+    await activePresenceDisconnect.cancel()
+  } catch {
+    /* not queued */
+  }
+  activePresenceDisconnect = null
+}
+
 export function subscribePresence(
   worldId: string,
   onPlayers: (map: Map<string, PresenceDoc>) => void,
 ) {
-  const col = collection(db, WORLD_COLLECTION, worldId, 'presence')
-  return onSnapshot(query(col), (snap) => {
+  if (!rtdb) {
+    console.warn('[sharedWorld] Realtime Database not configured; multiplayer presence disabled.')
+    onPlayers(new Map())
+    return () => {}
+  }
+  const presenceRef = ref(rtdb, `${RTDB_PRESENCE_ROOT}/${worldId}`)
+  return onValue(presenceRef, (snap) => {
+    const val = snap.val() as Record<string, Record<string, unknown>> | null
     const m = new Map<string, PresenceDoc>()
-    snap.forEach((d) => {
-      const v = d.data() as Partial<PresenceDoc> & Record<string, unknown>
-      if (v?.left === true) return
-      const slotRaw = Number(v.slot)
-      const slot =
-        Number.isFinite(slotRaw) && slotRaw >= 0 && slotRaw <= 7
-          ? Math.floor(slotRaw)
-          : 0
-      const swingRaw = Number(v.handSwingSeq)
-      const handSwingSeq =
-        Number.isFinite(swingRaw) && swingRaw >= 0 ? Math.floor(swingRaw) : 0
-      m.set(d.id, {
-        x: Number(v.x) || 0,
-        y: Number(v.y) || 0,
-        z: Number(v.z) || 0,
-        ry: Number(v.ry) || 0,
-        moving: Boolean(v.moving),
-        skinUrl: typeof v.skinUrl === 'string' ? v.skinUrl : null,
-        photoUrl: typeof v.photoUrl === 'string' ? v.photoUrl : null,
-        displayName: typeof v.displayName === 'string' ? v.displayName : '',
-        mode: v.mode === 'build' ? 'build' : 'mine',
-        slot,
-        handSwingSeq,
-      })
-    })
+    const now = Date.now()
+    if (val && typeof val === 'object') {
+      for (const [uid, raw] of Object.entries(val)) {
+        if (!raw || typeof raw !== 'object') continue
+        const row = parsePresenceChild(
+          raw as Partial<PresenceDoc> & Record<string, unknown>,
+          now,
+        )
+        if (row) m.set(uid, row)
+      }
+    }
     onPlayers(m)
   })
 }
@@ -259,31 +321,53 @@ export async function writePresence(
   uid: string,
   data: PresenceDoc,
 ) {
-  const ref = doc(db, WORLD_COLLECTION, worldId, 'presence', uid)
-  await setDoc(
-    ref,
-    {
-      ...data,
-      /** Must clear soft-leave or the listener skips this doc forever (`if (v?.left) return`). */
-      left: false,
-      updatedAt: serverTimestamp(),
-    },
-    { merge: true },
-  )
+  if (!rtdb) {
+    throw new Error(
+      'Realtime Database is not configured. Set VITE_FIREBASE_DATABASE_URL in .env',
+    )
+  }
+  const swingRaw = Number(data.handSwingSeq)
+  const handSwingSeq =
+    Number.isFinite(swingRaw) && swingRaw >= 0 ? Math.floor(swingRaw) : 0
+  const slotRaw = Number(data.slot)
+  const slot =
+    Number.isFinite(slotRaw) && slotRaw >= 0 && slotRaw <= 7
+      ? Math.floor(slotRaw)
+      : 0
+  const payload: Record<string, unknown> = {
+    x: data.x,
+    y: data.y,
+    z: data.z,
+    ry: data.ry,
+    moving: Boolean(data.moving),
+    displayName: (data.displayName || 'Гравець').trim().slice(0, 64) || 'Гравець',
+    mode: data.mode === 'build' ? 'build' : 'mine',
+    slot,
+    handSwingSeq,
+    left: false,
+    updatedAt: rtdbServerTimestamp(),
+  }
+  const skin = data.skinUrl
+  if (typeof skin === 'string' && skin.length > 0) payload.skinUrl = skin
+  const photo = data.photoUrl
+  if (typeof photo === 'string' && photo.length > 0) payload.photoUrl = photo
+
+  await set(ref(rtdb, `${RTDB_PRESENCE_ROOT}/${worldId}/${uid}`), payload)
 }
 
 /** Best-effort remove presence on leave (ignore permission errors). */
 export async function deletePresence(worldId: string, uid: string) {
-  const ref = doc(db, WORLD_COLLECTION, worldId, 'presence', uid)
+  await unbindPresenceDisconnectRemove()
+  if (!rtdb) return
+  const r = ref(rtdb, `${RTDB_PRESENCE_ROOT}/${worldId}/${uid}`)
   try {
-    await deleteDoc(ref)
+    await remove(r)
   } catch {
     try {
-      await setDoc(
-        ref,
-        { left: true, updatedAt: serverTimestamp() },
-        { merge: true },
-      )
+      await set(r, {
+        left: true,
+        updatedAt: rtdbServerTimestamp(),
+      })
     } catch {
       /* ignore */
     }

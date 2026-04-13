@@ -515,6 +515,16 @@ export default class Control {
     if (t instanceof Element && (t.closest('.fus-bw-hud') || t.closest('.fus-bw-exit-app')))
       return
 
+    const touchMode = useTouchGameControls()
+    if (
+      !touchMode &&
+      e.button === 0 &&
+      document.pointerLockElement !== this.control.domElement
+    ) {
+      void this.control.lock()
+      return
+    }
+
     e.preventDefault()
 
     switch (e.button) {
@@ -627,15 +637,17 @@ export default class Control {
       if (document.pointerLockElement) {
         this.attachGameplayListeners()
       } else {
-        if (!touchMode) {
+        // Desktop: never detach here — listeners must exist *before* the first
+        // pointer lock so mousedown can call lock() (Three r183+ has no auto lock on click).
+        // Otherwise WASD / click-to-lock never wire up (chicken-and-egg).
+        if (touchMode) {
           this.detachGameplayListeners()
         }
         this.velocity = new THREE.Vector3(0, 0, 0)
       }
     })
-    if (touchMode) {
-      this.attachGameplayListeners()
-    }
+    // Touch always needs keys/wheel; desktop needs mousedown on body to request lock.
+    this.attachGameplayListeners()
   }
 
   // move along X with direction factor

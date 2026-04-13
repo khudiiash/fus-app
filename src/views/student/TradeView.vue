@@ -157,6 +157,7 @@ async function accept(offerId) {
     await trade.acceptTrade(offerId)
     await checkAndGrantAchievements(auth.profile.id)
     await updateQuestProgress(auth.profile.id, 'trade')
+    await userStore.fetchQuests()
     hapticSuccess()
     success('Обмін завершено! 🤝')
     void trySystemNotify('Обмін завершено!', 'Ти прийняв(ла) пропозицію 🤝', { tag: 'trade-accepted-self' })

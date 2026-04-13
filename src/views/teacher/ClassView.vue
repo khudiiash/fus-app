@@ -27,10 +27,9 @@ import {
   Coins,
   Wallet,
   Flame,
-  LayoutDashboard,
   Gavel,
   Check,
-  ScrollText,
+  User,
 } from 'lucide-vue-next'
 
 const route  = useRoute()
@@ -87,16 +86,6 @@ const filtered = computed(() => {
 const sortedStudents = computed(() =>
   [...filtered.value].sort((a, b) => (b.coins || 0) - (a.coins || 0))
 )
-
-function openAward(student) {
-  awardTarget.value = student
-  bulkMode.value = false
-  bulkFromCards.value = false
-  awardAmount.value = 10
-  awardNote.value = ''
-  awardSubject.value = teacherSubjects.value[0]?.name || ''
-  showAward.value = true
-}
 
 function openBulkAward() {
   awardTarget.value = null
@@ -266,14 +255,6 @@ const fineSelectedMinCoins = computed(() => {
   if (!fineBulkFromCards.value || !fineSelectedTargets.value.length) return null
   return Math.min(...fineSelectedTargets.value.map((s) => s.coins || 0))
 })
-
-function openFine(student) {
-  fineBulkFromCards.value = false
-  fineTarget.value = student
-  fineAmount.value = 20
-  fineReason.value = ''
-  showFine.value   = true
-}
 
 function openFineSelected() {
   if (!selectedStudentIds.value.length) {
@@ -507,44 +488,17 @@ async function doFine() {
         </button>
 
         <!-- Actions: компактний ряд -->
-        <div
-          class="grid grid-cols-2 sm:grid-cols-4 gap-1.5 border-t border-white/[0.06] pt-2"
-        >
+        <div class="border-t border-white/[0.06] pt-2">
           <AppButton
             variant="secondary"
             size="sm"
             block
-            class="!text-xs !px-2 !py-1.5 !rounded-lg !border !border-white/[0.12]"
-            @click.stop="router.push(`/teacher/room/${s.id}`)"
+            class="!text-xs !px-2 !py-2 !rounded-xl !border !border-violet-400/45 !bg-violet-600/18 !text-violet-100 hover:!bg-violet-600/28"
+            :aria-label="`Профіль: ${s.displayName || 'учень'}`"
+            @click.stop="router.push(`/teacher/student/${s.id}/profile`)"
           >
-            <LayoutDashboard :size="14" :stroke-width="2" />
-            Кімната
-          </AppButton>
-          <AppButton
-            variant="secondary"
-            size="sm"
-            block
-            class="!text-xs !px-2 !py-1.5 !rounded-lg !border !border-violet-400/45 !bg-violet-600/18 !text-violet-100 hover:!bg-violet-600/28 hover:!border-violet-300/50"
-            :aria-label="`Журнал: ${s.displayName || 'учень'}`"
-            @click.stop="router.push(`/teacher/student/${s.id}/history`)"
-          >
-            <ScrollText :size="14" :stroke-width="2" />
-            Журнал
-          </AppButton>
-          <AppButton variant="coin" size="sm" block class="!text-xs !px-2 !py-1.5 !rounded-lg" @click.stop="openAward(s)">
-            <Coins :size="14" :stroke-width="2" />
-            Монети
-          </AppButton>
-          <AppButton
-            variant="secondary"
-            size="sm"
-            block
-            class="!text-xs !px-2 !py-1.5 !rounded-lg !border !border-red-500/45 !bg-red-600/15 !text-red-100 hover:!bg-red-600/26 hover:!border-red-400/55"
-            :aria-label="`Штраф: ${s.displayName || 'учень'}`"
-            @click.stop="openFine(s)"
-          >
-            <Gavel :size="14" :stroke-width="2" />
-            Штраф
+            <User :size="14" :stroke-width="2" />
+            Профіль
           </AppButton>
         </div>
       </div>

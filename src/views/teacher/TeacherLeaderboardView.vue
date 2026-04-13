@@ -132,7 +132,7 @@ watch(selectedClassId, () => {
 
     <div v-else>
       <!-- Podium top 3 -->
-      <div v-if="podium.length >= 3" class="flex items-end justify-center gap-3 mb-6 mt-8 pt-3">
+      <div v-if="podium.length >= 3" class="flex items-end justify-center gap-3 mb-2 mt-2 pt-1">
         <!-- 2nd place -->
         <div class="flex flex-col items-center gap-2">
           <div class="cursor-pointer" @click="router.push(`/teacher/room/${podium[1]?.id}`)">

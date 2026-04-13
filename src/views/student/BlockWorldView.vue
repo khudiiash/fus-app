@@ -15,15 +15,20 @@ import {
   subscribePresence,
   writePresence,
   deletePresence,
+  bindPresenceDisconnectRemove,
   regenerateTerrain,
 } from '@/game/sharedWorldFirestore'
+import { rtdb } from '@/firebase/config'
 import { RemotePlayersManager } from '@/game/remotePlayersManager'
 import { normalizeSkinUrlForPresence } from '@/utils/presenceSkinUrl'
 import { cameraYawFromQuaternion } from '@/game/cameraYaw'
+import { useTouchGameControls } from '@/game/minebase/utils'
 import '@/game/minebase/style.css'
 import minecraftSunset from '@/assets/minecraft-sunset.jpg'
 
 const WORLD_ID = 'school'
+
+const desktopGameHints = !useTouchGameControls()
 
 const mineRootRef = ref(null)
 const mountRef = ref(null)
@@ -51,8 +56,38 @@ let unsubWorld = null
 let unsubPresence = null
 let remotes = null
 let presenceTimer = null
+/** Latest presence payload; one writer drains the queue so slow writes cannot backlog. */
+let presencePendingPayload = null
+let presenceWriteBusy = false
+/** True while tearing down — blocks new writes and prevents a late write after deletePresence. */
+let presenceStopped = false
 /** Coalesce rapid Firestore world writes into one terrain worker run (reduces flicker). */
 let terrainRegenTimer = null
+
+async function flushPresenceQueue(worldId) {
+  const uid = auth.user?.uid
+  if (!uid || presenceWriteBusy || presenceStopped) return
+  presenceWriteBusy = true
+  try {
+    while (presencePendingPayload && !presenceStopped) {
+      const data = presencePendingPayload
+      presencePendingPayload = null
+      await writePresence(worldId, uid, data)
+    }
+  } catch (err) {
+    console.warn('[BlockWorld] writePresence', err)
+  } finally {
+    presenceWriteBusy = false
+    if (!presenceStopped && presencePendingPayload) void flushPresenceQueue(worldId)
+  }
+}
+
+async function waitPresenceWriterIdle(maxMs = 5000) {
+  const deadline = Date.now() + maxMs
+  while (presenceWriteBusy && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 25))
+  }
+}
 
 function clearMinePlayViewport() {
   const el = mineRootRef.value
@@ -93,7 +128,8 @@ async function exitFullscreenSafe() {
   }
 }
 
-function teardownWorld() {
+async function teardownWorld() {
+  presenceStopped = true
   if (terrainRegenTimer) {
     clearTimeout(terrainRegenTimer)
     terrainRegenTimer = null
@@ -102,9 +138,11 @@ function teardownWorld() {
     clearInterval(presenceTimer)
     presenceTimer = null
   }
+  presencePendingPayload = null
   const leaveUid = auth.user?.uid
+  await waitPresenceWriterIdle()
   if (leaveUid) {
-    void deletePresence(WORLD_ID, leaveUid)
+    await deletePresence(WORLD_ID, leaveUid)
   }
   unsubWorld?.()
   unsubWorld = null
@@ -120,7 +158,7 @@ function teardownWorld() {
 async function leaveWorld() {
   await exitFullscreenSafe()
   bwSession.setImmersive(false)
-  teardownWorld()
+  await teardownWorld()
   started.value = false
   booting.value = false
 }
@@ -134,11 +172,17 @@ async function beginPlay() {
       'Потрібна активна сесія Firebase Auth. Якщо зайшли з IP (наприклад 192.168.x.x), додайте цей хост у Firebase → Authentication → Authorized domains.'
     return
   }
+  if (!rtdb) {
+    errorMsg.value =
+      'Для мультиплеєру потрібен Firebase Realtime Database: увімкни його в консолі (Build → Realtime Database) і додай у .env змінну VITE_FIREBASE_DATABASE_URL (URL бази з налаштувань проєкту).'
+    return
+  }
   errorMsg.value = ''
   started.value = true
   booting.value = true
 
   try {
+    presenceStopped = false
     worldApi = createFusBlockWorld(mountRef.value, {
       onCustomBlocksChange: () => {
         if (worldApi) scheduleFlushCustomBlocks(WORLD_ID, worldApi.terrain)
@@ -179,18 +223,31 @@ async function beginPlay() {
       remotes?.sync(map)
     })
 
+    try {
+      await bindPresenceDisconnectRemove(WORLD_ID, presenceUid)
+    } catch (e) {
+      console.warn('[BlockWorld] bindPresenceDisconnectRemove', e)
+    }
+
+    let presenceIdleCounter = 0
     presenceTimer = window.setInterval(() => {
-      if (!worldApi) return
+      if (presenceStopped || !worldApi) return
       const uid = auth.user?.uid
       if (!uid) return
       const cam = worldApi.core.camera
       const v = worldApi.control.velocity
       const moving = v.x * v.x + v.y * v.y + v.z * v.z > 0.15
+      if (!moving) {
+        presenceIdleCounter = (presenceIdleCounter + 1) % 4
+        if (presenceIdleCounter !== 0) return
+      } else {
+        presenceIdleCounter = 0
+      }
       const skinUrl = resolvePresenceSkinUrl(auth.profile, userStore.items)
       const photoUrl = normalizeSkinUrlForPresence(
         auth.profile?.avatar?.photoUrl ?? null,
       )
-      void writePresence(WORLD_ID, uid, {
+      presencePendingPayload = {
         x: cam.position.x,
         y: cam.position.y,
         z: cam.position.z,
@@ -202,10 +259,9 @@ async function beginPlay() {
         mode: worldApi.control.interactionMode,
         slot: worldApi.control.holdingIndex,
         handSwingSeq: worldApi.control.handSwingSeq,
-      }).catch((err) => {
-        console.warn('[BlockWorld] writePresence', err)
-      })
-    }, 120)
+      }
+      void flushPresenceQueue(WORLD_ID)
+    }, 50)
 
     bwSession.setImmersive(true)
     await nextTick()
@@ -222,7 +278,7 @@ async function beginPlay() {
     started.value = false
     bwSession.setImmersive(false)
     await exitFullscreenSafe()
-    teardownWorld()
+    await teardownWorld()
   } finally {
     booting.value = false
   }
@@ -251,7 +307,7 @@ onUnmounted(async () => {
   window.visualViewport?.removeEventListener('scroll', onVisualViewportChange)
   await exitFullscreenSafe()
   bwSession.setImmersive(false)
-  teardownWorld()
+  await teardownWorld()
 })
 </script>
 
@@ -317,6 +373,13 @@ onUnmounted(async () => {
     >
       Вийти
     </button>
+    <p
+      v-if="started && !booting && desktopGameHints"
+      class="pointer-events-none absolute z-[215] max-w-[min(92vw,24rem)] text-center text-[11px] font-semibold leading-snug text-white/70 drop-shadow-md"
+      style="top: max(3.25rem, calc(env(safe-area-inset-top, 0px) + 2.75rem)); left: 50%; transform: translateX(-50%)"
+    >
+      Клацни по світу, щоб захопити курсор · WASD — рух · миша — огляд · ЛКМ — ламати / будувати
+    </p>
   </div>
 </template>
 
