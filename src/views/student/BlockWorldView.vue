@@ -261,7 +261,8 @@ onUnmounted(async () => {
     class="relative w-full h-full min-h-0 bg-black overflow-hidden fus-mine-root"
     :class="{ 'fus-mine-play-fixed': started && !booting }"
   >
-    <div ref="mountRef" class="absolute inset-0 w-full h-full min-h-0" />
+    <!-- Scoped minebase CSS (touch-action / overflow) applies only here — not whole document. -->
+    <div ref="mountRef" class="fus-minecraft-engine absolute inset-0 w-full h-full min-h-0" />
 
     <div
       v-if="!started"

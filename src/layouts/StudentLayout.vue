@@ -161,7 +161,7 @@ onUnmounted(() => {
         ? hideStudentChrome
           ? 'max-w-none mx-0 px-0 pt-0 pb-0 overflow-hidden'
           : 'max-w-none mx-0 px-0 pt-0 overflow-hidden pb-[calc(4rem+env(safe-area-inset-bottom,0px))]'
-        : 'max-w-lg mx-auto px-4 pt-4 overflow-y-auto overscroll-y-contain pb-[calc(5.5rem+env(safe-area-inset-bottom,0px))]'"
+        : 'max-w-lg mx-auto px-4 pt-4 min-h-0 overflow-y-auto overscroll-y-contain touch-pan-y pb-[calc(6.75rem+env(safe-area-inset-bottom,0px))]'"
     >
       <!-- Room / voxel world: flex chain so the view fills under header and above tab bar -->
       <div v-if="isStudentRoom || isStudentWorld" class="flex flex-1 flex-col min-h-0 min-w-0 w-full">

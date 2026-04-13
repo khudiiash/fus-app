@@ -1,12 +1,21 @@
-body {
+/**
+ * Scope to `.fus-minecraft-engine` (Three.js mount in BlockWorldView only).
+ * Global `body` / `*` rules here previously broke PWA scrolling after leaving the world.
+ */
+.fus-minecraft-engine {
   font-family: Minecraft, Avenir, Helvetica, Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   margin: 0;
   overflow: hidden;
 }
-* {
+.fus-minecraft-engine * {
   touch-action: none;
+  -webkit-touch-callout: none;
+  -moz-touch-callout: none;
+  -ms-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 @font-face {
@@ -299,10 +308,3 @@ body {
   cursor: pointer;
 }
 
-* {
-  -webkit-touch-callout: none;
-  -moz-touch-callout: none;
-  -ms-touch-callout: none;
-  -webkit-user-select: none;
-  user-select: none;
-}
