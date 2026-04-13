@@ -375,37 +375,46 @@ async function doFine() {
       class="w-full bg-game-card border border-game-border rounded-lg px-3 py-2 text-xs font-semibold text-white placeholder-slate-500 focus:outline-none focus:border-violet-500"
     />
 
-    <!-- Вибір кількох учнів для одного нарахування -->
+    <!-- Вибір кількох учнів: фіксована min-висота — список учнів не зміщується при появі кнопок -->
     <div
-      v-if="selectedStudentIds.length > 0"
-      class="flex flex-col gap-1.5 rounded-xl border border-violet-500/35 bg-violet-500/[0.08] p-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3"
+      class="rounded-xl p-2 box-border min-h-[5.5rem] sm:min-h-[3.25rem] transition-[background-color,border-color]"
+      :class="
+        selectedStudentIds.length > 0
+          ? 'border border-violet-500/35 bg-violet-500/[0.08]'
+          : 'border border-transparent bg-transparent'
+      "
     >
-      <div class="min-w-0">
-        <div class="text-xs font-extrabold text-violet-200">
-          Обрано: {{ selectedStudentIds.length }}
+      <div
+        v-if="selectedStudentIds.length > 0"
+        class="flex flex-col gap-1.5 sm:flex-row sm:items-center sm:justify-between sm:gap-3"
+      >
+        <div class="min-w-0">
+          <div class="text-xs font-extrabold text-violet-200">
+            Обрано: {{ selectedStudentIds.length }}
+          </div>
+          <div v-if="selectedSummaryNames" class="text-[11px] text-slate-400 truncate mt-0.5 leading-snug">
+            {{ selectedSummaryNames
+            }}<span v-if="selectedStudentIds.length > 4">…</span>
+          </div>
         </div>
-        <div v-if="selectedSummaryNames" class="text-[11px] text-slate-400 truncate mt-0.5 leading-snug">
-          {{ selectedSummaryNames
-          }}<span v-if="selectedStudentIds.length > 4">…</span>
+        <div class="flex flex-wrap items-center gap-1.5 shrink-0">
+          <AppButton variant="secondary" size="sm" @click="clearCardSelection">
+            Скинути
+          </AppButton>
+          <AppButton variant="coin" size="sm" @click="openAwardSelected">
+            <Coins :size="14" :stroke-width="2" />
+            Нарахувати
+          </AppButton>
+          <AppButton
+            variant="secondary"
+            size="sm"
+            class="!border !border-red-500/45 !bg-red-600/15 !text-red-100 hover:!bg-red-600/25 hover:!border-red-400/55"
+            @click="openFineSelected"
+          >
+            <Gavel :size="14" :stroke-width="2" />
+            Штраф усім
+          </AppButton>
         </div>
-      </div>
-      <div class="flex flex-wrap items-center gap-1.5 shrink-0">
-        <AppButton variant="secondary" size="sm" @click="clearCardSelection">
-          Скинути
-        </AppButton>
-        <AppButton variant="coin" size="sm" @click="openAwardSelected">
-          <Coins :size="14" :stroke-width="2" />
-          Нарахувати
-        </AppButton>
-        <AppButton
-          variant="secondary"
-          size="sm"
-          class="!border !border-red-500/45 !bg-red-600/15 !text-red-100 hover:!bg-red-600/25 hover:!border-red-400/55"
-          @click="openFineSelected"
-        >
-          <Gavel :size="14" :stroke-width="2" />
-          Штраф усім
-        </AppButton>
       </div>
     </div>
 
@@ -424,18 +433,21 @@ async function doFine() {
       <div
         v-for="(s, i) in sortedStudents"
         :key="s.id"
-        class="glass-card flex flex-col gap-2 p-2.5 rounded-xl border transition-all"
+        class="glass-card flex gap-2 items-center p-2 rounded-xl border transition-all"
         :class="
           selectedStudentIds.includes(s.id)
             ? 'border-violet-500/60 bg-violet-500/[0.06] ring-1 ring-violet-500/25'
             : 'border-white/[0.06] hover:border-violet-500/35'
         "
       >
-        <!-- Картка: натискання обирає учня (кімната — лише кнопка «Кімната») -->
-        <button
-          type="button"
-          class="flex gap-2 items-center min-w-0 w-full text-left rounded-lg -m-0.5 p-0.5 transition-colors active:bg-white/[0.04]"
+        <!-- Ряд: вибір учня; ім'я й «Профіль» на одній лінії -->
+        <div
+          class="flex gap-2 items-center min-w-0 flex-1 rounded-lg -m-0.5 p-0.5 cursor-pointer transition-colors active:bg-white/[0.04]"
+          role="button"
+          tabindex="0"
           @click="toggleCardSelect(s.id)"
+          @keydown.enter.prevent="toggleCardSelect(s.id)"
+          @keydown.space.prevent="toggleCardSelect(s.id)"
         >
           <div
             class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-xs font-black tabular-nums relative"
@@ -468,14 +480,25 @@ async function doFine() {
             size="sm"
             class="shrink-0 pointer-events-none"
           />
-          <div class="min-w-0 flex-1 pointer-events-none">
-            <div
-              class="font-bold text-sm leading-tight text-white [overflow-wrap:anywhere] line-clamp-2"
-            >
-              {{ s.displayName }}
+          <div class="min-w-0 flex-1">
+            <div class="flex items-start justify-between gap-2 min-w-0">
+              <div
+                class="font-bold text-sm leading-tight text-white [overflow-wrap:anywhere] line-clamp-2 min-w-0 flex-1"
+              >
+                {{ s.displayName }}
+              </div>
+              <button
+                type="button"
+                class="shrink-0 inline-flex items-center gap-1 rounded-md border border-violet-400/45 bg-violet-600/18 px-2 py-1 text-[10px] font-extrabold text-violet-100 hover:bg-violet-600/28 active:scale-[0.98] transition-all"
+                :aria-label="`Профіль: ${s.displayName || 'учень'}`"
+                @click.stop="router.push(`/teacher/student/${s.id}/profile`)"
+              >
+                <User :size="12" :stroke-width="2" />
+                Профіль
+              </button>
             </div>
             <div
-              class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] font-semibold text-slate-400"
+              class="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] font-semibold text-slate-400"
             >
               <span>Рів. {{ s.level ?? 1 }}</span>
               <span class="inline-flex items-center gap-0.5 text-orange-300/90">
@@ -485,21 +508,6 @@ async function doFine() {
               <CoinDisplay :amount="s.coins || 0" size="sm" />
             </div>
           </div>
-        </button>
-
-        <!-- Actions: компактний ряд -->
-        <div class="border-t border-white/[0.06] pt-2">
-          <AppButton
-            variant="secondary"
-            size="sm"
-            block
-            class="!text-xs !px-2 !py-2 !rounded-xl !border !border-violet-400/45 !bg-violet-600/18 !text-violet-100 hover:!bg-violet-600/28"
-            :aria-label="`Профіль: ${s.displayName || 'учень'}`"
-            @click.stop="router.push(`/teacher/student/${s.id}/profile`)"
-          >
-            <User :size="14" :stroke-width="2" />
-            Профіль
-          </AppButton>
         </div>
       </div>
     </div>

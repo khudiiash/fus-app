@@ -20,10 +20,13 @@ export function scaleGltfToMaxDimension(root: THREE.Object3D, maxDim: number) {
   root.scale.setScalar(maxDim / m)
 }
 
-/** First-person pickaxe max edge length (world units). */
-export const FP_TOOL_MAX_DIM = 1.35
-/** Remote rig arm is tiny in world space — scale held tool ~3× vs FP so it reads at distance. */
-export const REMOTE_TOOL_MAX_DIM = FP_TOOL_MAX_DIM * 3
+/** First-person tool max AABB edge (world units); keep modest so GLB tools do not dominate the view. */
+export const FP_TOOL_MAX_DIM = 0.78
+/**
+ * Remote rig arm is tiny in world space — scale held tool vs FP so it reads at distance.
+ * Was 3× FP; now **6× FP** (2× the previous remote size per design request).
+ */
+export const REMOTE_TOOL_MAX_DIM = FP_TOOL_MAX_DIM * 6
 
 /**
  * In your GLB, unit vector from **grip (origin)** toward **pickaxe head**.
@@ -34,33 +37,51 @@ export const REMOTE_TOOL_MAX_DIM = FP_TOOL_MAX_DIM * 3
  */
 export const TOOL_GRIP_TO_HEAD = new THREE.Vector3(0, 1, 0)
 
-/** Direction (camera space) for grip→head: higher Y tilts the pickaxe head upward in view. */
-const FP_HEAD_DIR_CAM = new THREE.Vector3(-0.18, 0.52, -0.83).normalize()
+/**
+ * First-person “view” grip→head direction (same frame as used with {@link orientPickaxeForFirstPerson}
+ * and the camera-hand `root`). Tweak this when tuning FP tools; remotes rotate it by body yaw.
+ */
+export const FP_TOOL_HEAD_DIR_CAM = new THREE.Vector3(8.18, -1, -2.18).normalize()
 
 const _invQ = new THREE.Quaternion()
 const _dir = new THREE.Vector3()
+const _tmpYawQ = new THREE.Quaternion()
+const _yAxis = new THREE.Vector3(0, 1, 0)
 
 /**
  * Orients `tool` (child of `parent`) so {@link TOOL_GRIP_TO_HEAD} aligns with
- * `FP_HEAD_DIR_CAM` expressed in `parent` local space.
+ * {@link FP_TOOL_HEAD_DIR_CAM} expressed in `parent` local space.
  */
 export function orientPickaxeForFirstPerson(
   tool: THREE.Object3D,
   parent: THREE.Object3D,
 ) {
   _invQ.copy(parent.quaternion).invert()
-  _dir.copy(FP_HEAD_DIR_CAM).applyQuaternion(_invQ).normalize()
+  _dir.copy(FP_TOOL_HEAD_DIR_CAM).applyQuaternion(_invQ).normalize()
   tool.quaternion.setFromUnitVectors(TOOL_GRIP_TO_HEAD.clone().normalize(), _dir)
 }
 
-/** Arm-local grip→head: positive Y lifts the pickaxe head (was pointing too far down). */
-const REMOTE_HEAD_DIR = new THREE.Vector3(0.1, 0.48, 0.87).normalize()
+/**
+ * Orients a held tool whose **immediate parent** is `immediateParent`, so that
+ * {@link TOOL_GRIP_TO_HEAD} points along `headDirWorld` (unit vector in world space).
+ */
+export function orientHeldToolGripToWorldDir(
+  tool: THREE.Object3D,
+  immediateParent: THREE.Object3D,
+  headDirWorld: THREE.Vector3,
+) {
+  immediateParent.updateMatrixWorld(true)
+  const pw = new THREE.Quaternion()
+  immediateParent.getWorldQuaternion(pw)
+  _invQ.copy(pw).invert()
+  _dir.copy(headDirWorld).applyQuaternion(_invQ).normalize()
+  tool.quaternion.setFromUnitVectors(TOOL_GRIP_TO_HEAD.clone().normalize(), _dir)
+}
 
-export function orientPickaxeForRemoteTemplate(tool: THREE.Object3D) {
-  tool.quaternion.setFromUnitVectors(
-    TOOL_GRIP_TO_HEAD.clone().normalize(),
-    REMOTE_HEAD_DIR.clone(),
-  )
+/** World-space tool head direction for a remote body yaw (matches FP aim vs facing). */
+export function remoteToolHeadDirWorld(bodyYaw: number, out = new THREE.Vector3()) {
+  _tmpYawQ.setFromAxisAngle(_yAxis, bodyYaw)
+  return out.copy(FP_TOOL_HEAD_DIR_CAM).applyQuaternion(_tmpYawQ).normalize()
 }
 
 /**

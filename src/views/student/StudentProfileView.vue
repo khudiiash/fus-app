@@ -10,6 +10,9 @@ import AppButton from '@/components/ui/AppButton.vue'
 import AppModal from '@/components/ui/AppModal.vue'
 import AppInput from '@/components/ui/AppInput.vue'
 import SubjectIcon from '@/components/ui/SubjectIcon.vue'
+import BlockWorldHotbarIconInner from '@/components/blockWorld/BlockWorldHotbarIconInner.vue'
+import { hotbarCellVisualForBwSlot } from '@/game/blockWorldHotbarVisuals'
+import '@/game/blockWorldHud.css'
 import HistoryTransactionCard from '@/components/feed/HistoryTransactionCard.vue'
 import CoinDisplay from '@/components/gamification/CoinDisplay.vue'
 import { useToast } from '@/composables/useToast'
@@ -31,12 +34,13 @@ import {
   User,
   Gavel,
   ScrollText,
+  X,
+  Trash2,
 } from 'lucide-vue-next'
 import { currentAccent, setAccent, ACCENT_PRESETS } from '@/composables/useAccentColor'
 import {
   getUser,
   teacherMayAccessStudentProfile,
-  studentMayAccessStudentProfile,
   getStudentActivityTransactions,
   aggregateStudentAwardCoinsBySubject,
   getAllSubjects,
@@ -46,7 +50,9 @@ import {
   getTeacherBudgetInfo,
   FINE_AMOUNT_OPTIONS,
   hasTeacherFinedStudentToday,
+  updateUser,
 } from '@/firebase/collections'
+import { BW_HOTBAR_MAX_SLOTS, parseBlockWorldItem } from '@/game/blockWorldItems'
 
 const route = useRoute()
 const router = useRouter()
@@ -75,12 +81,140 @@ const { level, coins, streak, xpProgress } = useGameification(profileRef)
 const isOwnProfile = computed(
   () => !!viewedStudent.value?.id && viewedStudent.value.id === auth.profile?.id,
 )
+/** Activity feed: teacher or peer student; hidden on own profile. */
+const showActivityFeed = computed(
+  () =>
+    auth.profile?.role === 'teacher' ||
+    (auth.profile?.role === 'student' && !isOwnProfile.value),
+)
 const isTeacherViewer = computed(() => auth.profile?.role === 'teacher')
 const showStudentSettings = computed(
   () => isOwnProfile.value && auth.profile?.role === 'student',
 )
 const showTeacherActions = computed(
   () => isTeacherViewer.value && !forbidden.value && !!viewedStudent.value,
+)
+
+const BW_HOTBAR_ITEM_SLOTS = BW_HOTBAR_MAX_SLOTS - 1
+const showBlockWorldHotbarSetup = computed(
+  () => isOwnProfile.value && auth.profile?.role === 'student' && !forbidden.value,
+)
+const ownedBlockWorldShopItems = computed(() => {
+  const inv = new Set(auth.profile?.inventory || [])
+  const rows = []
+  for (const it of userStore.items) {
+    if (!inv.has(it.id) || it.category !== 'block_world' || it.active === false) continue
+    if (!parseBlockWorldItem(it)) continue
+    rows.push(it)
+  }
+  rows.sort((a, b) => String(a.name || a.id).localeCompare(String(b.name || b.id), 'uk'))
+  return rows
+})
+
+const bwHotbarSlots = ref([])
+const bwHotbarIndices = computed(() =>
+  Array.from({ length: BW_HOTBAR_ITEM_SLOTS }, (_, i) => i),
+)
+
+let bwHotbarSaveTimer = null
+function scheduleSaveBlockWorldHotbar() {
+  const uid = auth.profile?.id
+  if (!uid || !showBlockWorldHotbarSetup.value) return
+  clearTimeout(bwHotbarSaveTimer)
+  bwHotbarSaveTimer = setTimeout(async () => {
+    bwHotbarSaveTimer = null
+    const order = bwHotbarSlots.value
+      .map((x) => (typeof x === 'string' ? x.trim() : ''))
+      .filter(Boolean)
+    try {
+      await updateUser(uid, { blockWorldHotbarOrder: order })
+    } catch (e) {
+      error(e?.message || 'Не вдалося зберегти гарячу панель')
+    }
+  }, 450)
+}
+
+const bwFistCellVisual = hotbarCellVisualForBwSlot({ kind: 'fist' })
+const bwHotbarPickerOpen = ref(false)
+const bwHotbarPickerSlotIndex = ref(null)
+
+function bwEditorItemSlotForIndex(slotIndex) {
+  const id =
+    typeof bwHotbarSlots.value[slotIndex] === 'string'
+      ? bwHotbarSlots.value[slotIndex].trim()
+      : ''
+  if (!id) return null
+  const item = userStore.items.find((x) => x.id === id)
+  if (!item || item.category !== 'block_world' || item.active === false) return null
+  const meta = parseBlockWorldItem(item)
+  if (!meta) return null
+  const c = Math.max(1, Math.floor(Number(auth.profile?.inventoryCounts?.[id]) || 1))
+  return { kind: 'item', itemId: id, meta, count: c }
+}
+
+function bwEditorCellVisual(slotIndex) {
+  const slot = bwEditorItemSlotForIndex(slotIndex)
+  if (!slot) return { type: 'emoji', text: '+' }
+  return hotbarCellVisualForBwSlot(slot)
+}
+
+function bwShopItemCellVisual(it) {
+  const meta = parseBlockWorldItem(it)
+  if (!meta) return { type: 'emoji', text: '?' }
+  const c = Math.max(1, Math.floor(Number(auth.profile?.inventoryCounts?.[it.id]) || 1))
+  return hotbarCellVisualForBwSlot({ kind: 'item', itemId: it.id, meta, count: c })
+}
+
+function assignBwHotbarSlot(slotIndex, rawId) {
+  const v = typeof rawId === 'string' ? rawId.trim() : ''
+  const next = [...bwHotbarSlots.value]
+  next[slotIndex] = v
+  for (let j = 0; j < next.length; j++) {
+    if (j !== slotIndex && v && next[j] === v) next[j] = ''
+  }
+  bwHotbarSlots.value = next
+  scheduleSaveBlockWorldHotbar()
+}
+
+function openBwHotbarPicker(idx) {
+  bwHotbarPickerSlotIndex.value = idx
+  bwHotbarPickerOpen.value = true
+}
+
+function closeBwHotbarPicker() {
+  bwHotbarPickerOpen.value = false
+}
+
+function confirmBwHotbarPick(itemId) {
+  const idx = bwHotbarPickerSlotIndex.value
+  if (idx == null || idx < 0) return
+  assignBwHotbarSlot(idx, itemId)
+  closeBwHotbarPicker()
+}
+
+function bwPickerSlotHasItemId(itemId) {
+  const i = bwHotbarPickerSlotIndex.value
+  if (i == null || i < 0) return false
+  const cur = typeof bwHotbarSlots.value[i] === 'string' ? bwHotbarSlots.value[i].trim() : ''
+  return cur === itemId
+}
+
+watch(
+  () => [
+    isOwnProfile.value,
+    auth.profile?.id,
+    JSON.stringify(auth.profile?.blockWorldHotbarOrder || []),
+  ],
+  () => {
+    if (!isOwnProfile.value || auth.profile?.role !== 'student') return
+    const src = auth.profile?.blockWorldHotbarOrder
+    const arr = []
+    for (let i = 0; i < BW_HOTBAR_ITEM_SLOTS; i++) {
+      arr.push(typeof src?.[i] === 'string' ? src[i] : '')
+    }
+    bwHotbarSlots.value = arr
+  },
+  { immediate: true },
 )
 
 const pageTitle = computed(() => {
@@ -121,12 +255,7 @@ async function loadProfile() {
       } else {
         teacherSubjects.value = []
       }
-    } else if (auth.profile?.role === 'student') {
-      if (uid !== auth.profile.id && !studentMayAccessStudentProfile(auth.profile, s)) {
-        forbidden.value = true
-        return
-      }
-    } else {
+    } else if (auth.profile?.role !== 'student') {
       forbidden.value = true
       return
     }
@@ -134,12 +263,30 @@ async function loadProfile() {
     viewedStudent.value = s
     if (!userStore.items.length) await userStore.fetchItems()
 
-    const [raw, subj] = await Promise.all([
-      getStudentActivityTransactions(uid, 80),
-      aggregateStudentAwardCoinsBySubject(uid),
-    ])
+    const peerOrTeacherSeesFeed =
+      auth.profile?.role === 'teacher' ||
+      (auth.profile?.role === 'student' && uid !== auth.profile.id)
+
+    let raw = []
+    let subj = []
+    try {
+      if (peerOrTeacherSeesFeed) {
+        ;[raw, subj] = await Promise.all([
+          getStudentActivityTransactions(uid, 80),
+          aggregateStudentAwardCoinsBySubject(uid),
+        ])
+      } else {
+        subj = await aggregateStudentAwardCoinsBySubject(uid)
+      }
+    } catch (e) {
+      console.warn('[StudentProfileView] activity/journal (можливо обмеження Firestore)', e?.message || e)
+      raw = []
+      subj = []
+    }
     subjectCoins.value = subj
-    history.value = await enrichStudentFeedTransactions(raw, uid)
+    history.value = raw.length
+      ? await enrichStudentFeedTransactions(raw, uid)
+      : []
   } catch (e) {
     console.warn('[StudentProfileView]', e)
     forbidden.value = true
@@ -294,7 +441,7 @@ async function doFine() {
 
 <template>
   <div class="flex flex-col gap-5 animate-fade-in pb-2">
-    <div v-if="!isOwnProfile || isTeacherViewer" class="flex items-center gap-2">
+    <div v-if="!isOwnProfile" class="flex items-center gap-2">
       <AppButton variant="ghost" size="sm" class="!px-2 shrink-0" @click="router.back()">
         <ArrowLeft :size="16" :stroke-width="2.5" />
       </AppButton>
@@ -367,6 +514,45 @@ async function doFine() {
         </div>
       </div>
 
+      <section
+        v-if="showBlockWorldHotbarSetup"
+        class="glass-card p-4 rounded-2xl border border-white/[0.07]"
+      >
+        <div class="flex items-center gap-2 mb-2">
+          <Package :size="18" :stroke-width="2" class="text-emerald-400" />
+          <h2 class="font-extrabold text-base text-slate-200">Світ блоків: гаряча панель</h2>
+        </div>
+        <p class="text-[11px] text-slate-500 mb-3 leading-snug">
+          Натисни клітинку гарячої панелі (як у грі), щоб обрати предмет лише за іконкою. До
+          {{ BW_HOTBAR_ITEM_SLOTS }} слотів; якщо предмет уже був в іншому слоті — він переїде сюди.
+        </p>
+        <div class="overflow-x-auto pb-1 -mx-1 px-1">
+          <div class="fus-bw-hotbar inline-flex min-w-max">
+            <div
+              class="fus-bw-hotbar-item pointer-events-none opacity-95"
+              aria-hidden="true"
+              title="Кулак (як у грі)"
+            >
+              <BlockWorldHotbarIconInner :visual="bwFistCellVisual" />
+            </div>
+            <button
+              v-for="idx in bwHotbarIndices"
+              :key="idx"
+              type="button"
+              class="fus-bw-hotbar-item"
+              :class="{
+                'fus-bw-hotbar-item--tool': bwEditorItemSlotForIndex(idx)?.meta?.kind === 'tool',
+                'bw-editor-slot--empty': !bwEditorItemSlotForIndex(idx),
+              }"
+              :aria-label="`Слот ${idx + 1} гарячої панелі світу блоків`"
+              @click="openBwHotbarPicker(idx)"
+            >
+              <BlockWorldHotbarIconInner :visual="bwEditorCellVisual(idx)" />
+            </button>
+          </div>
+        </div>
+      </section>
+
       <div
         v-if="showTeacherActions"
         class="flex flex-col gap-2 sm:flex-row"
@@ -410,7 +596,7 @@ async function doFine() {
         </div>
       </section>
 
-      <section>
+      <section v-if="showActivityFeed">
         <div class="flex items-center gap-2 mb-3">
           <Activity :size="18" :stroke-width="2" class="text-violet-400" />
           <h2 class="font-extrabold text-base text-slate-200">Активність</h2>
@@ -462,6 +648,47 @@ async function doFine() {
         </button>
       </template>
     </template>
+
+    <AppModal v-if="showBlockWorldHotbarSetup" v-model="bwHotbarPickerOpen" size="lg">
+      <div class="flex justify-end mb-2">
+        <button
+          type="button"
+          class="shrink-0 flex items-center justify-center min-h-10 min-w-10 rounded-xl font-extrabold text-sm
+            bg-white/[0.14] hover:bg-white/[0.22] active:bg-white/[0.18] border border-white/[0.14]
+            text-white shadow-sm transition-colors"
+          aria-label="Закрити"
+          @click="closeBwHotbarPicker"
+        >
+          <X :size="20" :stroke-width="2" />
+        </button>
+      </div>
+      <div class="flex flex-wrap gap-2 justify-center">
+        <button
+          type="button"
+          class="fus-bw-hotbar-item"
+          :class="{ 'fus-bw-hotbar-item--selected': bwPickerSlotHasItemId('') }"
+          aria-label="Очистити слот"
+          title="Очистити слот"
+          @click="confirmBwHotbarPick('')"
+        >
+          <Trash2 :size="22" :stroke-width="2" class="text-slate-400 mx-auto" />
+        </button>
+        <button
+          v-for="it in ownedBlockWorldShopItems"
+          :key="it.id"
+          type="button"
+          class="fus-bw-hotbar-item"
+          :class="{
+            'fus-bw-hotbar-item--tool': parseBlockWorldItem(it)?.kind === 'tool',
+            'fus-bw-hotbar-item--selected': bwPickerSlotHasItemId(it.id),
+          }"
+          :aria-label="`Предмет для гарячої панелі: ${it.name || it.id}`"
+          @click="confirmBwHotbarPick(it.id)"
+        >
+          <BlockWorldHotbarIconInner :visual="bwShopItemCellVisual(it)" />
+        </button>
+      </div>
+    </AppModal>
 
     <!-- Teacher: нарахувати -->
     <AppModal v-model="showAward" :title="`Нарахувати: ${viewedStudent?.displayName || ''}`">
@@ -575,5 +802,9 @@ async function doFine() {
 }
 .logout-btn:hover {
   background: rgba(239, 68, 68, 0.08);
+}
+.bw-editor-slot--empty :deep(.bw-hb-emoji) {
+  color: rgb(100 116 139);
+  font-weight: 300;
 }
 </style>

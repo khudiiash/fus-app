@@ -7,6 +7,31 @@
           ".write": "auth != null && auth.uid == $uid"
         }
       }
+    },
+    "worldBlockEdits": {
+      "$worldId": {
+        "customBlocks": {
+          ".read": "auth != null",
+          ".write": "auth != null"
+        }
+      }
+    },
+    "worldSpawnFlags": {
+      "$worldId": {
+        ".read": "auth != null",
+        "$uid": {
+          ".write": "auth != null && auth.uid == $uid",
+          ".validate": "newData.hasChildren(['x','y','z','ry']) && newData.child('x').isNumber() && newData.child('y').isNumber() && newData.child('z').isNumber() && newData.child('ry').isNumber()"
+        }
+      }
+    },
+    "worldPickaxeHits": {
+      "$worldId": {
+        ".read": "auth != null",
+        "$pushId": {
+          ".write": "auth != null && ((!data.exists() && newData.child('fromUid').val() == auth.uid && newData.child('toUid').isString() && newData.child('dmg').isNumber() && newData.child('dmg').val() > 0 && newData.child('dmg').val() <= 20 && newData.child('ts').isNumber()) || (data.exists() && !newData.exists() && (data.child('toUid').val() == auth.uid || data.child('fromUid').val() == auth.uid)))"
+        }
+      }
     }
   }
 }

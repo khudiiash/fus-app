@@ -29,7 +29,6 @@ export default class Terrain {
     this.highlight = new Highlight(scene, camera, this)
     this.scene.add(this.cloud)
 
-    // generate worker callback handler
     this.generateWorker.onerror = (ev) => {
       console.error('[minebase terrain worker]', ev.message || ev)
     }
@@ -38,25 +37,35 @@ export default class Terrain {
         idMap: Map<string, number>
         arrays: ArrayLike<number>[]
         blocksCount: number[]
-      }>
+      }>,
     ) => {
       try {
-        this.resetBlocks()
         this.idMap = msg.data.idMap
         this.blocksCount = msg.data.blocksCount
 
         for (let i = 0; i < msg.data.arrays.length; i++) {
           const src = msg.data.arrays[i]
-          const buf = new Float32Array(src.length)
-          buf.set(src as ArrayLike<number>)
           const mesh = this.blocks[i]
-          mesh.instanceMatrix = new THREE.InstancedBufferAttribute(buf, 16)
-          mesh.count = Math.max(0, this.blocksCount[i] ?? 0)
-          mesh.instanceMatrix.needsUpdate = true
-          // InstancedMesh caches bounds for culling; stale sphere after matrix replace culls everything (blue sky).
+          if (!mesh) continue
+          const cnt = Math.max(0, this.blocksCount[i] ?? 0)
+          const attr = mesh.instanceMatrix as THREE.InstancedBufferAttribute
+          const dst = attr.array as Float32Array
+          const srcLen = (src as ArrayLike<number>).length
+          if (dst.length === srcLen) {
+            dst.set(src as ArrayLike<number> as Float32Array)
+            attr.needsUpdate = true
+          } else {
+            const buf = new Float32Array(srcLen)
+            buf.set(src as ArrayLike<number>)
+            mesh.instanceMatrix = new THREE.InstancedBufferAttribute(buf, 16)
+            mesh.instanceMatrix.needsUpdate = true
+          }
+          mesh.count = cnt
+          // Raycast / culling use cached bounds; stale sphere after matrix edits rejects all hits.
           mesh.boundingSphere = null
           mesh.boundingBox = null
         }
+
         if (!this._firstGenerateDone) {
           this._firstGenerateDone = true
           this._resolveFirstGenerate?.()
@@ -67,19 +76,16 @@ export default class Terrain {
       }
     }
   }
-  // core properties
   scene: THREE.Scene
   camera: THREE.PerspectiveCamera
   distance = 3
   chunkSize = 24
 
-  // terrain properties
   maxCount: number
   chunk = new THREE.Vector2(0, 0)
   previousChunk = new THREE.Vector2(0, 0)
   noise = new Noise()
 
-  // materials
   materials = new Materials()
   materialType = [
     MaterialType.grass,
@@ -96,40 +102,25 @@ export default class Terrain {
     MaterialType.bedrock
   ]
 
-  // other properties
   blocks: THREE.InstancedMesh[] = []
   blocksCount: number[] = []
   blocksFactor = [1, 0.2, 0.1, 0.7, 0.1, 0.2, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1]
 
   customBlocks: Block[] = []
-  /** Fus: notified when customBlocks change (place/break) for multiplayer sync. */
   private customBlockListeners: Array<() => void> = []
-  /** Re-run terrain worker shortly after edits so idMap / instancing match customBlocks without waiting for Firestore. */
-  private customChangeGenerateTimer: ReturnType<typeof setTimeout> | null = null
   onCustomBlockChange(cb: () => void) {
     this.customBlockListeners.push(cb)
-  }
-  private scheduleGenerateFromCustomChange = () => {
-    if (this.customChangeGenerateTimer) {
-      clearTimeout(this.customChangeGenerateTimer)
-    }
-    this.customChangeGenerateTimer = setTimeout(() => {
-      this.customChangeGenerateTimer = null
-      this.generate()
-    }, 56)
   }
   touchCustomBlocks() {
     for (const cb of this.customBlockListeners) {
       cb()
     }
-    this.scheduleGenerateFromCustomChange()
   }
 
   highlight: Highlight
 
   idMap = new Map<string, number>()
   generateWorker = new Generate()
-  /** Resolves once after the first successful worker → main terrain mesh update. */
   private _firstGeneratePromise: Promise<void> | null = null
   private _resolveFirstGenerate: (() => void) | null = null
   private _firstGenerateDone = false
@@ -144,7 +135,6 @@ export default class Terrain {
     return this._firstGeneratePromise
   }
 
-  // cloud
   cloud = new THREE.InstancedMesh(
     new THREE.BoxGeometry(20, 5, 14),
     new THREE.MeshStandardMaterial({
@@ -163,48 +153,50 @@ export default class Terrain {
 
   setCount = (type: BlockType) => {
     this.blocksCount[type] = this.blocksCount[type] + 1
+    // InstancedMesh.count limits how many instances render; blocksCount alone is not enough
+    // (otherwise new blocks only appear after the worker round-trip — “ghost” from highlight).
+    const mesh = this.blocks[type]
+    if (mesh) {
+      const cap = mesh.instanceMatrix.count
+      mesh.count = Math.min(Math.max(0, this.blocksCount[type] ?? 0), cap)
+    }
   }
 
   initBlocks = () => {
-    // reset
     for (const block of this.blocks) {
       this.scene.remove(block)
     }
     this.blocks = []
 
-    // create instance meshes
     const geometry = new THREE.BoxGeometry()
 
     for (let i = 0; i < this.materialType.length; i++) {
-      let block = new THREE.InstancedMesh(
+      const mesh = new THREE.InstancedMesh(
         geometry,
         this.materials.get(this.materialType[i]),
-        this.maxCount * this.blocksFactor[i]
+        this.maxCount * this.blocksFactor[i],
       )
-      block.name = BlockType[i]
-      this.blocks.push(block)
-      this.scene.add(block)
+      mesh.name = BlockType[i]
+      mesh.frustumCulled = false
+      this.blocks.push(mesh)
+      this.scene.add(mesh)
     }
 
     this.blocksCount = new Array(this.materialType.length).fill(0)
   }
 
-  resetBlocks = () => {
-    // reest count and instance matrix
-    for (let i = 0; i < this.blocks.length; i++) {
-      this.blocks[i].instanceMatrix = new THREE.InstancedBufferAttribute(
-        new Float32Array(this.maxCount * this.blocksFactor[i] * 16),
-        16
-      )
-    }
-  }
-
   generate = () => {
-    this.blocksCount = new Array(this.blocks.length).fill(0)
-    // post work to generate worker
+    const zeroCounts = new Array(this.blocks.length).fill(0)
+    const customBlocksPlain = this.customBlocks.map((b) => ({
+      x: b.x,
+      y: b.y,
+      z: b.z,
+      type: b.type,
+      placed: b.placed,
+    }))
     this.generateWorker.postMessage({
       distance: this.distance,
-      chunk: this.chunk,
+      chunk: { x: this.chunk.x, y: this.chunk.y },
       noiseSeed: this.noise.seed,
       treeSeed: this.noise.treeSeed,
       stoneSeed: this.noise.stoneSeed,
@@ -212,12 +204,10 @@ export default class Terrain {
       leafSeed: this.noise.leafSeed,
       idMap: new Map<string, number>(),
       blocksFactor: this.blocksFactor,
-      blocksCount: this.blocksCount,
-      customBlocks: this.customBlocks,
-      chunkSize: this.chunkSize
+      blocksCount: zeroCounts,
+      customBlocks: customBlocksPlain,
+      chunkSize: this.chunkSize,
     })
-
-    // cloud
 
     if (this.cloudGap++ > 5) {
       this.cloudGap = 0
@@ -258,7 +248,6 @@ export default class Terrain {
     }
   }
 
-  // generate adjacent blocks after removing a block (vertical infinity world)
   generateAdjacentBlocks = (position: THREE.Vector3) => {
     const { x, y, z } = position
     const noise = this.noise
@@ -298,7 +287,6 @@ export default class Terrain {
 
   buildBlock = (position: THREE.Vector3, type: BlockType) => {
     const noise = this.noise
-    // check if it's natural terrain
     const yOffset = Math.floor(
       noise.get(position.x / noise.gap, position.z / noise.gap, noise.seed) *
         noise.amp
@@ -309,7 +297,6 @@ export default class Terrain {
 
     position.y === 0 && (type = BlockType.bedrock)
 
-    // check custom blocks
     for (const block of this.customBlocks) {
       if (
         block.x === position.x &&
@@ -320,15 +307,17 @@ export default class Terrain {
       }
     }
 
-    // build block
     this.customBlocks.push(
       new Block(position.x, position.y, position.z, type, true)
     )
 
     const matrix = new THREE.Matrix4()
     matrix.setPosition(position)
-    this.blocks[type].setMatrixAt(this.getCount(type), matrix)
-    this.blocks[type].instanceMatrix.needsUpdate = true
+    const mesh = this.blocks[type]
+    mesh.setMatrixAt(this.getCount(type), matrix)
+    mesh.instanceMatrix.needsUpdate = true
+    mesh.boundingSphere = null
+    mesh.boundingBox = null
     this.setCount(type)
     this.touchCustomBlocks()
   }
@@ -339,7 +328,6 @@ export default class Terrain {
       Math.floor(this.camera.position.z / this.chunkSize)
     )
 
-    //generate terrain when getting into new chunk
     if (
       this.chunk.x !== this.previousChunk.x ||
       this.chunk.y !== this.previousChunk.y

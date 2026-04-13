@@ -11,10 +11,15 @@ import AppButton from '@/components/ui/AppButton.vue'
 import AppModal from '@/components/ui/AppModal.vue'
 import AppInput from '@/components/ui/AppInput.vue'
 import { useToast } from '@/composables/useToast'
-import { Archive, RotateCcw, Package, Layers, Infinity, Trash2, Pencil, Search, X, ShoppingBag, Download } from 'lucide-vue-next'
+import { Archive, RotateCcw, Package, Layers, Infinity, Trash2, Pencil, Search, X, ShoppingBag, Download, Blocks } from 'lucide-vue-next'
 import SubjectBadgeArt from '@/components/shop/SubjectBadgeArt.vue'
+import BlockWorldShopThumb from '@/components/shop/BlockWorldShopThumb.vue'
 import GlbThumbnail from '@/components/character/GlbThumbnail.vue'
-import { seedSkinsFromFiles, seedGlbShopItemsFromFiles } from '@/firebase/seedData'
+import {
+  seedSkinsFromFiles,
+  seedGlbShopItemsFromFiles,
+  seedBlockWorldShopItems,
+} from '@/firebase/seedData'
 import { uploadShopGlb, uploadSkinTextureFile } from '@/firebase/shopAssetStorage'
 import { syncShopStorageClaim } from '@/firebase/syncShopStorageClaim'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
@@ -46,6 +51,7 @@ const seedingPack       = ref(false)
 const seedingRoomGlbs   = ref(false)
 const seedingAccGlbs    = ref(false)
 const seedingPetGlbs    = ref(false)
+const seedingBlockWorld = ref(false)
 const showPurgeModal    = ref(false)
 const purgeConfirmText  = ref('')
 const purgingAll        = ref(false)
@@ -55,8 +61,8 @@ const roomGlbInput      = ref(null)
 const accGlbInput       = ref(null)
 const petGlbInput       = ref(null)
 
-const CATS   = ['skin', 'accessory', 'pet', 'room', 'subject_badge']
-const CAT_LABELS = { skin: 'Скіни', accessory: 'Аксесуари', pet: 'Улюбленці', room: 'Кімнати', subject_badge: 'Предметні значки' }
+const CATS   = ['skin', 'accessory', 'pet', 'room', 'subject_badge', 'block_world']
+const CAT_LABELS = { skin: 'Скіни', accessory: 'Аксесуари', pet: 'Улюбленці', room: 'Кімнати', subject_badge: 'Предметні значки', block_world: 'Світ (блоки + інструменти)' }
 const RARITIES = ['common', 'rare', 'epic', 'legendary']
 const RARITY_LABELS = { common: 'Звичайний', rare: 'Рідкісний', epic: 'Епічний', legendary: 'Легендарний' }
 const rarityColor    = { common: 'text-slate-400', rare: 'text-blue-400', epic: 'text-purple-400', legendary: 'text-amber-400' }
@@ -340,6 +346,22 @@ async function onPetGlbFilesChange(e) {
   }
 }
 
+/** Синхронізує каталог `block_world` з шаблоном (додає нові за bwSeedKey, оновлює наявні). */
+async function onSeedBlockWorldCatalog() {
+  seedingBlockWorld.value = true
+  try {
+    const { added, updated, total } = await seedBlockWorldShopItems()
+    success(
+      `Каталог спільного світу: додано ${added}, оновлено з шаблону ${updated} (усього ${total} позицій).`,
+    )
+    await fetchItems()
+  } catch (err) {
+    error(shopFirebaseErrorMessage(err))
+  } finally {
+    seedingBlockWorld.value = false
+  }
+}
+
 function openPurgeModal() {
   purgeConfirmText.value = ''
   showPurgeModal.value = true
@@ -482,6 +504,17 @@ function onModelFileSelect(e) {
             Улюбленці GLB → Storage
           </AppButton>
         </label>
+        <AppButton
+          variant="secondary"
+          size="sm"
+          :loading="seedingBlockWorld"
+          :disabled="seedingBlockWorld"
+          class="inline-flex items-center gap-1.5"
+          @click="onSeedBlockWorldCatalog"
+        >
+          <Blocks :size="14" :stroke-width="2" />
+          Блоки + інструменти → Firestore
+        </AppButton>
         <AppButton variant="danger" size="sm" :disabled="items.length === 0" @click="openPurgeModal">
           <Trash2 :size="14" :stroke-width="2" />
           Очистити каталог (Firestore)
@@ -545,6 +578,11 @@ function onModelFileSelect(e) {
                 :width="41"
                 :height="56"
                 :is-room="item.category === 'room'"
+              />
+              <BlockWorldShopThumb
+                v-else-if="item.category === 'block_world'"
+                :item="item"
+                :size="34"
               />
               <Package v-else :size="18" :stroke-width="1.5" class="text-slate-600" />
             </div>

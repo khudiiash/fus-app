@@ -2,7 +2,7 @@
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { getAllStudents, getAllTeachers, getAllClasses, getAllItems } from '@/firebase/collections'
-import { runFullSeed, seedSubjects, seedSubjectBadges } from '@/firebase/seedData'
+import { runFullSeed, seedSubjects, seedSubjectBadges, seedBlockWorldShopItems } from '@/firebase/seedData'
 import AppCard from '@/components/ui/AppCard.vue'
 import AppButton from '@/components/ui/AppButton.vue'
 import { useToast } from '@/composables/useToast'
@@ -13,6 +13,7 @@ const { success, error } = useToast()
 const seeding         = ref(false)
 const seedingSubjects = ref(false)
 const seedingSubjectBadges = ref(false)
+const seedingBlockWorld = ref(false)
 const stats   = ref({ students: 0, teachers: 0, classes: 0, items: 0 })
 const topStudents = ref([])
 const exportingStudents = ref(false)
@@ -107,6 +108,22 @@ async function doSeedSubjects() {
   }
 }
 
+async function doSeedBlockWorldShop() {
+  seedingBlockWorld.value = true
+  try {
+    const { added, updated, total } = await seedBlockWorldShopItems()
+    success(
+      `Каталог спільного світу: додано ${added}, оновлено ${updated} (усього ${total} у шаблоні).`,
+    )
+    const items = await getAllItems()
+    stats.value.items = items.length
+  } catch (e) {
+    error(e.message)
+  } finally {
+    seedingBlockWorld.value = false
+  }
+}
+
 async function doSeedSubjectBadges() {
   seedingSubjectBadges.value = true
   try {
@@ -124,7 +141,7 @@ async function doSeedSubjectBadges() {
 }
 
 async function seedData() {
-  if (!confirm('Це замінить ВСІ товари магазину та досягнення стандартними даними. Продовжити?')) return
+  if (!confirm('Це видалить усі поточні товари в магазині й додасть стандартні (скіни, аксесуари), потім каталог «Світ» і заново — досягнення. Продовжити?')) return
   seeding.value = true
   try {
     const result = await runFullSeed()
@@ -257,7 +274,7 @@ const statCards = [
       <div class="flex items-center justify-between gap-4">
         <div>
           <div class="font-extrabold">🌱 Заповнити даними</div>
-          <div class="text-xs text-slate-400 mt-1">Додати стандартні товари магазину та досягнення. Безпечно для нового проєкту.</div>
+          <div class="text-xs text-slate-400 mt-1">Спочатку очищає каталог і додає скіни/аксесуари з шаблону, потім додає товари «Світ» (блоки + інструменти) і досягнення. Для лише світу без скидання всього каталогу — кнопка нижче або в «Товари магазину».</div>
         </div>
         <AppButton variant="secondary" size="sm" :loading="seeding" @click="seedData">Заповнити</AppButton>
       </div>
@@ -274,6 +291,13 @@ const statCards = [
           <div class="text-xs text-slate-400 mt-0.5">Створює товари категорії «значок» для кожного відомого предмета. Спочатку мають бути записи в <span class="text-slate-300">subjects</span>. Існуючі значки цієї категорії замінюються.</div>
         </div>
         <AppButton variant="secondary" size="sm" :loading="seedingSubjectBadges" @click="doSeedSubjectBadges">Створити</AppButton>
+      </div>
+      <div class="border-t border-white/[0.07] mt-3 pt-3 flex items-center justify-between gap-4">
+        <div>
+          <div class="font-semibold text-sm">🧱 Блоки та інструменти (спільний світ)</div>
+          <div class="text-xs text-slate-400 mt-0.5">Синхронізує <span class="text-slate-300">items</span> з шаблоном <span class="text-slate-300">category: block_world</span> (блоки + інструменти). Нові за <span class="text-slate-300">bwSeedKey</span> додаються; наявні оновлюються (назва, ціна, <span class="text-slate-300">blockWorld</span>). Те саме — кнопка в «Товари магазину».</div>
+        </div>
+        <AppButton variant="secondary" size="sm" :loading="seedingBlockWorld" @click="doSeedBlockWorldShop">Додати</AppButton>
       </div>
     </AppCard>
   </div>

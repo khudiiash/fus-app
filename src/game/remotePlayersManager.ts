@@ -1,68 +1,65 @@
 import * as THREE from 'three'
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { PlayerObject } from '@/assets/minecraft-character/model.js'
 import { IdleAnimation, WalkingAnimation } from '@/assets/minecraft-character/animation.js'
 import { createPlayerSkinViewerShim } from './createPlayerSkinViewerShim.js'
 import { loadRemoteSkinForViewer } from '@/utils/loadRemoteSkinForViewer'
 import { normalizeSkinUrlForPresence } from '@/utils/presenceSkinUrl'
 import type { PresenceDoc } from './sharedWorldFirestore'
-import { PLAYER_EYE_HEIGHT } from '@/game/playerConstants'
+import {
+  BLOCK_WORLD_MAX_HP_HALF_UNITS,
+  PLAYER_EYE_HEIGHT,
+} from '@/game/playerConstants'
 import type Terrain from './minebase/terrain'
 import { BlockType } from './minebase/terrain'
-import { TOOL_HOTBAR_INDEX } from './minebase/control'
 import {
   applyHandHeldLightingLift,
   applySrgbColorMaps,
-  configureRemoteToolMaterials,
   flipToolRootWindingX,
-  orientPickaxeForRemoteTemplate,
-  REMOTE_TOOL_MAX_DIM,
-  scaleGltfToMaxDimension,
+  orientHeldToolGripToWorldDir,
+  remoteToolHeadDirWorld,
 } from './toolGltfUtils'
+import { cloneToolForRemote } from './loadBlockWorldToolsPack'
+import heartsSheetUrl from '@/game/assets/hearts_sh.png'
 
-const REMOTE_TOOL_MODEL_URL = new URL('./assets/minecraft_tool.glb', import.meta.url)
-  .href
+const _heartsSheetImg = new Image()
+_heartsSheetImg.src = heartsSheetUrl as unknown as string
 
-/** Same order as Control hotbar block slots 0–6. */
-const REMOTE_BLOCK_TYPES: BlockType[] = [
-  BlockType.grass,
-  BlockType.stone,
-  BlockType.tree,
-  BlockType.wood,
-  BlockType.diamond,
-  BlockType.quartz,
-  BlockType.glass,
-]
-
-let remoteToolTemplate: THREE.Object3D | null = null
-let remoteToolLoadPromise: Promise<void> | null = null
-
-async function ensureRemoteToolTemplate(): Promise<THREE.Object3D | null> {
-  if (remoteToolTemplate) return remoteToolTemplate
-  if (!remoteToolLoadPromise) {
-    remoteToolLoadPromise = (async () => {
-      try {
-        const gltf = await new GLTFLoader().loadAsync(REMOTE_TOOL_MODEL_URL)
-        const root = gltf.scene
-        scaleGltfToMaxDimension(root, REMOTE_TOOL_MAX_DIM)
-        orientPickaxeForRemoteTemplate(root)
-        flipToolRootWindingX(root)
-        configureRemoteToolMaterials(root)
-        remoteToolTemplate = root
-      } catch (e) {
-        console.warn('[RemotePlayers] tool GLB', e)
-      }
-    })()
+/** Remote nameplate: draw 10 hearts from same atlas as HUD (`hearts_sh.png`). */
+function drawHeartsRowFromSheet(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  topY: number,
+  hpHalfUnits: number,
+  img: HTMLImageElement,
+) {
+  const hp = Math.max(
+    0,
+    Math.min(BLOCK_WORLD_MAX_HP_HALF_UNITS, Math.floor(hpHalfUnits)),
+  )
+  const iw = img.naturalWidth
+  const ih = img.naturalHeight
+  if (iw < 3 || ih < 1) return
+  const frameW = iw / 3
+  const slotW = 34
+  const slotH = Math.round((slotW * 16) / 18)
+  const gap = 5
+  const rowW = 10 * (slotW + gap) - gap
+  const x0 = cx - rowW / 2
+  for (let i = 0; i < 10; i++) {
+    const hx = x0 + i * (slotW + gap)
+    const left = hp > i * 2
+    const right = hp > i * 2 + 1
+    let sx = frameW * 2
+    if (left && right) sx = 0
+    else if (left) sx = frameW
+    ctx.imageSmoothingEnabled = false
+    ctx.drawImage(img, sx, 0, frameW, ih, hx, topY, slotW, slotH)
   }
-  await remoteToolLoadPromise
-  return remoteToolTemplate
 }
 
-function blockTypeFromPresenceSlot(slot: number): BlockType {
-  if (slot >= 0 && slot < TOOL_HOTBAR_INDEX) {
-    return REMOTE_BLOCK_TYPES[slot] ?? BlockType.grass
-  }
-  return REMOTE_BLOCK_TYPES[0]
+function clampBlockType(n: number): BlockType {
+  if (!Number.isFinite(n) || n < 0 || n > 11) return BlockType.grass
+  return n as BlockType
 }
 
 /** Small lift so scaled skin feet clear voxel tops (network Y is sender eye). */
@@ -160,6 +157,7 @@ function createPlayerNameLabel(initialName: string) {
   sprite.renderOrder = 1000
 
   let currentName = initialName
+  let hpHalfUnits = BLOCK_WORLD_MAX_HP_HALF_UNITS
   let skinFaceSource: HTMLCanvasElement | null = null
   let profilePhotoUrl: string | null = null
   let profilePhotoImg: HTMLImageElement | null = null
@@ -170,7 +168,7 @@ function createPlayerNameLabel(initialName: string) {
     const display =
       (currentName || 'Гравець').trim().slice(0, 24) || 'Гравець'
     const skinKey = skinFaceSource ? `${skinFaceSource.width}x${skinFaceSource.height}` : '0'
-    const sig = `${display}\0${skinKey}\0${profilePhotoUrl || ''}\0${profilePhotoImg ? '1' : '0'}`
+    const sig = `${display}\0${skinKey}\0${profilePhotoUrl || ''}\0${profilePhotoImg ? '1' : '0'}\0${hpHalfUnits}`
     if (sig === lastPaintSig && mat.map) return
     lastPaintSig = sig
     if (mat.map) {
@@ -184,7 +182,8 @@ function createPlayerNameLabel(initialName: string) {
     const letter = display.charAt(0).toUpperCase()
     const hue =
       display.split('').reduce((a, ch) => a + ch.charCodeAt(0), 0) % 360
-    const centerY = 64
+    const heartBandH = 44
+    const centerY = 64 + Math.floor(heartBandH * 0.5)
     const avatarR = 40
     const gap = 16
     ctx.font = 'bold 34px system-ui, "Segoe UI", Ubuntu, sans-serif'
@@ -192,11 +191,24 @@ function createPlayerNameLabel(initialName: string) {
     const contentW = avatarR * 2 + gap + tw
     const canvasW = Math.ceil(Math.max(320, contentW + 56))
     c.width = canvasW
-    c.height = 128
+    c.height = 128 + heartBandH
     const cx = canvasW / 2
     const left = cx - contentW / 2
     const avatarCx = left + avatarR
     const pillLeft = left + avatarR * 2 + gap
+
+    if (_heartsSheetImg.complete && _heartsSheetImg.naturalWidth > 0) {
+      drawHeartsRowFromSheet(ctx, cx, 8, hpHalfUnits, _heartsSheetImg)
+    } else {
+      _heartsSheetImg.addEventListener(
+        'load',
+        () => {
+          lastPaintSig = ''
+          paint()
+        },
+        { once: true },
+      )
+    }
 
     let drewAvatar = false
     if (profilePhotoImg && profilePhotoImg.complete && profilePhotoImg.naturalWidth > 0) {
@@ -274,6 +286,17 @@ function createPlayerNameLabel(initialName: string) {
       lastPaintSig = ''
       paint()
     },
+    setHpHalfUnits(n: number) {
+      const v = Math.max(
+        0,
+        Math.min(BLOCK_WORLD_MAX_HP_HALF_UNITS, Math.floor(Number(n) || 0)),
+      )
+      if (v === hpHalfUnits && mat.map) return
+      hpHalfUnits = v
+      lastPaintSig = ''
+      paint()
+    },
+    /** Call when hearts PNG finishes loading (first paint may run before decode). */
     setSkinFace(source: HTMLCanvasElement | null) {
       skinFaceSource = source
       lastPaintSig = ''
@@ -342,8 +365,14 @@ type Entry = {
   handSwingPivot: THREE.Group
   lastHandMode: 'mine' | 'build'
   lastHandSlot: number
+  lastBwBlockType: number
+  lastBwHandMine: 'fist' | 'tool'
+  /** When {@link lastBwHandMine} is `tool`, which glTF mesh name was applied (else null). */
+  lastBwToolMesh: string | null
   /** Last applied {@link PresenceDoc.handSwingSeq}; -1 = uninitialized (skip first-frame swing). */
   lastRemoteSwingSeq: number
+  /** Last drawn remote HP (half-hearts); -1 = never applied. */
+  lastRemoteHpHalf: number
   handSwingPhase: number
   /**
    * Bumped on each {@link refreshRemoteHand} start so a slower in-flight tool GLB load
@@ -369,6 +398,7 @@ export class RemotePlayersManager {
     const root = new THREE.Group()
     root.name = `remote-player-${uid}`
     const playerObject = new PlayerObject()
+    playerObject.userData.blockWorldHitUid = uid
     playerObject.scale.setScalar(MODEL_SCALE)
     // Lift skin by half its world height so it sits above network feet anchor (root stays at feet).
     playerObject.position.y = REMOTE_WORLD_HEIGHT * 0.5
@@ -448,7 +478,11 @@ export class RemotePlayersManager {
       handSwingPivot,
       lastHandMode: 'mine',
       lastHandSlot: -1,
+      lastBwBlockType: -1,
+      lastBwHandMine: 'fist',
+      lastBwToolMesh: null,
       lastRemoteSwingSeq: -1,
+      lastRemoteHpHalf: -1,
       handSwingPhase: 0,
       handRefreshGen: 0,
     }
@@ -474,16 +508,54 @@ export class RemotePlayersManager {
     entry: Entry,
     mode: 'mine' | 'build',
     slot: number,
+    bwBlockType: number,
+    bwHandMine: 'fist' | 'tool',
+    bwToolMesh: string | null,
   ) {
     const gen = ++entry.handRefreshGen
     this.clearRemoteHandVisual(entry)
     if (mode === 'mine') {
-      const tpl = await ensureRemoteToolTemplate()
-      if (gen !== entry.handRefreshGen) return
-      if (!tpl) return
-      entry.handSwingPivot.add(tpl.clone(true))
+      if (bwHandMine === 'tool') {
+        const meshName =
+          typeof bwToolMesh === 'string' && bwToolMesh.length > 0
+            ? bwToolMesh.slice(0, 80)
+            : 'Iron_Pickaxe'
+        const tool = await cloneToolForRemote(meshName)
+        if (gen !== entry.handRefreshGen) {
+          tool.traverse((obj) => {
+            if (obj instanceof THREE.Mesh) {
+              obj.geometry?.dispose()
+              const mats = Array.isArray(obj.material) ? obj.material : [obj.material]
+              mats.forEach((m) => m?.dispose?.())
+            }
+          })
+          return
+        }
+        entry.handSwingPivot.add(tool)
+        orientHeldToolGripToWorldDir(
+          tool,
+          entry.handSwingPivot,
+          remoteToolHeadDirWorld(entry.root.rotation.y),
+        )
+        flipToolRootWindingX(tool)
+        tool.rotateX(Math.PI / 2)
+        tool.rotateY(Math.PI / 2 - THREE.MathUtils.degToRad(20))
+        tool.scale.multiplyScalar(0.75)
+      } else {
+        const mat = new THREE.MeshStandardMaterial({
+          color: 0xc49a6c,
+          roughness: 0.88,
+          metalness: 0.02,
+          side: THREE.FrontSide,
+        })
+        applySrgbColorMaps(mat)
+        applyHandHeldLightingLift(mat)
+        const s = 0.62 * 3 * 0.42
+        const mesh = new THREE.Mesh(new THREE.BoxGeometry(s, s, s), mat)
+        entry.handSwingPivot.add(mesh)
+      }
     } else {
-      const bt = blockTypeFromPresenceSlot(slot)
+      const bt = clampBlockType(bwBlockType)
       const src = this.terrain.materials.get(this.terrain.materialType[bt])
       const base = Array.isArray(src) ? src[0]! : src
       const mat = base.clone()
@@ -569,6 +641,18 @@ export class RemotePlayersManager {
         entry.nameLabel.setProfilePhotoUrl(photoNorm)
       }
 
+      const hpRaw = p.playerHpHalfUnits
+      const hpHalf =
+        typeof hpRaw === 'number' &&
+        Number.isFinite(hpRaw) &&
+        hpRaw >= 0
+          ? Math.min(BLOCK_WORLD_MAX_HP_HALF_UNITS, Math.floor(hpRaw))
+          : BLOCK_WORLD_MAX_HP_HALF_UNITS
+      if (entry.lastRemoteHpHalf !== hpHalf) {
+        entry.lastRemoteHpHalf = hpHalf
+        entry.nameLabel.setHpHalfUnits(hpHalf)
+      }
+
       const feetY = p.y - PLAYER_EYE_HEIGHT + FEET_Y_OFFSET
       entry.targetX = p.x
       entry.targetY = feetY
@@ -579,13 +663,41 @@ export class RemotePlayersManager {
 
       const mode = p.mode === 'build' ? 'build' : 'mine'
       const slot =
-        typeof p.slot === 'number' && p.slot >= 0 && p.slot <= 7
+        typeof p.slot === 'number' && p.slot >= 0 && p.slot <= 24
           ? p.slot
           : 0
-      if (entry.lastHandMode !== mode || entry.lastHandSlot !== slot) {
+      const bwBlockType =
+        typeof p.bwBlockType === 'number' && p.bwBlockType >= 0 && p.bwBlockType <= 11
+          ? p.bwBlockType
+          : 0
+      const bwHandMine = p.bwHandMine === 'tool' ? 'tool' : 'fist'
+      const bwToolMeshRaw = p.bwToolMesh
+      const bwToolMeshNorm =
+        mode === 'mine' && bwHandMine === 'tool'
+          ? typeof bwToolMeshRaw === 'string' && bwToolMeshRaw.length > 0
+            ? bwToolMeshRaw.slice(0, 80)
+            : 'Iron_Pickaxe'
+          : null
+      if (
+        entry.lastHandMode !== mode ||
+        entry.lastHandSlot !== slot ||
+        entry.lastBwBlockType !== bwBlockType ||
+        entry.lastBwHandMine !== bwHandMine ||
+        entry.lastBwToolMesh !== bwToolMeshNorm
+      ) {
         entry.lastHandMode = mode
         entry.lastHandSlot = slot
-        void this.refreshRemoteHand(entry, mode, slot)
+        entry.lastBwBlockType = bwBlockType
+        entry.lastBwHandMine = bwHandMine
+        entry.lastBwToolMesh = bwToolMeshNorm
+        void this.refreshRemoteHand(
+          entry,
+          mode,
+          slot,
+          bwBlockType,
+          bwHandMine,
+          bwToolMeshNorm,
+        )
       }
 
       const swingSeqRaw = p.handSwingSeq
@@ -663,6 +775,11 @@ export class RemotePlayersManager {
         e.handSwingPivot.rotation.set(0, 0, 0)
       }
     }
+  }
+
+  /** Roots used for pickaxe PvP raycasts (skin rig meshes). */
+  getPickaxeRaycastRoots(): THREE.Object3D[] {
+    return [...this.players.values()].map((e) => e.playerObject)
   }
 
   dispose() {

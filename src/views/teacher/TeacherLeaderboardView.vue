@@ -7,7 +7,7 @@ import { getLeaderboard, getClass } from '@/firebase/collections'
 import { useToast } from '@/composables/useToast'
 import AvatarDisplay from '@/components/avatar/AvatarDisplay.vue'
 import CoinDisplay from '@/components/gamification/CoinDisplay.vue'
-import { Trophy, Crown, Zap, Flame, Inbox, LayoutDashboard } from 'lucide-vue-next'
+import { Trophy, Crown, Zap, Flame, Inbox } from 'lucide-vue-next'
 import { sortClassesByGradeAsc } from '@/utils/sortClasses'
 
 const auth      = useAuthStore()
@@ -58,6 +58,11 @@ async function fetchLeaderboard() {
 
 const podium = computed(() => students.value.slice(0, 3))
 const rest   = computed(() => students.value.slice(3))
+
+function goStudentProfile(id) {
+  if (!id) return
+  router.push(`/teacher/student/${id}/profile`)
+}
 
 const rankColor = (i) => {
   if (i === 0) return 'text-amber-400'
@@ -135,7 +140,7 @@ watch(selectedClassId, () => {
       <div v-if="podium.length >= 3" class="flex items-end justify-center gap-3 mb-2 mt-2 pt-1">
         <!-- 2nd place -->
         <div class="flex flex-col items-center gap-2">
-          <div class="cursor-pointer" @click="router.push(`/teacher/room/${podium[1]?.id}`)">
+          <div class="cursor-pointer" @click="goStudentProfile(podium[1]?.id)">
             <AvatarDisplay :avatar="podium[1]?.avatar" :display-name="podium[1]?.displayName || ''" :items="userStore.items" size="md" :show-name="true" />
           </div>
           <div class="bg-gradient-to-b from-slate-400/30 to-slate-600/10 border border-slate-400/30 rounded-xl px-4 py-2 text-center w-20 h-16 flex flex-col items-center justify-center">
@@ -152,7 +157,7 @@ watch(selectedClassId, () => {
         <!-- 1st place -->
         <div class="flex flex-col items-center gap-2">
           <Crown :size="22" :stroke-width="1.8" class="text-amber-400 animate-float" />
-          <div class="cursor-pointer" @click="router.push(`/teacher/room/${podium[0]?.id}`)">
+          <div class="cursor-pointer" @click="goStudentProfile(podium[0]?.id)">
             <AvatarDisplay :avatar="podium[0]?.avatar" :display-name="podium[0]?.displayName || ''" :items="userStore.items" size="lg" :show-name="true" />
           </div>
           <div class="bg-gradient-to-b from-amber-500/30 to-amber-900/10 border border-amber-500/40 rounded-xl px-4 py-2 text-center w-24 h-20 flex flex-col items-center justify-center glow-legendary">
@@ -168,7 +173,7 @@ watch(selectedClassId, () => {
         </div>
         <!-- 3rd place -->
         <div class="flex flex-col items-center gap-2">
-          <div class="cursor-pointer" @click="router.push(`/teacher/room/${podium[2]?.id}`)">
+          <div class="cursor-pointer" @click="goStudentProfile(podium[2]?.id)">
             <AvatarDisplay :avatar="podium[2]?.avatar" :display-name="podium[2]?.displayName || ''" :items="userStore.items" size="md" :show-name="true" />
           </div>
           <div class="bg-gradient-to-b from-amber-700/20 to-amber-900/10 border border-amber-700/30 rounded-xl px-4 py-2 text-center w-20 h-14 flex flex-col items-center justify-center">
@@ -190,7 +195,7 @@ watch(selectedClassId, () => {
           v-for="(s, i) in (podium.length >= 3 ? rest : students)"
           :key="s.id"
           class="glass-card flex items-center gap-3 p-3 cursor-pointer hover:border-violet-500/40 transition-all"
-          @click="router.push(`/teacher/room/${s.id}`)"
+          @click="goStudentProfile(s.id)"
         >
           <div class="w-8 text-center font-extrabold flex-shrink-0" :class="rankColor(podium.length >= 3 ? i + 3 : i)">
             {{ podium.length >= 3 ? i + 4 : i + 1 }}
@@ -213,9 +218,6 @@ watch(selectedClassId, () => {
             <div v-else class="flex items-center gap-0.5 text-orange-400 font-extrabold text-sm">
               <Flame :size="12" :stroke-width="2" />{{ s.streak || 0 }}
             </div>
-            <span class="flex items-center gap-0.5 text-[10px] font-bold text-violet-400">
-              <LayoutDashboard :size="10" :stroke-width="2" /> Кімната
-            </span>
           </div>
         </div>
       </div>

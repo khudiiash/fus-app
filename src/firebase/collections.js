@@ -33,18 +33,67 @@ export async function getUser(uid) {
 export function teacherMayAccessStudentProfile(teacherProfile, studentProfile) {
   if (!teacherProfile || !studentProfile) return false
   if (teacherProfile.role !== 'teacher' || studentProfile.role !== 'student') return false
+  const teacherClassIds = teacherProfile.classIds || []
+  if (!teacherClassIds.length) return false
   const cid = studentProfile.classId
-  const ids = teacherProfile.classIds || []
-  return !!(cid && ids.includes(cid))
+  if (cid && typeof cid === 'string' && teacherClassIds.includes(cid)) return true
+  const studentIds = Array.isArray(studentProfile.classIds) ? studentProfile.classIds : []
+  for (const x of studentIds) {
+    if (typeof x === 'string' && teacherClassIds.includes(x)) return true
+  }
+  return false
 }
 
-/** Учень може переглядати профіль однокласника (той самий classId). */
+/** Collect class ids from `classId` and/or `classIds` (teachers use classIds; students may have either). */
+export function studentUserClassIdSet(profile) {
+  const s = new Set()
+  if (!profile || typeof profile !== 'object') return s
+  if (profile.classId && typeof profile.classId === 'string') s.add(profile.classId)
+  if (Array.isArray(profile.classIds)) {
+    for (const x of profile.classIds) {
+      if (typeof x === 'string') s.add(x)
+    }
+  }
+  return s
+}
+
+/**
+ * Primary class document id for queries (e.g. leaderboard): `classId`, else first entry in `classIds`.
+ * Some учні мають лише `classIds` без дублювання в `classId`.
+ */
+export function effectiveStudentClassId(profile) {
+  if (!profile || typeof profile !== 'object') return null
+  if (profile.classId && typeof profile.classId === 'string') {
+    const t = profile.classId.trim()
+    if (t) return t
+  }
+  if (Array.isArray(profile.classIds)) {
+    for (const x of profile.classIds) {
+      if (typeof x === 'string' && x.trim()) return x.trim()
+    }
+  }
+  return null
+}
+
+/** True when two profiles share at least one class (for peer profile + transaction read rules). */
+export function studentUsersShareAClass(viewerProfile, targetProfile) {
+  const a = studentUserClassIdSet(viewerProfile)
+  const b = studentUserClassIdSet(targetProfile)
+  if (!a.size || !b.size) return false
+  for (const id of a) {
+    if (b.has(id)) return true
+  }
+  return false
+}
+
+/**
+ * Учень може переглядати профіль будь-якого іншого учня (усі класи в межах застосунку).
+ * Журнал транзакцій на сторінці профілю залежить від правил Firestore — при відмові показуємо порожньо.
+ */
 export function studentMayAccessStudentProfile(viewerProfile, targetProfile) {
   if (!viewerProfile || !targetProfile) return false
   if (viewerProfile.role !== 'student' || targetProfile.role !== 'student') return false
-  const a = viewerProfile.classId
-  const b = targetProfile.classId
-  return !!(a && b && a === b)
+  return true
 }
 
 const FUNCTIONS_REGION = import.meta.env.VITE_FUNCTIONS_REGION || 'europe-west1'

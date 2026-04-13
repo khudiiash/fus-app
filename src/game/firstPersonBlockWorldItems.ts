@@ -1,28 +1,31 @@
 import * as THREE from 'three'
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import type Control from './minebase/control'
 import type Terrain from './minebase/terrain'
 import { BlockType } from './minebase/terrain'
 import {
   applyHandHeldLightingLift,
   applySrgbColorMaps,
-  flipToolRootWindingX,
-  FP_TOOL_MAX_DIM,
-  orientPickaxeForFirstPerson,
-  scaleGltfToMaxDimension,
 } from './toolGltfUtils'
+import { cloneToolForFirstPerson, loadBlockWorldToolsPackScene } from './loadBlockWorldToolsPack'
 
-const TOOL_MODEL_URL = new URL('./assets/minecraft_tool.glb', import.meta.url)
-  .href
-const FP_BLOCK_SIZE = 0.58
-
-const TOOL_SWING_AXIS = new THREE.Vector3(1, 0, 0)
-const _swingQ = new THREE.Quaternion()
+const FP_BLOCK_SIZE = 0.32
 
 /**
- * Transparent pass draws after all opaque geometry; high renderOrder sorts after default
- * transparent (leaves, glass) so the hand draws on top. See reversePainterSortStable in three.
+ * Bare-hand: thick box along local +Y (toward screen-up after parent `holdRot`),
+ * wrist at y = 0 so swing/idle pivot at the in-frame “bottom” of the arm, not the mesh center.
  */
+const FP_FIST_W = 0.2
+const FP_FIST_THICK = 0.22
+const FP_FIST_ARM_LEN = 0.5
+
+/**
+ * Mine swing rotates around this axis in **hand-rig space** (`toolSwingPivot` parent = `toolRoot`),
+ * not the oriented tool mesh’s local X — so retuning the FP aim vector in `toolGltfUtils` does not
+ * turn the swing into a sideways wipe. +X here ≈ “through the shoulder” → arc forward / down.
+ */
+const TOOL_SWING_AXIS_ROOT = new THREE.Vector3(1, 0, 0)
+const _swingQ = new THREE.Quaternion()
+
 const FP_HAND_RENDER_ORDER = 10000
 
 function tagFpHandRenderOrder(root: THREE.Object3D) {
@@ -31,7 +34,6 @@ function tagFpHandRenderOrder(root: THREE.Object3D) {
   })
 }
 
-/** View-model: no depth test (see through walls), drawn last among transparents. */
 function stampFpHandPresentation(m: THREE.Material) {
   m.transparent = true
   m.opacity = 1
@@ -42,7 +44,6 @@ function stampFpHandPresentation(m: THREE.Material) {
   m.polygonOffsetUnits = 0
 }
 
-/** Lit hand preview: clone terrain / tool PBR so voxels read as 3D, not flat stickers. */
 function makeHandHeldBlockMaterial(
   src: THREE.MeshStandardMaterial | THREE.MeshStandardMaterial[],
 ): THREE.MeshStandardMaterial {
@@ -56,71 +57,42 @@ function makeHandHeldBlockMaterial(
   return m
 }
 
-/** FP pickaxe: sRGB maps, same PBR response as terrain; transparent pass + view-model depth. */
-function configureFpToolMaterials(root: THREE.Object3D) {
-  root.traverse((o) => {
-    o.frustumCulled = false
-    if (o instanceof THREE.Mesh) {
-      const mats = Array.isArray(o.material) ? o.material : [o.material]
-      const next = mats.map((m) => {
-        if (m instanceof THREE.MeshPhysicalMaterial) {
-          const c = m.clone()
-          c.toneMapped = true
-          applySrgbColorMaps(c)
-          applyHandHeldLightingLift(c)
-          c.side = THREE.FrontSide
-          stampFpHandPresentation(c)
-          return c
-        }
-        if (m instanceof THREE.MeshStandardMaterial) {
-          const c = m.clone()
-          c.toneMapped = true
-          applySrgbColorMaps(c)
-          applyHandHeldLightingLift(c)
-          c.side = THREE.FrontSide
-          stampFpHandPresentation(c)
-          return c
-        }
-        if (m instanceof THREE.MeshBasicMaterial) {
-          const c = new THREE.MeshStandardMaterial({
-            map: m.map ?? undefined,
-            color: m.color?.clone() ?? new THREE.Color(0xffffff),
-            roughness: 0.72,
-            metalness: 0.05,
-            side: THREE.FrontSide,
-          })
-          if (c.map) c.map.colorSpace = THREE.SRGBColorSpace
-          applyHandHeldLightingLift(c)
-          stampFpHandPresentation(c)
-          return c
-        }
-        return m
-      })
-      o.material = next.length === 1 ? next[0]! : next
-    }
-  })
-}
-
 /**
- * First-person pickaxe (mine) or solid block (build), parented to the camera.
- * Lit materials with sRGB color maps; pickaxe uses `flipToolRootWindingX` for Blender glTF winding.
+ * First-person tool (from `tools.glb` by name), fist, or held block — parented to the camera.
  */
 export class FirstPersonBlockWorldItems {
   private camera: THREE.PerspectiveCamera
   private terrain: Terrain
   private control: Control
   private root = new THREE.Group()
-  private tool: THREE.Object3D | null = null
+  /** Holds the current tool mesh clone (swapped when hotbar changes). */
+  private toolRoot = new THREE.Group()
+  /** Swing quaternion applied here so the axis stays aligned with the FP hand rig, not mesh-local axes. */
+  private toolSwingPivot = new THREE.Group()
+  /** Idle + swing rotation for held block / fist (wrist pivot). */
+  private fpItemPivot = new THREE.Group()
   private blockMesh: THREE.Mesh
+  private fpItemGeomKind: 'block' | 'fist' = 'block'
   private swingPhase = 0
   private lastBlockType: BlockType | null = null
+  private fistMatActive = false
   private bobT = 0
-  /** Camera-local hold anchor (before idle bob). More negative z = further forward (−Z view). */
-  private readonly holdPos = new THREE.Vector3(0.28, -0.45, -1.2)
+  /** Camera-local anchor for FP arm / block / tool (x right, y up, z forward = negative into scene). */
+  private readonly holdPos = new THREE.Vector3(0.16, -0.28, -1.08)
   private readonly holdRot = new THREE.Euler(-0.1, 0.26, 0.04, 'XYZ')
   private readonly blockIdleRot = new THREE.Euler(-0.22, 0.35, 0.1, 'XYZ')
-  private readonly toolHoldBaseQuat = new THREE.Quaternion()
+  /**
+   * Fist-only idle: slight negative pitch tucks the wrist edge below the frame so the flat
+   * “lower end” of the forearm box is less visible; yaw still aims toward center.
+   */
+  private readonly fistIdleRot = new THREE.Euler(-0.1, 0.34, 0.02, 'XYZ')
+  /** Extra offset for fist only — negative Y pulls the hand down so the wrist clips under the HUD. */
+  private readonly fistHoldBias = new THREE.Vector3(0.03, -0.17, 0.03)
+  private toolHoldBaseQuat = new THREE.Quaternion()
   private toolHoldQuatReady = false
+  private activeToolMesh: THREE.Object3D | null = null
+  private activeToolName: string | null = null
+  private toolSwapGen = 0
 
   constructor(camera: THREE.PerspectiveCamera, terrain: Terrain, control: Control) {
     this.camera = camera
@@ -140,9 +112,14 @@ export class FirstPersonBlockWorldItems {
     )
     this.blockMesh.visible = false
     this.blockMesh.frustumCulled = false
-    this.blockMesh.rotation.copy(this.blockIdleRot)
-    this.root.add(this.blockMesh)
+    this.fpItemPivot.rotation.copy(this.blockIdleRot)
+    this.fpItemPivot.add(this.blockMesh)
+    this.toolRoot.visible = false
+    this.toolRoot.add(this.toolSwingPivot)
+    this.root.add(this.toolRoot)
+    this.root.add(this.fpItemPivot)
     this.root.frustumCulled = false
+    this.fpItemPivot.frustumCulled = false
     this.root.renderOrder = FP_HAND_RENDER_ORDER
     tagFpHandRenderOrder(this.root)
     this.camera.add(this.root)
@@ -151,24 +128,47 @@ export class FirstPersonBlockWorldItems {
   }
 
   async loadToolModel(): Promise<void> {
-    const gltf = await new Promise<{
-      scene: THREE.Group
-    }>((resolve, reject) => {
-      new GLTFLoader().load(TOOL_MODEL_URL, resolve, undefined, reject)
-    })
-    const scene = gltf.scene
-    scaleGltfToMaxDimension(scene, FP_TOOL_MAX_DIM)
-    configureFpToolMaterials(scene)
-    orientPickaxeForFirstPerson(scene, this.root)
-    flipToolRootWindingX(scene)
-    scene.position.set(0.1, -0.1, 0.04)
-    scene.frustumCulled = false
-    this.tool = scene
-    this.toolHoldBaseQuat.copy(scene.quaternion)
+    await loadBlockWorldToolsPackScene()
+  }
+
+  private disposeToolSubtree() {
+    while (this.toolSwingPivot.children.length > 0) {
+      const ch = this.toolSwingPivot.children[0]!
+      this.toolSwingPivot.remove(ch)
+      ch.traverse((o) => {
+        if (o instanceof THREE.Mesh) {
+          o.geometry?.dispose()
+          const mats = Array.isArray(o.material) ? o.material : [o.material]
+          mats.forEach((m) => m?.dispose?.())
+        }
+      })
+    }
+    this.toolSwingPivot.quaternion.identity()
+    this.activeToolMesh = null
+    this.toolHoldQuatReady = false
+  }
+
+  private async swapToolMesh(meshName: string) {
+    const gen = ++this.toolSwapGen
+    const mesh = await cloneToolForFirstPerson(meshName, this.root)
+    if (gen !== this.toolSwapGen) {
+      mesh.traverse((o) => {
+        if (o instanceof THREE.Mesh) {
+          o.geometry?.dispose()
+          const mats = Array.isArray(o.material) ? o.material : [o.material]
+          mats.forEach((m) => m?.dispose?.())
+        }
+      })
+      return
+    }
+    this.disposeToolSubtree()
+    this.toolSwingPivot.quaternion.identity()
+    this.toolSwingPivot.add(mesh)
+    this.activeToolMesh = mesh
+    this.toolHoldBaseQuat.copy(mesh.quaternion)
     this.toolHoldQuatReady = true
-    this.tool.visible = false
-    this.root.add(this.tool)
-    tagFpHandRenderOrder(this.root)
+    this.activeToolName = meshName
+    tagFpHandRenderOrder(mesh)
   }
 
   triggerHandSwing = () => {
@@ -184,49 +184,129 @@ export class FirstPersonBlockWorldItems {
     this.blockMesh.material = makeHandHeldBlockMaterial(src)
   }
 
+  /** Centered cube for held blocks; elongated box for fist with wrist at local z = 0. */
+  private ensureFpItemGeometry(kind: 'block' | 'fist') {
+    if (this.fpItemGeomKind === kind) return
+    this.fpItemGeomKind = kind
+    this.blockMesh.geometry.dispose()
+    if (kind === 'fist') {
+      this.blockMesh.geometry = new THREE.BoxGeometry(
+        FP_FIST_W,
+        FP_FIST_ARM_LEN,
+        FP_FIST_THICK,
+      )
+      // Geometry centered on mesh; offset so min local Y (wrist) is 0 — pivot swings from wrist, not belly.
+      this.blockMesh.position.set(0, FP_FIST_ARM_LEN * 0.25, 0)
+    } else {
+      this.blockMesh.geometry = new THREE.BoxGeometry(
+        FP_BLOCK_SIZE,
+        FP_BLOCK_SIZE,
+        FP_BLOCK_SIZE,
+      )
+      this.blockMesh.position.set(0, 0, 0)
+    }
+  }
+
   update(dt: number) {
     const mine = this.control.interactionMode === 'mine'
-    if (this.tool) this.tool.visible = mine
-    this.blockMesh.visible = !mine
+    const hand = this.control.getPresenceHandFields()
+    const showTool = mine && hand.bwHandMine === 'tool'
+    const showFist = mine && hand.bwHandMine === 'fist'
+    const wantName = showTool ? hand.bwToolMesh || 'Iron_Pickaxe' : null
+    const fpIdle = mine && showFist ? this.fistIdleRot : this.blockIdleRot
+
+    if (showTool && wantName && wantName !== this.activeToolName) {
+      void this.swapToolMesh(wantName)
+    }
+    if (!showTool && this.activeToolName) {
+      this.disposeToolSubtree()
+      this.activeToolName = null
+    }
+
+    this.toolRoot.visible = showTool
+
     if (!mine) {
+      this.ensureFpItemGeometry('block')
+      this.blockMesh.visible = true
+      this.blockMesh.scale.setScalar(1)
+      this.fistMatActive = false
       this.syncBlockMaterial(this.control.getActiveBlockType())
+    } else if (showFist) {
+      this.ensureFpItemGeometry('fist')
+      this.blockMesh.visible = true
+      this.blockMesh.scale.setScalar(1)
+      if (!this.fistMatActive) {
+        this.fistMatActive = true
+        this.lastBlockType = null
+        const old = this.blockMesh.material as THREE.Material
+        old.dispose()
+        const skin = new THREE.MeshStandardMaterial({
+          color: 0xc49a6c,
+          roughness: 0.88,
+          metalness: 0.02,
+          side: THREE.FrontSide,
+        })
+        applyHandHeldLightingLift(skin)
+        stampFpHandPresentation(skin)
+        this.blockMesh.material = skin
+      }
+    } else {
+      this.blockMesh.visible = false
+      this.blockMesh.scale.setScalar(1)
+      this.fistMatActive = false
     }
 
     this.bobT += dt
     const bob =
       Math.sin(this.bobT * 2.15) * 0.018 + Math.sin(this.bobT * 4.1) * 0.006
-    this.root.position.set(this.holdPos.x, this.holdPos.y + bob, this.holdPos.z)
+    const bx = showFist ? this.fistHoldBias.x : 0
+    const by = showFist ? this.fistHoldBias.y : 0
+    const bz = showFist ? this.fistHoldBias.z : 0
+    this.root.position.set(
+      this.holdPos.x + bx,
+      this.holdPos.y + bob + by,
+      this.holdPos.z + bz,
+    )
 
     if (this.swingPhase > 0) {
       this.swingPhase = Math.max(0, this.swingPhase - dt * 6.2)
       const u = 1 - this.swingPhase
       const a = Math.sin(u * Math.PI) * 1.18
-      if (mine && this.tool && this.toolHoldQuatReady) {
-        _swingQ.setFromAxisAngle(TOOL_SWING_AXIS, a)
-        this.tool.quaternion.copy(this.toolHoldBaseQuat).multiply(_swingQ)
+      if (
+        mine &&
+        this.toolRoot.visible &&
+        this.activeToolMesh &&
+        this.toolHoldQuatReady
+      ) {
+        _swingQ.setFromAxisAngle(TOOL_SWING_AXIS_ROOT, -a)
+        this.toolSwingPivot.quaternion.copy(_swingQ)
+        this.activeToolMesh!.quaternion.copy(this.toolHoldBaseQuat)
       } else if (!mine) {
-        this.blockMesh.rotation.x = this.blockIdleRot.x + a * 0.95
-        this.blockMesh.rotation.z = this.blockIdleRot.z + a * 0.42
-        this.blockMesh.rotation.y = this.blockIdleRot.y + a * 0.12
+        // Build: swing arc outward (toward target), not back into the camera.
+        this.fpItemPivot.rotation.x = this.blockIdleRot.x - a * 0.95
+        this.fpItemPivot.rotation.z = this.blockIdleRot.z - a * 0.42
+        this.fpItemPivot.rotation.y = this.blockIdleRot.y - a * 0.12
+      } else if (mine && showFist && this.blockMesh.visible) {
+        // Mirror swing vs tool/block so the strike arcs **away** from the torso (toward the target).
+        this.fpItemPivot.rotation.x = this.fistIdleRot.x - a * 0.55
+        this.fpItemPivot.rotation.z = this.fistIdleRot.z - a * 0.28
+        this.fpItemPivot.rotation.y = this.fistIdleRot.y - a * 0.08
       }
     } else {
-      if (this.tool && this.toolHoldQuatReady) {
-        this.tool.quaternion.copy(this.toolHoldBaseQuat)
+      if (this.activeToolMesh && this.toolHoldQuatReady) {
+        this.toolSwingPivot.quaternion.identity()
+        this.activeToolMesh.quaternion.copy(this.toolHoldBaseQuat)
       }
-      this.blockMesh.rotation.copy(this.blockIdleRot)
+      this.fpItemPivot.rotation.copy(fpIdle)
     }
   }
 
   dispose() {
+    this.toolSwapGen++
     this.camera.remove(this.root)
     this.blockMesh.geometry.dispose()
     ;(this.blockMesh.material as THREE.Material).dispose()
-    this.tool?.traverse((o) => {
-      if (o instanceof THREE.Mesh) {
-        o.geometry?.dispose()
-        const mats = Array.isArray(o.material) ? o.material : [o.material]
-        mats.forEach((m) => m?.dispose())
-      }
-    })
+    this.fpItemGeomKind = 'block'
+    this.disposeToolSubtree()
   }
 }

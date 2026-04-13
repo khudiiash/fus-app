@@ -7,11 +7,25 @@ import Block from '../terrain/mesh/block'
 import Noise from '../terrain/noise'
 import Audio from '../audio'
 import { isMobile, useTouchGameControls } from '../utils'
-import { PLAYER_EYE_HEIGHT } from '@/game/playerConstants'
+import {
+  PLAYER_EYE_HEIGHT,
+  BLOCK_WORLD_MAX_HP_HALF_UNITS,
+  FIST_MINE_DAMAGE_PER_SWING,
+  MINING_DAMAGE_HOLDING_BLOCK,
+} from '@/game/playerConstants'
+import { blockTypeBreakHp } from '@/game/blockWorldBlockStats'
+import {
+  spawnBlockDestroyParticles,
+  spawnBlockMiningHitParticles,
+  spawnPickaxePlayerHitParticles,
+} from '@/game/blockWorldParticles'
+import type { BlockWorldHotbarSlot } from '@/game/blockWorldItems'
+import { BW_HOTBAR_MAX_SLOTS } from '@/game/blockWorldItems'
 
-/** Hotbar: 0–6 blocks, 7 = pickaxe / mine intent. */
+/** @deprecated Fixed pickaxe slot; hotbar is now dynamic from inventory. */
 export const TOOL_HOTBAR_INDEX = 7
-export const HOTBAR_SLOT_COUNT = 8
+export const HOTBAR_SLOT_COUNT = BW_HOTBAR_MAX_SLOTS
+export const HOTBAR_MAX_SLOTS = BW_HOTBAR_MAX_SLOTS
 export type BlockWorldInteractionMode = 'mine' | 'build'
 
 enum Side {
@@ -94,24 +108,15 @@ export default class Control {
   raycaster: THREE.Raycaster
   far: number
 
-  holdingBlock = BlockType.grass
-  /** Hotbar slots (1–7 keys / wheel / UI). */
-  holdingBlocks = [
-    BlockType.grass,
-    BlockType.stone,
-    BlockType.tree,
-    BlockType.wood,
-    BlockType.diamond,
-    BlockType.quartz,
-    BlockType.glass,
-  ]
+  /** Slot 0 = fist; further slots = owned `block_world` shop items (see {@link setBlockWorldHotbar}). */
+  bwHotbar: BlockWorldHotbarSlot[] = [{ kind: 'fist' }]
   holdingIndex = 0
-  /** Last non-tool hotbar slot (0–6); used for block type when tool slot is selected. */
-  lastBlockHotbarIndex = 0
-  /** Mine = tool slot (7); build = block slots 0–6. Kept in sync with {@link holdingIndex}. */
-  interactionMode: BlockWorldInteractionMode = 'build'
+  /** Mine vs build from current hotbar slot. */
+  interactionMode: BlockWorldInteractionMode = 'mine'
   /** Fus HUD: sync selected slot when index changes from keys/wheel/tap. */
   onHotbarIndexChange?: (index: number) => void
+  /** Fus HUD: rebuild hotbar row when inventory-driven slots change. */
+  onHotbarLayoutChange?: () => void
   /** Fus HUD: Break / Build button state. */
   onInteractionModeChange?: (mode: BlockWorldInteractionMode) => void
   /**
@@ -120,11 +125,45 @@ export default class Control {
    */
   handSwingSeq = 0
   onHandSwingRequested?: () => void
+  /** Half-heart units (20 = 10 hearts). */
+  playerHpHalfUnits = BLOCK_WORLD_MAX_HP_HALF_UNITS
+  onPlayerHpChanged?: (hpHalf: number) => void
+  /** Optional: bump multiplayer presence so remotes see HP without waiting for the pose tick. */
+  onPlayerHpPresenceFlush?: () => void
+  /** After HP hits 0 (then refilled); e.g. teleport to spawn / flag. */
+  onHealthDepleted?: () => void
+  /** Pickaxe raycast targets (remote `PlayerObject` roots). */
+  getRemotePlayerRaycastRoots: () => THREE.Object3D[] = () => []
+  /** When pickaxe swing hits a remote rig (cooldown applied). */
+  onPickaxeHitRemotePlayer?: (targetUid: string) => void
+  private lastPickaxePlayerHitMs = 0
+  /** Accumulated mining damage toward the block currently being targeted. */
+  private blockBreakDamage = new Map<string, number>()
+  private lastMineTargetKey: string | null = null
   wheelGap = false
   clickInterval?: ReturnType<typeof setInterval>
   jumpInterval?: ReturnType<typeof setInterval>
   mouseHolding = false
   spaceHolding = false
+
+  private blockContextMenu = (ev: Event) => {
+    ev.preventDefault()
+  }
+
+  /** Best-effort pointer lock; never throws (detached canvas / policy / async rejection). */
+  private tryRequestPointerLock = () => {
+    const el = this.control.domElement
+    if (!el?.isConnected) return
+    if (document.pointerLockElement === el) return
+    try {
+      const r = el.requestPointerLock() as void | Promise<void>
+      if (r != null && typeof (r as Promise<void>).catch === 'function') {
+        void (r as Promise<void>).catch(() => {})
+      }
+    } catch {
+      /* sync denial */
+    }
+  }
 
   /** Touch analog stick: forward (+1) / back (-1), strafe right (+1) / left (-1). */
   touchForward = 0
@@ -338,20 +377,96 @@ export default class Control {
     }
   }
 
-  /** Block type for placement / held block preview (tool slot uses last block choice). */
-  getActiveBlockType = (): BlockType => {
-    if (this.holdingIndex < TOOL_HOTBAR_INDEX) {
-      return this.holdingBlocks[this.holdingIndex] ?? BlockType.grass
-    }
-    return (
-      this.holdingBlocks[this.lastBlockHotbarIndex] ?? BlockType.grass
-    )
+  getCurrentBwSlot(): BlockWorldHotbarSlot {
+    return this.bwHotbar[this.holdingIndex] ?? { kind: 'fist' }
   }
 
-  /** Derive mine vs build from hotbar (slot 7 = pickaxe). */
+  /** Block type for placement / held block preview when in build mode. */
+  getActiveBlockType = (): BlockType => {
+    const s = this.getCurrentBwSlot()
+    if (s.kind === 'item' && s.meta.kind === 'block' && s.count > 0) {
+      return s.meta.blockType
+    }
+    return BlockType.grass
+  }
+
+  getCurrentMineDamage(): number {
+    const s = this.getCurrentBwSlot()
+    if (s.kind === 'fist') return FIST_MINE_DAMAGE_PER_SWING
+    if (s.kind === 'item' && s.meta.kind === 'tool') return s.meta.mineDamage
+    if (s.kind === 'item' && s.meta.kind === 'block') {
+      return MINING_DAMAGE_HOLDING_BLOCK
+    }
+    return FIST_MINE_DAMAGE_PER_SWING
+  }
+
+  /** Half-heart damage for PvP melee; 0 = fist / blocks (no player damage). */
+  getBwPvpDamageHalf(): number {
+    const s = this.getCurrentBwSlot()
+    if (s.kind !== 'item' || s.meta.kind !== 'tool') return 0
+    return s.meta.pvpDamageHalf
+  }
+
+  /** True when current slot can deal PvP melee damage (cooldown checked separately in {@link crosshairBreak}). */
+  canMeleePvP(): boolean {
+    return this.interactionMode === 'mine' && this.getBwPvpDamageHalf() > 0
+  }
+
+  /** RTDB presence: block type in hand when building; mine hand variant. */
+  getPresenceHandFields(): {
+    bwBlockType: number
+    bwHandMine: 'fist' | 'tool'
+    bwToolMesh: string | null
+  } {
+    const s = this.getCurrentBwSlot()
+    let bwBlockType = 0
+    let bwHandMine: 'fist' | 'tool' = 'fist'
+    let bwToolMesh: string | null = null
+    if (s.kind === 'item' && s.meta.kind === 'block' && s.count > 0) {
+      bwBlockType = s.meta.blockType
+    }
+    if (s.kind === 'item' && s.meta.kind === 'tool') {
+      bwHandMine = 'tool'
+      bwToolMesh = s.meta.toolMeshName ?? 'Iron_Pickaxe'
+    }
+    return { bwBlockType, bwHandMine, bwToolMesh }
+  }
+
+  /** glTF node name in `tools.glb` for the current tool slot. */
+  getBwToolMeshName(): string | null {
+    const s = this.getCurrentBwSlot()
+    if (s.kind !== 'item' || s.meta.kind !== 'tool') return null
+    return s.meta.toolMeshName ?? 'Iron_Pickaxe'
+  }
+
+  setBlockWorldHotbar(slots: BlockWorldHotbarSlot[]) {
+    const next =
+      slots.length > 0 ? slots.slice(0, BW_HOTBAR_MAX_SLOTS) : [{ kind: 'fist' as const }]
+    this.bwHotbar = next
+    if (this.holdingIndex >= this.bwHotbar.length) this.holdingIndex = 0
+    this.blockBreakDamage.clear()
+    this.lastMineTargetKey = null
+    this.syncInteractionFromHotbar()
+    this.onHotbarIndexChange?.(this.holdingIndex)
+    this.onHotbarLayoutChange?.()
+  }
+
+  getBwHotbarSlotCount(): number {
+    return this.bwHotbar.length
+  }
+
+  getBwHotbarSlotAt(index: number): BlockWorldHotbarSlot | undefined {
+    return this.bwHotbar[index]
+  }
+
+  /** Derive mine vs build from current hotbar slot. */
   private syncInteractionFromHotbar = () => {
-    this.interactionMode =
-      this.holdingIndex === TOOL_HOTBAR_INDEX ? 'mine' : 'build'
+    const s = this.getCurrentBwSlot()
+    if (s.kind === 'item' && s.meta.kind === 'block' && s.count > 0) {
+      this.interactionMode = 'build'
+    } else {
+      this.interactionMode = 'mine'
+    }
     this.onInteractionModeChange?.(this.interactionMode)
   }
 
@@ -366,9 +481,67 @@ export default class Control {
     this.onHandSwingRequested?.()
   }
 
+  private findRemoteUidFromIntersect(hit: THREE.Intersection): string | null {
+    let o: THREE.Object3D | null = hit.object
+    while (o) {
+      const u = o.userData?.blockWorldHitUid as string | undefined
+      if (typeof u === 'string' && u.length > 0) return u
+      o = o.parent
+    }
+    return null
+  }
+
+  applyDamageHalfUnits(dmg: number) {
+    this.playerHpHalfUnits = Math.max(0, this.playerHpHalfUnits - dmg)
+    const dead = this.playerHpHalfUnits <= 0
+    if (dead) {
+      this.playerHpHalfUnits = BLOCK_WORLD_MAX_HP_HALF_UNITS
+    }
+    this.onPlayerHpChanged?.(this.playerHpHalfUnits)
+    this.onPlayerHpPresenceFlush?.()
+    if (dead) this.onHealthDepleted?.()
+  }
+
+  resetHealthFull() {
+    this.playerHpHalfUnits = BLOCK_WORLD_MAX_HP_HALF_UNITS
+    this.onPlayerHpChanged?.(this.playerHpHalfUnits)
+    this.onPlayerHpPresenceFlush?.()
+  }
+
+  /** Voxel the player is standing on (same XZ column, block below feet). Breaking it causes fall-through / heavy regen. */
+  private blockUnderFeetCell(): { x: number; y: number; z: number } {
+    return {
+      x: Math.round(this.camera.position.x),
+      z: Math.round(this.camera.position.z),
+      y: Math.floor(this.camera.position.y - PLAYER_EYE_HEIGHT - 0.2),
+    }
+  }
+
   crosshairBreak = () => {
     this.requestHandSwing()
     this.raycaster.setFromCamera({ x: 0, y: 0 }, this.camera)
+
+    const roots = this.getRemotePlayerRaycastRoots()
+    if (
+      this.canMeleePvP() &&
+      roots.length > 0 &&
+      Date.now() - this.lastPickaxePlayerHitMs > 420
+    ) {
+      const ph = this.raycaster.intersectObjects(roots, true)[0]
+      const bh = this.raycaster.intersectObjects(this.terrain.blocks)[0]
+      if (ph && (!bh || ph.distance <= bh.distance)) {
+        const uid = this.findRemoteUidFromIntersect(ph)
+        if (uid) {
+          this.lastPickaxePlayerHitMs = Date.now()
+          if (ph.point) {
+            spawnPickaxePlayerHitParticles(this.scene, ph.point)
+          }
+          this.onPickaxeHitRemotePlayer?.(uid)
+          return
+        }
+      }
+    }
+
     const block = this.raycaster.intersectObjects(this.terrain.blocks)[0]
     const matrix = new THREE.Matrix4()
     if (!(block && block.object instanceof THREE.InstancedMesh)) return
@@ -376,12 +549,36 @@ export default class Control {
     block.object.getMatrixAt(block.instanceId!, matrix)
     const position = new THREE.Vector3().setFromMatrixPosition(matrix)
 
+    const stand = this.blockUnderFeetCell()
     if (
-      (BlockType[block.object.name as any] as unknown as BlockType) ===
-      BlockType.bedrock
+      Math.round(position.x) === stand.x &&
+      Math.round(position.z) === stand.z &&
+      Math.round(position.y) === stand.y
     ) {
+      return
+    }
+
+    const blockTypeEnum = BlockType[block.object.name as any] as unknown as BlockType
+    if (blockTypeEnum === BlockType.bedrock) {
       this.terrain.generateAdjacentBlocks(position)
       return
+    }
+
+    const cellKey = `${Math.round(position.x)},${Math.round(position.y)},${Math.round(position.z)}`
+    if (this.lastMineTargetKey !== cellKey) {
+      this.blockBreakDamage.clear()
+      this.lastMineTargetKey = cellKey
+    }
+    const hpMax = blockTypeBreakHp(blockTypeEnum)
+    if (Number.isFinite(hpMax)) {
+      const dmg = this.getCurrentMineDamage()
+      const acc = (this.blockBreakDamage.get(cellKey) ?? 0) + dmg
+      if (acc < hpMax) {
+        this.blockBreakDamage.set(cellKey, acc)
+        spawnBlockMiningHitParticles(this.scene, position, blockTypeEnum)
+        return
+      }
+      this.blockBreakDamage.delete(cellKey)
     }
 
     block.object.setMatrixAt(
@@ -410,28 +607,12 @@ export default class Control {
       BlockType[block.object.name as any] as unknown as BlockType,
     )
 
-    const mesh = new THREE.Mesh(
-      new THREE.BoxGeometry(1, 1, 1),
-      this.terrain.materials.get(
-        this.terrain.materialType[parseInt(BlockType[block.object.name as any])],
-      ),
-    )
-    mesh.position.set(position.x, position.y, position.z)
-    this.scene.add(mesh)
-    const time = performance.now()
-    let raf = 0
-    const animate = () => {
-      if (performance.now() - time > 250) {
-        this.scene.remove(mesh)
-        cancelAnimationFrame(raf)
-        return
-      }
-      raf = requestAnimationFrame(animate)
-      mesh.geometry.scale(0.85, 0.85, 0.85)
-    }
-    animate()
+    spawnBlockDestroyParticles(this.scene, position, blockTypeEnum)
 
-    block.object.instanceMatrix.needsUpdate = true
+    const hitMesh = block.object as THREE.InstancedMesh
+    hitMesh.instanceMatrix.needsUpdate = true
+    hitMesh.boundingSphere = null
+    hitMesh.boundingBox = null
 
     let existed = false
     for (const customBlock of this.terrain.customBlocks) {
@@ -463,7 +644,11 @@ export default class Control {
 
   crosshairPlace = () => {
     this.requestHandSwing()
-    const placeType = this.getActiveBlockType()
+    const slot = this.getCurrentBwSlot()
+    if (slot.kind !== 'item' || slot.meta.kind !== 'block' || slot.count < 1) {
+      return
+    }
+    const placeType = slot.meta.blockType
     this.raycaster.setFromCamera({ x: 0, y: 0 }, this.camera)
     const block = this.raycaster.intersectObjects(this.terrain.blocks)[0]
     const matrix = new THREE.Matrix4()
@@ -488,15 +673,15 @@ export default class Control {
       normal.y + position.y,
       normal.z + position.z,
     )
-    this.terrain.blocks[placeType].setMatrixAt(
-      this.terrain.getCount(placeType),
-      matrix,
-    )
+    const placeMesh = this.terrain.blocks[placeType]
+    placeMesh.setMatrixAt(this.terrain.getCount(placeType), matrix)
     this.terrain.setCount(placeType)
 
     this.audio.playSound(placeType)
 
-    this.terrain.blocks[placeType].instanceMatrix.needsUpdate = true
+    placeMesh.instanceMatrix.needsUpdate = true
+    placeMesh.boundingSphere = null
+    placeMesh.boundingBox = null
 
     this.terrain.customBlocks.push(
       new Block(
@@ -516,17 +701,22 @@ export default class Control {
       return
 
     const touchMode = useTouchGameControls()
+    const canvas = this.control.domElement
+    // Request lock on canvas click, but never return early: if lock fails or is delayed,
+    // break/place must still run (otherwise every click only "tries lock" and does nothing).
     if (
       !touchMode &&
       e.button === 0 &&
-      document.pointerLockElement !== this.control.domElement
+      document.pointerLockElement !== canvas &&
+      t instanceof Node &&
+      canvas.contains(t)
     ) {
-      void this.control.lock()
-      return
+      this.tryRequestPointerLock()
     }
 
     e.preventDefault()
 
+    // Desktop: pickaxe slot = mine on LMB; block slots = place on LMB. RMB places when building.
     switch (e.button) {
       case 0:
         if (this.interactionMode === 'mine') this.crosshairBreak()
@@ -560,8 +750,8 @@ export default class Control {
     if (isNaN(parseInt(e.key)) || e.key === '0') {
       return
     }
-    const slot = parseInt(e.key) - 1
-    if (slot < 0 || slot >= HOTBAR_SLOT_COUNT) return
+    const slot = parseInt(e.key, 10) - 1
+    if (slot < 0 || slot >= this.bwHotbar.length) return
     this.setHotbarSlot(slot)
   }
 
@@ -571,7 +761,7 @@ export default class Control {
       setTimeout(() => {
         this.wheelGap = false
       }, 100)
-      const max = HOTBAR_SLOT_COUNT - 1
+      const max = Math.max(0, this.bwHotbar.length - 1)
       if (e.deltaY > 0) {
         this.holdingIndex++
         this.holdingIndex > max && (this.holdingIndex = 0)
@@ -585,22 +775,14 @@ export default class Control {
 
   private applyHotbarIndexFromWheel = () => {
     const i = this.holdingIndex
-    if (i !== TOOL_HOTBAR_INDEX) {
-      this.lastBlockHotbarIndex = i
-      this.holdingBlock = this.holdingBlocks[i] ?? BlockType.grass
-    }
     this.syncInteractionFromHotbar()
     this.onHotbarIndexChange?.(i)
   }
 
   setHotbarSlot = (index: number) => {
-    const max = HOTBAR_SLOT_COUNT - 1
+    const max = Math.max(0, this.bwHotbar.length - 1)
     const i = Math.max(0, Math.min(max, index))
     this.holdingIndex = i
-    if (i !== TOOL_HOTBAR_INDEX) {
-      this.lastBlockHotbarIndex = i
-      this.holdingBlock = this.holdingBlocks[i] ?? BlockType.grass
-    }
     this.syncInteractionFromHotbar()
     this.onHotbarIndexChange?.(i)
   }
@@ -631,6 +813,17 @@ export default class Control {
     document.body.removeEventListener('mouseup', this.mouseupHandler)
   }
 
+  /** Tear down body listeners + canvas contextmenu. Call when disposing the block world. */
+  disposeDocumentInput = () => {
+    this.mouseupHandler()
+    this.detachGameplayListeners()
+    try {
+      this.control.domElement.removeEventListener('contextmenu', this.blockContextMenu)
+    } catch {
+      /* ignore */
+    }
+  }
+
   initEventListeners = () => {
     const touchMode = useTouchGameControls()
     document.addEventListener('pointerlockchange', () => {
@@ -648,6 +841,8 @@ export default class Control {
     })
     // Touch always needs keys/wheel; desktop needs mousedown on body to request lock.
     this.attachGameplayListeners()
+
+    this.control.domElement.addEventListener('contextmenu', this.blockContextMenu)
   }
 
   // move along X with direction factor

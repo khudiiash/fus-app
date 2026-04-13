@@ -12,6 +12,7 @@ import CoinDisplay from '@/components/gamification/CoinDisplay.vue'
 import Skin3dThumbnail  from '@/components/character/Skin3dThumbnail.vue'
 import GlbThumbnail     from '@/components/character/GlbThumbnail.vue'
 import SubjectBadgeArt from '@/components/shop/SubjectBadgeArt.vue'
+import BlockWorldShopThumb from '@/components/shop/BlockWorldShopThumb.vue'
 import { ShoppingBag, Sparkles, Palette, ChefHat, Home, Package, CheckCircle2, Clock, Medal, PawPrint } from 'lucide-vue-next'
 
 const shop      = useShopStore()
@@ -31,6 +32,7 @@ const CATEGORIES = [
   { key: 'pet',          label: 'Улюбленці',       Icon: PawPrint },
   { key: 'room',         label: 'Кімнати',         Icon: Home },
   { key: 'subject_badge', label: 'Предметні значки', Icon: Medal },
+  { key: 'block_world',  label: 'Світ (блоки)',    Icon: Package },
 ]
 
 onMounted(async () => {
@@ -48,7 +50,7 @@ const sorted = computed(() => {
   return [...displayed.value].sort((a, b) => (rarityOrder[a.rarity] ?? 3) - (rarityOrder[b.rarity] ?? 3))
 })
 
-const CAT_LABEL = { skin: 'Скін', accessory: 'Аксесуар', pet: 'Улюбленець', room: 'Кімната', subject_badge: 'Предметний значок' }
+const CAT_LABEL = { skin: 'Скін', accessory: 'Аксесуар', pet: 'Улюбленець', room: 'Кімната', subject_badge: 'Предметний значок', block_world: 'Світ' }
 
 function stackCount(itemId) {
   return shop.inventoryStackCount(itemId)
@@ -125,6 +127,9 @@ const MODAL_GLB_H = 190
 /** Modal skin — baked PNG via skinThumbnailRenderer (memory + IndexedDB), not live SkinViewer */
 const MODAL_SKIN_W = 140
 const MODAL_SKIN_H = 200
+/** Block world: sprite / block icon (no WebGL) */
+const THUMB_BW = 96
+const MODAL_BW = 120
 </script>
 
 <template>
@@ -219,6 +224,13 @@ const MODAL_SKIN_H = 200
             >
               <SubjectBadgeArt :sprite-index="item.badgeSpriteIndex" :emoji="item.badgeEmoji || '🏅'" :size="112" />
             </div>
+            <div
+              v-else-if="item.category === 'block_world'"
+              class="relative z-[1] flex flex-col items-center justify-center gap-1.5 py-3 min-h-[120px] text-slate-200"
+            >
+              <BlockWorldShopThumb :item="item" :size="THUMB_BW" />
+              <span class="text-[10px] font-bold text-slate-500">Спільний світ</span>
+            </div>
             <div v-else class="opacity-20 flex items-center justify-center w-full py-6">
               <Home v-if="item.category === 'room'" :size="56" :stroke-width="1" />
               <PawPrint v-else-if="item.category === 'pet'" :size="56" :stroke-width="1" />
@@ -308,6 +320,12 @@ const MODAL_SKIN_H = 200
               </p>
               <p class="text-[10px] text-slate-500 text-center px-2 max-w-[280px] leading-snug">
                 Легендарний значок. Купи кілька й передай вчителю цього предмета після офлайн-активності (Профіль → Значки).
+              </p>
+            </template>
+            <template v-else-if="selectedItem.category === 'block_world'">
+              <BlockWorldShopThumb :item="selectedItem" :size="MODAL_BW" />
+              <p class="text-[11px] text-slate-400 text-center px-2 max-w-[300px] leading-snug">
+                Після покупки предмет зʼявиться в хотбарі спільного світу (вкладка «Світ (блоки)» тут у магазині). Кулак завжди доступний безкоштовно.
               </p>
             </template>
             <div v-else class="opacity-20 py-4 flex items-center justify-center">

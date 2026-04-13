@@ -1,6 +1,13 @@
 import * as THREE from 'three'
-import Block from '../mesh/block'
 import Noise from '../noise'
+
+type CustomBlockMsg = {
+  x: number
+  y: number
+  z: number
+  type: number
+  placed: boolean
+}
 
 enum BlockType {
   grass = 0,
@@ -28,7 +35,7 @@ let isFirstRun = true
 onmessage = (
   msg: MessageEvent<{
     distance: number
-    chunk: THREE.Vector2
+    chunk: { x: number; y: number }
     noiseSeed: number
     treeSeed: number
     stoneSeed: number
@@ -37,9 +44,9 @@ onmessage = (
     idMap: Map<string, number>
     blocksFactor: number[]
     blocksCount: number[]
-    customBlocks: Block[]
+    customBlocks: CustomBlockMsg[]
     chunkSize: number
-  }>
+  }>,
 ) => {
   // let p1 = performance.now()
   const {

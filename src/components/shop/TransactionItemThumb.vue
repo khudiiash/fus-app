@@ -7,6 +7,7 @@ import Skin3dThumbnail from '@/components/character/Skin3dThumbnail.vue'
 import GlbThumbnail from '@/components/character/GlbThumbnail.vue'
 import MysteryBoxSprite from '@/components/shop/MysteryBoxSprite.vue'
 import SubjectBadgeArt from '@/components/shop/SubjectBadgeArt.vue'
+import BlockWorldShopThumb from '@/components/shop/BlockWorldShopThumb.vue'
 import { Package } from 'lucide-vue-next'
 
 defineProps({
@@ -67,6 +68,12 @@ defineProps({
         :emoji="item.badgeEmoji || '🏅'"
         :size="Math.max(20, Math.min(w, h) - 2)"
       />
+    </div>
+    <div
+      v-else-if="item?.category === 'block_world'"
+      class="w-full h-full flex items-center justify-center bg-slate-900/40 rounded-md"
+    >
+      <BlockWorldShopThumb :item="item" :size="Math.max(22, Math.min(w, h) - 2)" />
     </div>
     <div v-else class="w-full h-full flex items-center justify-center text-slate-500">
       <Package :size="Math.min(14, Math.round(w * 0.45))" :stroke-width="1.5" />

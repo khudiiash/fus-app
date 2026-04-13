@@ -6,7 +6,7 @@ import { db } from '@/firebase/config'
 import { useAuthStore } from '@/stores/auth'
 import { useUserStore } from '@/stores/user'
 import CharacterScene from '@/components/character/CharacterScene.vue'
-import { ArrowLeft } from 'lucide-vue-next'
+import { ArrowLeft, User } from 'lucide-vue-next'
 
 const route     = useRoute()
 const router    = useRouter()
@@ -27,6 +27,13 @@ const showTeacherStudentProfile = computed(
     && !!viewedStudentUid.value
     && viewedStudentUid.value !== auth.profile?.id,
 )
+
+const showStudentPeerProfile = computed(() => {
+  if (auth.profile?.role !== 'student') return false
+  if (!viewedStudentUid.value || viewedStudentUid.value === auth.profile?.id) return false
+  const t = targetProfile.value
+  return !!(t && t.role === 'student')
+})
 
 /** У layout (студент / вчитель) висоту дає flex-1; лише автономний /room/:uid (напр. адмін) — повний екран */
 const isEmbeddedRoom = computed(
@@ -99,6 +106,15 @@ onMounted(async () => {
           class="text-[11px] font-extrabold text-violet-400 hover:text-violet-300 px-2 py-1 rounded-lg bg-violet-500/15 border border-violet-500/25"
           @click="router.push(`/teacher/student/${viewedStudentUid}/profile`)"
         >
+          Профіль
+        </button>
+        <button
+          v-else-if="showStudentPeerProfile"
+          type="button"
+          class="inline-flex items-center gap-1 text-[11px] font-extrabold text-violet-400 hover:text-violet-300 px-2 py-1 rounded-lg bg-violet-500/15 border border-violet-500/25"
+          @click="router.push({ name: 'student-profile-peer', params: { uid: viewedStudentUid } })"
+        >
+          <User :size="12" :stroke-width="2" />
           Профіль
         </button>
       </div>

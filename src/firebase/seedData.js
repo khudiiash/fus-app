@@ -193,6 +193,11 @@ import { addDoc, collection, getDocs, deleteDoc, updateDoc, doc } from 'firebase
 import { db } from './config'
 import { getSubjectIcon } from '@/composables/useSubjectIcon'
 import { uploadShopGlb, uploadSkinTextureFile } from '@/firebase/shopAssetStorage'
+import {
+  ALL_TOOL_MESH_NAMES,
+  defaultBlockWorldToolDoc,
+  parseToolMeshBaseName,
+} from '@/game/blockWorldToolsRegistry'
 
 const PRICE_BY_RARITY = { common: 100, rare: 300, epic: 600, legendary: 1200 }
 
@@ -612,7 +617,204 @@ export async function seedSkins() {
   return { added: 0, updated: 0, skipped: 0, uploaded: 0 }
 }
 
+const BW_TIER_SHOP = {
+  Wooden: { price: 0, rarity: 'common' },
+  Stone: { price: 18, rarity: 'common' },
+  Iron: { price: 55, rarity: 'rare' },
+  Golden: { price: 140, rarity: 'epic' },
+  Diamond: { price: 320, rarity: 'epic' },
+  Netherite: { price: 520, rarity: 'legendary' },
+}
+
+function blockWorldToolShopLabel(meshName) {
+  return meshName.replace(/_/g, ' ')
+}
+
+function buildBlockWorldToolShopRows() {
+  return ALL_TOOL_MESH_NAMES.filter((name) => name !== 'Iron_Pickaxe').map((meshName) => {
+    const p = parseToolMeshBaseName(meshName)
+    const tr = p ? BW_TIER_SHOP[p.tier] : { price: 50, rarity: 'rare' }
+    return {
+      bwSeedKey: `fus_bw_tool_${meshName}`,
+      name: blockWorldToolShopLabel(meshName),
+      description: `Інструмент для спільного світу (${meshName.replace(/_/g, ' ')}).`,
+      category: 'block_world',
+      rarity: tr.rarity,
+      price: tr.price,
+      blockWorld: defaultBlockWorldToolDoc(meshName),
+    }
+  })
+}
+
+/**
+ * Shared voxel world goods (`category: block_world`, `blockWorld` meta).
+ * Synced by {@link seedBlockWorldShopItems} (add + update by stable `bwSeedKey`).
+ */
+export const BLOCK_WORLD_SHOP_ITEM_SEEDS = [
+  {
+    bwSeedKey: 'fus_bw_pick',
+    name: 'Кайло',
+    description:
+      'Швидше ламає блоки. У спільному світі можна завдавати урон іншим гравцям (як у стандартного кайла).',
+    category: 'block_world',
+    rarity: 'common',
+    price: 0,
+    blockWorld: defaultBlockWorldToolDoc('Iron_Pickaxe'),
+  },
+  {
+    bwSeedKey: 'fus_bw_block_grass',
+    name: 'Трава',
+    description: 'Блок для будівництва у спільному світі.',
+    category: 'block_world',
+    rarity: 'common',
+    price: 0,
+    blockWorld: { kind: 'block', blockType: 0 },
+  },
+  {
+    bwSeedKey: 'fus_bw_block_sand',
+    name: 'Пісок',
+    description: 'Пісчаний блок для будівництва.',
+    category: 'block_world',
+    rarity: 'common',
+    price: 6,
+    blockWorld: { kind: 'block', blockType: 1 },
+  },
+  {
+    bwSeedKey: 'fus_bw_block_leaf',
+    name: 'Листя',
+    description: 'Зелений декоративний блок.',
+    category: 'block_world',
+    rarity: 'common',
+    price: 8,
+    blockWorld: { kind: 'block', blockType: 3 },
+  },
+  {
+    bwSeedKey: 'fus_bw_block_dirt',
+    name: 'Земля',
+    description: 'Звичайний ґрунт для будівництва.',
+    category: 'block_world',
+    rarity: 'common',
+    price: 5,
+    blockWorld: { kind: 'block', blockType: 4 },
+  },
+  {
+    bwSeedKey: 'fus_bw_block_stone',
+    name: 'Камінь',
+    description: 'Міцний будівельний блок.',
+    category: 'block_world',
+    rarity: 'common',
+    price: 15,
+    blockWorld: { kind: 'block', blockType: 5 },
+  },
+  {
+    bwSeedKey: 'fus_bw_block_coal',
+    name: 'Вугільна руда',
+    description: 'Темний декоративний блок.',
+    category: 'block_world',
+    rarity: 'common',
+    price: 14,
+    blockWorld: { kind: 'block', blockType: 6 },
+  },
+  {
+    bwSeedKey: 'fus_bw_block_wood',
+    name: 'Деревина',
+    description: 'Блок дерева для будівництва.',
+    category: 'block_world',
+    rarity: 'common',
+    price: 10,
+    blockWorld: { kind: 'block', blockType: 7 },
+  },
+  {
+    bwSeedKey: 'fus_bw_block_tree',
+    name: 'Колода',
+    description: 'Текстура стовбура дерева.',
+    category: 'block_world',
+    rarity: 'common',
+    price: 12,
+    blockWorld: { kind: 'block', blockType: 2 },
+  },
+  {
+    bwSeedKey: 'fus_bw_block_glass',
+    name: 'Скло',
+    description: 'Прозорий будівельний блок.',
+    category: 'block_world',
+    rarity: 'rare',
+    price: 40,
+    blockWorld: { kind: 'block', blockType: 10 },
+  },
+  {
+    bwSeedKey: 'fus_bw_block_quartz',
+    name: 'Кварц',
+    description: 'Світлий декоративний блок.',
+    category: 'block_world',
+    rarity: 'rare',
+    price: 55,
+    blockWorld: { kind: 'block', blockType: 9 },
+  },
+  {
+    bwSeedKey: 'fus_bw_block_diamond',
+    name: 'Алмазний блок',
+    description: 'Дуже міцний декоративний блок.',
+    category: 'block_world',
+    rarity: 'epic',
+    price: 200,
+    blockWorld: { kind: 'block', blockType: 8 },
+  },
+  ...buildBlockWorldToolShopRows(),
+]
+
+/**
+ * Adds missing `block_world` shop rows and **updates** existing ones with the same `bwSeedKey`
+ * (name, description, price, rarity, `blockWorld`) so catalog changes / new atlas ship after re-seed.
+ */
+export async function seedBlockWorldShopItems() {
+  const snap = await getDocs(collection(db, 'items'))
+  const refByBwKey = new Map()
+  for (const d of snap.docs) {
+    const k = d.data().bwSeedKey
+    if (k) refByBwKey.set(k, d.ref)
+  }
+  let added = 0
+  let updated = 0
+  for (const row of BLOCK_WORLD_SHOP_ITEM_SEEDS) {
+    const existing = refByBwKey.get(row.bwSeedKey)
+    if (existing) {
+      await updateDoc(existing, {
+        name: row.name,
+        description: row.description,
+        category: row.category,
+        rarity: row.rarity,
+        price: row.price,
+        blockWorld: row.blockWorld,
+        bwSeedKey: row.bwSeedKey,
+        skinUrl: null,
+        skinId: null,
+        isLimited: false,
+        stock: null,
+        active: true,
+      })
+      updated++
+    } else {
+      await addDoc(collection(db, 'items'), {
+        ...row,
+        skinUrl: null,
+        skinId: null,
+        isLimited: false,
+        stock: null,
+        active: true,
+        createdAt: new Date(),
+      })
+      added++
+    }
+  }
+  return { added, updated, total: BLOCK_WORLD_SHOP_ITEM_SEEDS.length }
+}
+
 export async function runFullSeed() {
-  const [items, achs] = await Promise.all([seedShopItems(), seedAchievements()])
-  return { items, achievements: achs }
+  const itemsBase = await seedShopItems()
+  const [{ added: bwAdded }, achs] = await Promise.all([
+    seedBlockWorldShopItems(),
+    seedAchievements(),
+  ])
+  return { items: itemsBase + bwAdded, achievements: achs }
 }

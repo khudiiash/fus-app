@@ -3,12 +3,12 @@ import { ref, computed, watch, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useUserStore } from '@/stores/user'
-import { getLeaderboard } from '@/firebase/collections'
+import { getLeaderboard, effectiveStudentClassId } from '@/firebase/collections'
 import { useToast } from '@/composables/useToast'
 import AvatarDisplay from '@/components/avatar/AvatarDisplay.vue'
 import CoinDisplay from '@/components/gamification/CoinDisplay.vue'
 import {
-  Trophy, Crown, Flame, Zap, LayoutDashboard, Star,
+  Trophy, Crown, Flame, Zap,
 } from 'lucide-vue-next'
 
 const auth      = useAuthStore()
@@ -29,7 +29,7 @@ onMounted(async () => {
 async function fetchLeaderboard() {
   leaderboardLoading.value = true
   try {
-    const classId = scope.value === 'class' ? auth.profile?.classId : null
+    const classId = scope.value === 'class' ? effectiveStudentClassId(auth.profile) : null
     students.value = await getLeaderboard(classId, 50, sortBy.value)
   } catch (e) {
     console.warn('[Leaderboard]', e?.code, e?.message)
@@ -62,6 +62,13 @@ const SORT_OPTS = [
   { key: 'coins',  label: 'Монети' },
   { key: 'streak', label: 'Серія'  },
 ]
+
+function goStudentProfile(entry) {
+  const id = typeof entry === 'string' ? entry : entry?.id
+  if (!id) return
+  if (id === auth.profile?.id) router.push({ name: 'student-profile' })
+  else router.push({ name: 'student-profile-peer', params: { uid: id } })
+}
 </script>
 
 <template>
@@ -128,7 +135,7 @@ const SORT_OPTS = [
     <div v-else-if="podium.length >= 3" class="flex items-end justify-center gap-3 mb-2 mt-2 pt-1">
       <!-- 2nd -->
       <div class="flex flex-col items-center gap-2">
-        <div class="cursor-pointer" @click="router.push(podium[1]?.id === auth.profile?.id ? '/student/room' : `/student/room/${podium[1]?.id}`)">
+        <div class="cursor-pointer" @click="goStudentProfile(podium[1])">
           <AvatarDisplay :avatar="podium[1]?.avatar" :display-name="podium[1]?.displayName || ''" :items="userStore.items" size="md" :show-name="true" />
         </div>
         <div class="podium-block w-20 h-16 rounded-2xl flex flex-col items-center justify-center" style="background:linear-gradient(155deg,rgba(148,163,184,0.15),rgba(148,163,184,0.05));box-shadow:inset 0 0 0 1px rgba(148,163,184,0.2)">
@@ -146,7 +153,7 @@ const SORT_OPTS = [
       <!-- 1st -->
       <div class="flex flex-col items-center gap-2">
         <Crown :size="22" :stroke-width="1.8" class="text-amber-400 animate-float" />
-        <div class="cursor-pointer" @click="router.push(podium[0]?.id === auth.profile?.id ? '/student/room' : `/student/room/${podium[0]?.id}`)">
+        <div class="cursor-pointer" @click="goStudentProfile(podium[0])">
           <AvatarDisplay :avatar="podium[0]?.avatar" :display-name="podium[0]?.displayName || ''" :items="userStore.items" size="lg" :show-name="true" />
         </div>
         <div class="w-24 h-20 rounded-2xl flex flex-col items-center justify-center glow-legendary" style="background:linear-gradient(155deg,rgba(251,191,36,0.2),rgba(251,191,36,0.05))">
@@ -163,7 +170,7 @@ const SORT_OPTS = [
 
       <!-- 3rd -->
       <div class="flex flex-col items-center gap-2">
-        <div class="cursor-pointer" @click="router.push(podium[2]?.id === auth.profile?.id ? '/student/room' : `/student/room/${podium[2]?.id}`)">
+        <div class="cursor-pointer" @click="goStudentProfile(podium[2])">
           <AvatarDisplay :avatar="podium[2]?.avatar" :display-name="podium[2]?.displayName || ''" :items="userStore.items" size="md" :show-name="true" />
         </div>
         <div class="w-20 h-14 rounded-2xl flex flex-col items-center justify-center" style="background:linear-gradient(155deg,rgba(180,83,9,0.15),rgba(180,83,9,0.05));box-shadow:inset 0 0 0 1px rgba(180,83,9,0.2)">
@@ -186,7 +193,7 @@ const SORT_OPTS = [
         :key="s.id"
         class="glass-card flex items-center gap-3 p-3 transition-all cursor-pointer"
         :class="s.id === auth.profile?.id ? 'glow-primary' : 'hover:glow-primary'"
-        @click="router.push(s.id === auth.profile?.id ? '/student/room' : `/student/room/${s.id}`)"
+        @click="goStudentProfile(s)"
       >
         <!-- Rank -->
         <div class="w-7 text-center font-extrabold text-sm flex-shrink-0 text-slate-500 tabular-nums">
@@ -220,14 +227,6 @@ const SORT_OPTS = [
             <Flame :size="13" :stroke-width="2.5" />
             <span class="tabular-nums">{{ s.streak || 0 }}</span>
           </div>
-
-          <button
-            class="flex items-center gap-0.5 text-[10px] font-bold text-violet-400/60 hover:text-violet-400 transition-colors"
-            @click.stop="router.push(s.id === auth.profile?.id ? '/student/room' : `/student/room/${s.id}`)"
-          >
-            <LayoutDashboard :size="11" :stroke-width="2" />
-            <span>Кімната</span>
-          </button>
         </div>
       </div>
 

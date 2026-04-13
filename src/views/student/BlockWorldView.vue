@@ -3,6 +3,8 @@
  * Shared voxel world: minecraft-threejs engine + Firestore world state + remote skins.
  */
 import { ref, onUnmounted, onMounted, nextTick, watch } from 'vue'
+import { buildBlockWorldHotbarSlots } from '@/game/blockWorldItems'
+import * as THREE from 'three'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useUserStore } from '@/stores/user'
@@ -12,14 +14,30 @@ import {
   initSharedWorldFromFirestore,
   subscribeSharedWorldDoc,
   scheduleFlushCustomBlocks,
+  cancelScheduledFlushCustomBlocks,
   subscribePresence,
   writePresence,
   deletePresence,
   bindPresenceDisconnectRemove,
   regenerateTerrain,
+  restoreSharedWorldToDefaultTerrain,
 } from '@/game/sharedWorldFirestore'
+import {
+  loadLastCameraPose,
+  saveLastCameraPose,
+  applyStoredPoseToCamera,
+} from '@/game/blockWorldLocalPersist'
 import { rtdb } from '@/firebase/config'
 import { RemotePlayersManager } from '@/game/remotePlayersManager'
+import { SpawnFlagsManager } from '@/game/spawnFlagsManager'
+import {
+  fetchPlayerSpawnFlag,
+  savePlayerSpawnFlag,
+  subscribeSpawnFlags,
+  subscribePickaxeHitsForVictim,
+  pushPickaxeHit,
+} from '@/game/blockWorldRtdb'
+import { PLAYER_EYE_HEIGHT } from '@/game/playerConstants'
 import { normalizeSkinUrlForPresence } from '@/utils/presenceSkinUrl'
 import { cameraYawFromQuaternion } from '@/game/cameraYaw'
 import { useTouchGameControls } from '@/game/minebase/utils'
@@ -28,7 +46,21 @@ import minecraftSunset from '@/assets/minecraft-sunset.jpg'
 
 const WORLD_ID = 'school'
 
+/** Only this access-code student sees “Скинути світ” in the block world HUD. */
+const BLOCK_WORLD_RESET_ACCESS_CODE = 'GOLD-1531'
+
 const desktopGameHints = !useTouchGameControls()
+
+function applyBlockWorldHotbarFromStores() {
+  if (!worldApi || !auth.profile) return
+  const slots = buildBlockWorldHotbarSlots(
+    auth.profile.inventory || [],
+    auth.profile.inventoryCounts,
+    userStore.items,
+    auth.profile.blockWorldHotbarOrder,
+  )
+  worldApi.control.setBlockWorldHotbar(slots)
+}
 
 const mineRootRef = ref(null)
 const mountRef = ref(null)
@@ -39,6 +71,17 @@ const started = ref(false)
 const auth = useAuthStore()
 const userStore = useUserStore()
 const bwSession = useBlockWorldSession()
+
+function studentMayResetBlockWorld() {
+  const want = BLOCK_WORLD_RESET_ACCESS_CODE.toUpperCase()
+  const fromProfile = String(auth.profile?.accessCode || '')
+    .trim()
+    .toUpperCase()
+  const fromSession = String(auth.currentCode || '')
+    .trim()
+    .toUpperCase()
+  return fromProfile === want || fromSession === want
+}
 
 /** Prefer `skinUrl`; else resolve shop skin URL from `skinId` using the items catalog. */
 function resolvePresenceSkinUrl(profile, items) {
@@ -54,7 +97,16 @@ const router = useRouter()
 let worldApi = null
 let unsubWorld = null
 let unsubPresence = null
+let unsubSpawnFlags = null
+let unsubPickaxeHits = null
 let remotes = null
+let spawnFlags = null
+/** RTDB spawn flags (all players); reassigned in subscribe callback. */
+let spawnFlagsMap = new Map()
+/** Latest presence map for flag skins + online count. */
+let presenceMapRef = new Map()
+const spawnTeleportPos = new THREE.Vector3()
+const spawnTeleportQuat = new THREE.Quaternion()
 let presenceTimer = null
 /** Latest presence payload; one writer drains the queue so slow writes cannot backlog. */
 let presencePendingPayload = null
@@ -72,7 +124,10 @@ async function flushPresenceQueue(worldId) {
     while (presencePendingPayload && !presenceStopped) {
       const data = presencePendingPayload
       presencePendingPayload = null
+      if (presenceStopped) break
       await writePresence(worldId, uid, data)
+      // Leaving the world sets presenceStopped mid-flight — never write again after teardown.
+      if (presenceStopped) break
     }
   } catch (err) {
     console.warn('[BlockWorld] writePresence', err)
@@ -130,6 +185,13 @@ async function exitFullscreenSafe() {
 
 async function teardownWorld() {
   presenceStopped = true
+  if (worldApi?.control) {
+    worldApi.control.onPlayerHpPresenceFlush = undefined
+  }
+  cancelScheduledFlushCustomBlocks()
+  if (worldApi && auth.user?.uid) {
+    saveLastCameraPose(WORLD_ID, auth.user.uid, worldApi.core.camera)
+  }
   if (terrainRegenTimer) {
     clearTimeout(terrainRegenTimer)
     terrainRegenTimer = null
@@ -148,8 +210,14 @@ async function teardownWorld() {
   unsubWorld = null
   unsubPresence?.()
   unsubPresence = null
+  unsubSpawnFlags?.()
+  unsubSpawnFlags = null
+  unsubPickaxeHits?.()
+  unsubPickaxeHits = null
   remotes?.dispose()
   remotes = null
+  spawnFlags?.dispose()
+  spawnFlags = null
   worldApi?.dispose()
   worldApi = null
   clearMinePlayViewport()
@@ -183,28 +251,141 @@ async function beginPlay() {
 
   try {
     presenceStopped = false
+    let lastPoseSaveAt = 0
     worldApi = createFusBlockWorld(mountRef.value, {
       onCustomBlocksChange: () => {
         if (worldApi) scheduleFlushCustomBlocks(WORLD_ID, worldApi.terrain)
       },
       onFrame: (dt) => {
         remotes?.update(dt)
+        if (spawnFlags && worldApi) spawnFlags.update(worldApi.core.camera)
+        if (presenceStopped || !worldApi) return
+        const uid = auth.user?.uid
+        if (!uid) return
+        const t = Date.now()
+        if (t - lastPoseSaveAt < 3500) return
+        lastPoseSaveAt = t
+        saveLastCameraPose(WORLD_ID, uid, worldApi.core.camera)
+      },
+      ...(studentMayResetBlockWorld()
+        ? {
+            onRestoreWorld: async () => {
+              if (!worldApi) return
+              const ok = confirm(
+                'Скинути всі побудовані та зламані клітини в цьому світі для ВСІХ гравців?\n' +
+                  'Рельєф (базові блоки з генератора) залишиться.\n' +
+                  'Цю дію не можна скасувати.',
+              )
+              if (!ok) return
+              try {
+                await restoreSharedWorldToDefaultTerrain(WORLD_ID, worldApi.terrain)
+              } catch (err) {
+                console.error('[BlockWorld] restore world', err)
+                window.alert(
+                  'Не вдалося скинути світ. Перевір права доступу до Firestore або зʼєднання.',
+                )
+              }
+            },
+          }
+        : {}),
+      onPlaceSpawnFlag: async () => {
+        if (!worldApi || !auth.user?.uid) return
+        const cam = worldApi.core.camera
+        const feetY = cam.position.y - PLAYER_EYE_HEIGHT - 0.08
+        try {
+          await savePlayerSpawnFlag(WORLD_ID, auth.user.uid, {
+            x: cam.position.x,
+            y: feetY,
+            z: cam.position.z,
+            ry: cameraYawFromQuaternion(cam.quaternion),
+          })
+        } catch (err) {
+          console.warn('[BlockWorld] save spawn flag', err)
+          window.alert('Не вдалося зберегти прапорець спавну.')
+        }
       },
     })
 
     const presenceUid = auth.user.uid
+
+    const syncSpawnFlagMeshes = () => {
+      if (!spawnFlags) return
+      const skinByUid = new Map()
+      for (const [uid, doc] of presenceMapRef) {
+        const url =
+          uid === presenceUid
+            ? resolvePresenceSkinUrl(auth.profile, userStore.items)
+            : normalizeSkinUrlForPresence(doc?.skinUrl ?? null)
+        skinByUid.set(uid, url)
+      }
+      spawnFlags.sync(spawnFlagsMap, skinByUid)
+    }
 
     remotes = new RemotePlayersManager(
       worldApi.core.scene,
       presenceUid,
       worldApi.terrain,
     )
+    spawnFlags = new SpawnFlagsManager(worldApi.core.scene, presenceUid)
 
     const worldFingerprint = await initSharedWorldFromFirestore(WORLD_ID, worldApi.terrain)
 
     worldApi.start()
 
     await worldApi.terrain.waitForFirstGenerate()
+
+    const rtdbFlag = await fetchPlayerSpawnFlag(WORLD_ID, presenceUid)
+    if (rtdbFlag) {
+      spawnTeleportQuat.setFromEuler(new THREE.Euler(0, rtdbFlag.ry, 0, 'YXZ'))
+      worldApi.core.camera.position.set(
+        rtdbFlag.x,
+        rtdbFlag.y + PLAYER_EYE_HEIGHT + 0.08,
+        rtdbFlag.z,
+      )
+      worldApi.core.camera.quaternion.copy(spawnTeleportQuat)
+      worldApi.control.velocity.set(0, 0, 0)
+      worldApi.control.setTouchAnalog(0, 0)
+    } else {
+      const restored = loadLastCameraPose(WORLD_ID, presenceUid)
+      if (restored) {
+        applyStoredPoseToCamera(worldApi.core.camera, restored)
+        worldApi.control.velocity.set(0, 0, 0)
+        worldApi.control.setTouchAnalog(0, 0)
+      }
+    }
+
+    worldApi.setSpawnTeleportResolver(() => {
+      const pose = spawnFlagsMap.get(presenceUid)
+      if (!pose) return null
+      spawnTeleportPos.set(pose.x, pose.y + PLAYER_EYE_HEIGHT + 0.08, pose.z)
+      spawnTeleportQuat.setFromEuler(new THREE.Euler(0, pose.ry, 0, 'YXZ'))
+      return { position: spawnTeleportPos, quaternion: spawnTeleportQuat }
+    })
+
+    worldApi.control.getRemotePlayerRaycastRoots = () => remotes.getPickaxeRaycastRoots()
+    worldApi.control.onPickaxeHitRemotePlayer = (targetUid) => {
+      const dmg = worldApi.control.getBwPvpDamageHalf()
+      if (dmg <= 0) return
+      void pushPickaxeHit(WORLD_ID, presenceUid, targetUid, dmg)
+    }
+    worldApi.control.onHealthDepleted = () => {
+      worldApi?.teleportToSpawn()
+    }
+
+    const pickaxeHitsIgnoreBefore = Date.now()
+    unsubPickaxeHits = subscribePickaxeHitsForVictim(
+      WORLD_ID,
+      presenceUid,
+      (dmg) => {
+        worldApi?.control.applyDamageHalfUnits(dmg)
+      },
+      { ignoreHitsBeforeTs: pickaxeHitsIgnoreBefore },
+    )
+
+    unsubSpawnFlags = subscribeSpawnFlags(WORLD_ID, (m) => {
+      spawnFlagsMap = m
+      syncSpawnFlagMeshes()
+    })
 
     unsubWorld = subscribeSharedWorldDoc(
       WORLD_ID,
@@ -214,13 +395,16 @@ async function beginPlay() {
         terrainRegenTimer = setTimeout(() => {
           terrainRegenTimer = null
           if (worldApi) regenerateTerrain(worldApi.terrain)
-        }, 140)
+        }, 70)
       },
       worldFingerprint,
     )
 
     unsubPresence = subscribePresence(WORLD_ID, (map) => {
+      presenceMapRef = map
       remotes?.sync(map)
+      worldApi?.hud?.setOnlineCount(map.size)
+      syncSpawnFlagMeshes()
     })
 
     try {
@@ -229,25 +413,18 @@ async function beginPlay() {
       console.warn('[BlockWorld] bindPresenceDisconnectRemove', e)
     }
 
-    let presenceIdleCounter = 0
-    presenceTimer = window.setInterval(() => {
-      if (presenceStopped || !worldApi) return
-      const uid = auth.user?.uid
-      if (!uid) return
+    applyBlockWorldHotbarFromStores()
+
+    function buildPresencePayload() {
       const cam = worldApi.core.camera
       const v = worldApi.control.velocity
       const moving = v.x * v.x + v.y * v.y + v.z * v.z > 0.15
-      if (!moving) {
-        presenceIdleCounter = (presenceIdleCounter + 1) % 4
-        if (presenceIdleCounter !== 0) return
-      } else {
-        presenceIdleCounter = 0
-      }
       const skinUrl = resolvePresenceSkinUrl(auth.profile, userStore.items)
       const photoUrl = normalizeSkinUrlForPresence(
         auth.profile?.avatar?.photoUrl ?? null,
       )
-      presencePendingPayload = {
+      const hand = worldApi.control.getPresenceHandFields()
+      return {
         x: cam.position.x,
         y: cam.position.y,
         z: cam.position.z,
@@ -258,8 +435,34 @@ async function beginPlay() {
         displayName: auth.profile?.displayName || 'Гравець',
         mode: worldApi.control.interactionMode,
         slot: worldApi.control.holdingIndex,
+        bwBlockType: hand.bwBlockType,
+        bwHandMine: hand.bwHandMine,
+        bwToolMesh: hand.bwToolMesh ?? undefined,
         handSwingSeq: worldApi.control.handSwingSeq,
+        playerHpHalfUnits: worldApi.control.playerHpHalfUnits,
       }
+    }
+
+    worldApi.control.onPlayerHpPresenceFlush = () => {
+      if (presenceStopped || !worldApi) return
+      presencePendingPayload = buildPresencePayload()
+      void flushPresenceQueue(WORLD_ID)
+    }
+
+    let presenceIdleCounter = 0
+    presenceTimer = window.setInterval(() => {
+      if (presenceStopped || !worldApi) return
+      const uid = auth.user?.uid
+      if (!uid) return
+      const v = worldApi.control.velocity
+      const moving = v.x * v.x + v.y * v.y + v.z * v.z > 0.15
+      if (!moving) {
+        presenceIdleCounter = (presenceIdleCounter + 1) % 4
+        if (presenceIdleCounter !== 0) return
+      } else {
+        presenceIdleCounter = 0
+      }
+      presencePendingPayload = buildPresencePayload()
       void flushPresenceQueue(WORLD_ID)
     }, 50)
 
@@ -301,6 +504,20 @@ onMounted(() => {
 watch([started, booting], () => {
   void nextTick(() => syncMinePlayViewport())
 })
+
+watch(
+  () => [
+    started.value,
+    auth.profile?.inventory?.join(','),
+    JSON.stringify(auth.profile?.inventoryCounts || {}),
+    JSON.stringify(auth.profile?.blockWorldHotbarOrder || []),
+    userStore.items.length,
+  ],
+  () => {
+    if (!started.value || presenceStopped || !worldApi) return
+    applyBlockWorldHotbarFromStores()
+  },
+)
 
 onUnmounted(async () => {
   window.visualViewport?.removeEventListener('resize', onVisualViewportChange)
@@ -378,7 +595,7 @@ onUnmounted(async () => {
       class="pointer-events-none absolute z-[215] max-w-[min(92vw,24rem)] text-center text-[11px] font-semibold leading-snug text-white/70 drop-shadow-md"
       style="top: max(3.25rem, calc(env(safe-area-inset-top, 0px) + 2.75rem)); left: 50%; transform: translateX(-50%)"
     >
-      Клацни по світу, щоб захопити курсор · WASD — рух · миша — огляд · ЛКМ — ламати / будувати
+      Клацни по світу, щоб захопити курсор · WASD — рух · миша — огляд · хотбар (1–9) — предмети з магазину «Світ» · кулак ламає блоки повільно · кайло швидше і може влучати в гравців · ЛКМ — копати / ставити · ПКМ — ставити в режимі будівництва
     </p>
   </div>
 </template>

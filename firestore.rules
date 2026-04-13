@@ -70,6 +70,72 @@ service cloud.firestore {
         );
     }
 
+    /** Same class (supports classId and/or classIds on either profile). */
+    function studentUsersShareAClassByData(a, b) {
+      return (
+        ('classId' in a) && a.classId is string
+        && ('classId' in b) && b.classId is string
+        && a.classId == b.classId
+      ) || (
+        ('classIds' in a) && a.classIds is list
+        && ('classId' in b) && b.classId is string
+        && a.classIds.hasAny([b.classId])
+      ) || (
+        ('classId' in a) && a.classId is string
+        && ('classIds' in b) && b.classIds is list
+        && b.classIds.hasAny([a.classId])
+      ) || (
+        ('classIds' in a) && a.classIds is list
+        && ('classIds' in b) && b.classIds is list
+        && a.classIds.hasAny(b.classIds)
+      );
+    }
+
+    /** Authenticated student may read a tx if they share a class with that user (classmate / same-room feed). */
+    function viewerStudentSharesClassWithUser(otherUid) {
+      return isAuth()
+        && exists(userDoc())
+        && get(userDoc()).data.role == 'student'
+        && otherUid is string
+        && exists(/databases/$(database)/documents/users/$(otherUid))
+        && studentUsersShareAClassByData(
+          get(userDoc()).data,
+          get(/databases/$(database)/documents/users/$(otherUid)).data
+        );
+    }
+
+    function studentMayReadTransactionForClassmateFeed() {
+      return isAuth()
+        && exists(userDoc())
+        && get(userDoc()).data.role == 'student'
+        && (
+          (resource.data.fromUid is string && viewerStudentSharesClassWithUser(resource.data.fromUid))
+          || (resource.data.toUid is string && viewerStudentSharesClassWithUser(resource.data.toUid))
+        );
+    }
+
+    /** User doc exists and role is student (for tx party checks). */
+    function userDocRoleIsStudent(uid) {
+      return uid is string
+        && exists(/databases/$(database)/documents/users/$(uid))
+        && 'role' in get(/databases/$(database)/documents/users/$(uid)).data
+        && get(/databases/$(database)/documents/users/$(uid)).data.role == 'student';
+    }
+
+    /**
+     * Учень може читати транзакцію, якщо хоча б одна сторона — учень (журнал профілю / нарахування).
+     * Запити в застосунку обмежені toUid/fromUid конкретного профілю — не відкриває довільний list по всій базі без індексу.
+     */
+    function studentMayReadTransactionInvolvingStudentParty() {
+      return isAuth()
+        && exists(userDoc())
+        && get(userDoc()).data.role == 'student'
+        && (
+          (resource.data.fromUid is string && userDocRoleIsStudent(resource.data.fromUid))
+          || (resource.data.toUid is string && userDocRoleIsStudent(resource.data.toUid))
+        );
+    }
+
     // Access codes — public read so unauthenticated users can look up their code before login
     match /accessCodes/{code} {
       allow read: if true;
@@ -149,7 +215,9 @@ service cloud.firestore {
         isAdmin() ||
         resource.data.fromUid == request.auth.uid ||
         resource.data.toUid == request.auth.uid ||
-        teacherMayReadTransactionForClassJournal()
+        teacherMayReadTransactionForClassJournal() ||
+        studentMayReadTransactionForClassmateFeed() ||
+        studentMayReadTransactionInvolvingStudentParty()
       );
       allow create: if isAuth();
       allow update, delete: if isAdmin();
@@ -211,7 +279,7 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
-    // Shared voxel world — world doc + custom blocks (player presence lives in Realtime Database).
+    // Shared voxel world — seeds + legacy customBlocks mirror; live block list syncs via RTDB `worldBlockEdits`.
     match /sharedWorlds/{worldId} {
       allow read: if isAuth();
       allow create, update: if isAuth();
