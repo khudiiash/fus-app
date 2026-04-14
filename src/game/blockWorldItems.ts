@@ -6,6 +6,8 @@ import {
 } from '@/game/playerConstants'
 
 export const BW_HOTBAR_MAX_SLOTS = 9
+/** Global tuning knob: scales Firestore tool mineDamage for live balancing without reseeding items. */
+const TOOL_MINE_DAMAGE_MULTIPLIER = 1.65
 
 export type BlockWorldItemKind = 'tool' | 'block'
 
@@ -70,8 +72,9 @@ export function parseBlockWorldItem(
 
   // tool
   const mineRaw = Number(bw.mineDamage)
-  const mineDamage =
+  const baseMineDamage =
     Number.isFinite(mineRaw) && mineRaw > 0 ? mineRaw : 3.2
+  const mineDamage = Math.round(baseMineDamage * TOOL_MINE_DAMAGE_MULTIPLIER * 100) / 100
   const pvpRaw = bw.pvpDamageHalf
   let pvpDamageHalf = BLOCK_WORLD_PICKAXE_PVP_DAMAGE_HALF
   if (pvpRaw === null || pvpRaw === false) pvpDamageHalf = 0

@@ -2,9 +2,14 @@
 import { ref, onMounted, computed } from 'vue'
 import {
   getAllStudents, getAllClasses, createAccessCode,
-  updateUser, updateClass, deleteUserData, adminUpdateStudentProfile,
+  updateUser, updateClass, deleteUserData, adminUpdateStudentProfile, adminRotateStudentAccessCode,
 } from '@/firebase/collections'
-import { createUserWithEmailAndPassword, updateProfile, signInWithEmailAndPassword } from 'firebase/auth'
+import {
+  createUserWithEmailAndPassword,
+  updatePassword,
+  updateProfile,
+  signInWithEmailAndPassword,
+} from 'firebase/auth'
 import { auth as fbAuth, db } from '@/firebase/config'
 import { setDoc, doc, serverTimestamp, arrayUnion } from 'firebase/firestore'
 import { useAuthStore } from '@/stores/auth'
@@ -263,6 +268,7 @@ const showEditModal  = ref(false)
 const editingStudent = ref(null)
 const editForm       = ref({ displayName: '', classId: '' })
 const savingEdit     = ref(false)
+const rotatingCode   = ref(false)
 
 function openEditStudent(s) {
   editingStudent.value = s
@@ -300,6 +306,80 @@ async function saveEditStudent() {
     error(e.message)
   } finally {
     savingEdit.value = false
+  }
+}
+
+async function rotateStudentCode() {
+  const s = editingStudent.value
+  if (!s) return
+  if (!s.email || !s.accessCode) {
+    error('Немає email або поточного коду учня')
+    return
+  }
+  if (!authStore.currentCode || !authStore.user?.email) {
+    error('Сесія адміна не знайдена. Увійдіть заново.')
+    return
+  }
+
+  const adminEmail = authStore.user.email
+  const adminCode = authStore.currentCode
+  let switchedToStudent = false
+  rotatingCode.value = true
+
+  try {
+    // 1) Generate a unique-ish code; Firestore transaction still validates uniqueness.
+    let nextCode = ''
+    for (let i = 0; i < 6; i++) {
+      const candidate = generateCode()
+      if (candidate !== String(s.accessCode || '').toUpperCase()) {
+        nextCode = candidate
+        break
+      }
+    }
+    if (!nextCode) throw new Error('Не вдалося згенерувати новий код')
+
+    // 2) Rotate Firebase Auth password (email+password auth uses access code as password).
+    await signInWithEmailAndPassword(fbAuth, s.email, String(s.accessCode).toUpperCase())
+    switchedToStudent = true
+    if (!fbAuth.currentUser) throw new Error('Не вдалося перемкнутися на акаунт учня')
+    await updatePassword(fbAuth.currentUser, nextCode)
+
+    // 3) Return to admin account before Firestore writes.
+    await signInWithEmailAndPassword(fbAuth, adminEmail, adminCode)
+    switchedToStudent = false
+
+    // 4) Update Firestore profile and accessCodes docs.
+    await adminRotateStudentAccessCode({
+      studentId: s.id,
+      oldCode: s.accessCode,
+      newCode: nextCode,
+      email: s.email,
+      displayName: (editForm.value.displayName || s.displayName || '').trim(),
+      classId: editForm.value.classId || s.classId || null,
+    })
+
+    showCode.value = {
+      displayName: (editForm.value.displayName || s.displayName || '').trim(),
+      email: s.email,
+      code: nextCode,
+      rotated: true,
+    }
+    // Keep in-modal state coherent before list refresh.
+    editingStudent.value = { ...s, accessCode: nextCode }
+    success('Код доступу учня змінено')
+    await fetchStudents()
+  } catch (e) {
+    // Best-effort: always restore admin session if anything failed mid-switch.
+    if (switchedToStudent) {
+      try {
+        await signInWithEmailAndPassword(fbAuth, adminEmail, adminCode)
+      } catch {
+        /* ignore */
+      }
+    }
+    error(e?.message || String(e))
+  } finally {
+    rotatingCode.value = false
   }
 }
 </script>
@@ -563,8 +643,25 @@ async function saveEditStudent() {
           </select>
         </div>
         <p class="text-xs text-slate-500">
-          Код доступу для входу не змінюється. Поле email у профілі лишається як при реєстрації (вхід працює як раніше).
+          Якщо код злитий, його можна змінити без втрати профілю: прогрес, монети, інвентар та статистика збережуться.
         </p>
+        <div class="rounded-xl p-3 bg-white/[0.04] border border-white/[0.06]">
+          <div class="flex items-center justify-between gap-2">
+            <div class="min-w-0">
+              <div class="text-[11px] text-slate-500 font-bold uppercase tracking-wide">Поточний код</div>
+              <div class="font-mono font-extrabold text-slate-200 truncate">{{ editingStudent.accessCode }}</div>
+            </div>
+            <AppButton
+              variant="secondary"
+              size="sm"
+              class="!whitespace-nowrap"
+              :loading="rotatingCode"
+              @click="rotateStudentCode"
+            >
+              Змінити код
+            </AppButton>
+          </div>
+        </div>
         <AppButton variant="primary" block :loading="savingEdit" @click="saveEditStudent">Зберегти</AppButton>
       </div>
     </AppModal>
@@ -593,11 +690,13 @@ async function saveEditStudent() {
     </AppModal>
 
     <!-- Code reveal modal -->
-    <AppModal :modelValue="!!showCode" title="Учня створено!" @update:modelValue="v => { if (!v) showCode = null }">
+    <AppModal :modelValue="!!showCode" :title="showCode?.rotated ? 'Код оновлено!' : 'Учня створено!'" @update:modelValue="v => { if (!v) showCode = null }">
       <div v-if="showCode" class="flex flex-col items-center gap-4 text-center">
         <div>
           <div class="font-bold text-lg">{{ showCode.displayName }}</div>
-          <div class="text-slate-400 text-sm">готовий приєднатися до FUSAPP</div>
+          <div class="text-slate-400 text-sm">
+            {{ showCode.rotated ? 'отримав новий код доступу' : 'готовий приєднатися до FUSAPP' }}
+          </div>
         </div>
         <div class="bg-game-bg rounded-xl p-4 w-full">
           <div class="text-xs text-slate-400 mb-2 font-semibold">КОД ДОСТУПУ</div>
@@ -606,7 +705,9 @@ async function saveEditStudent() {
             <Copy :size="12" :stroke-width="2" /> Скопіювати код
           </button>
         </div>
-        <div class="text-xs text-slate-400">Передайте цей код учню. Він вводить його на екрані входу.</div>
+        <div class="text-xs text-slate-400">
+          Передайте цей код учню. Він вводить його на екрані входу замість старого.
+        </div>
         <AppButton variant="primary" block @click="showCode = null">Готово</AppButton>
       </div>
     </AppModal>

@@ -247,6 +247,80 @@ export async function adminUpdateStudentProfile(
   await batch.commit()
 }
 
+/**
+ * Admin: rotate a student's access code without deleting/changing profile progress.
+ * - updates users/{uid}.accessCode
+ * - creates/activates accessCodes/{newCode}
+ * - deactivates old accessCodes/{oldCode} (kept for audit/recovery trail)
+ */
+export async function adminRotateStudentAccessCode({
+  studentId,
+  oldCode,
+  newCode,
+  email,
+  displayName,
+  classId,
+}) {
+  const nextCode = String(newCode || '').trim().toUpperCase()
+  const prevCode = String(oldCode || '').trim().toUpperCase()
+  if (!studentId) throw new Error('Учня не знайдено')
+  if (!nextCode) throw new Error('Новий код доступу порожній')
+  if (prevCode && nextCode === prevCode) throw new Error('Новий код має відрізнятися від поточного')
+
+  const userRef = doc(db, 'users', studentId)
+  const newCodeRef = doc(db, 'accessCodes', nextCode)
+  const oldCodeRef = prevCode ? doc(db, 'accessCodes', prevCode) : null
+
+  await runTransaction(db, async (tx) => {
+    const [userSnap, newCodeSnap, oldCodeSnap] = await Promise.all([
+      tx.get(userRef),
+      tx.get(newCodeRef),
+      oldCodeRef ? tx.get(oldCodeRef) : Promise.resolve(null),
+    ])
+    if (!userSnap.exists()) throw new Error('Профіль учня не знайдено')
+    if (newCodeSnap.exists()) throw new Error('Такий код вже існує, згенеруйте інший')
+
+    const userData = userSnap.data()
+    const resolvedEmail = String(email || userData.email || '').trim()
+    if (!resolvedEmail) throw new Error('Email учня не знайдено')
+    const resolvedName = String(displayName || userData.displayName || '').trim() || 'Учень'
+    const resolvedClassId = classId ?? userData.classId ?? null
+
+    tx.update(userRef, { accessCode: nextCode })
+    tx.set(newCodeRef, {
+      email: resolvedEmail,
+      uid: studentId,
+      displayName: resolvedName,
+      role: 'student',
+      classId: resolvedClassId,
+      isActive: true,
+      createdAt: serverTimestamp(),
+      rotatedFrom: prevCode || null,
+    })
+
+    if (oldCodeRef && prevCode) {
+      const oldPatch = {
+        isActive: false,
+        rotatedTo: nextCode,
+        rotatedAt: serverTimestamp(),
+      }
+      if (oldCodeSnap?.exists()) {
+        tx.update(oldCodeRef, oldPatch)
+      } else {
+        tx.set(oldCodeRef, {
+          email: resolvedEmail,
+          uid: studentId,
+          displayName: resolvedName,
+          role: 'student',
+          classId: resolvedClassId,
+          createdAt: serverTimestamp(),
+          ...oldPatch,
+        })
+      }
+    }
+  })
+}
+
 // ─── Subject helpers ───────────────────────────────────────────────────────────
 export async function getAllSubjects() {
   const snap = await getDocs(subjectsCol())
@@ -1050,9 +1124,6 @@ export async function executeTrade(tradeId) {
       toCounts = r.inventoryCounts
     }
 
-    const fromNewXp = (from.xp || 0) + 50
-    const toNewXp   = (to.xp   || 0) + 50
-
     const fromAvatarNext = avatarAfterLosingTradedItems(from.avatar, trade.offeredItems || [], itemMeta)
     const toAvatarNext = avatarAfterLosingTradedItems(to.avatar, trade.requestedItems || [], itemMeta)
 
@@ -1060,8 +1131,6 @@ export async function executeTrade(tradeId) {
       coins: increment(-(trade.offeredCoins || 0) + (trade.requestedCoins || 0)),
       inventory: fromInv,
       inventoryCounts: fromCounts,
-      xp: fromNewXp,
-      level: calcLevel(fromNewXp),
       tradesCompleted: increment(1),
     }
     if (!avatarEquipVisualEquals(from.avatar, fromAvatarNext)) {
@@ -1072,8 +1141,6 @@ export async function executeTrade(tradeId) {
       coins: increment(-(trade.requestedCoins || 0) + (trade.offeredCoins || 0)),
       inventory: toInv,
       inventoryCounts: toCounts,
-      xp: toNewXp,
-      level: calcLevel(toNewXp),
       tradesCompleted: increment(1),
     }
     if (!avatarEquipVisualEquals(to.avatar, toAvatarNext)) {
