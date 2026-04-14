@@ -258,7 +258,6 @@ async function beginPlay() {
       },
       onFrame: (dt) => {
         remotes?.update(dt)
-        if (spawnFlags && worldApi) spawnFlags.update(worldApi.core.camera)
         if (presenceStopped || !worldApi) return
         const uid = auth.user?.uid
         if (!uid) return
@@ -519,7 +518,52 @@ watch(
   },
 )
 
+/** While the world is active: block pinch/page zoom and multi-touch gestures that break play (iOS Safari). */
+let pinchLockCleanup = null
+function clearPinchLock() {
+  if (pinchLockCleanup) {
+    pinchLockCleanup()
+    pinchLockCleanup = null
+  }
+}
+function installPinchLock() {
+  clearPinchLock()
+  const onMultiTouchMove = (e) => {
+    if (e.touches.length > 1) e.preventDefault()
+  }
+  const onGesture = (e) => {
+    e.preventDefault()
+  }
+  const onWheelCtrlZoom = (e) => {
+    if (e.ctrlKey) e.preventDefault()
+  }
+  document.documentElement.classList.add('fus-block-world-play')
+  document.addEventListener('touchmove', onMultiTouchMove, { passive: false })
+  document.addEventListener('gesturestart', onGesture, { passive: false })
+  document.addEventListener('gesturechange', onGesture, { passive: false })
+  document.addEventListener('gestureend', onGesture, { passive: false })
+  document.addEventListener('wheel', onWheelCtrlZoom, { passive: false })
+  pinchLockCleanup = () => {
+    document.documentElement.classList.remove('fus-block-world-play')
+    document.removeEventListener('touchmove', onMultiTouchMove)
+    document.removeEventListener('gesturestart', onGesture)
+    document.removeEventListener('gesturechange', onGesture)
+    document.removeEventListener('gestureend', onGesture)
+    document.removeEventListener('wheel', onWheelCtrlZoom)
+  }
+}
+
+watch(
+  () => started.value && !booting.value,
+  (playing) => {
+    if (playing) installPinchLock()
+    else clearPinchLock()
+  },
+  { immediate: true },
+)
+
 onUnmounted(async () => {
+  clearPinchLock()
   window.visualViewport?.removeEventListener('resize', onVisualViewportChange)
   window.visualViewport?.removeEventListener('scroll', onVisualViewportChange)
   await exitFullscreenSafe()
@@ -584,7 +628,7 @@ onUnmounted(async () => {
     <button
       v-else-if="started && !booting"
       type="button"
-      class="fus-bw-exit-app absolute z-[220] rounded-xl border border-white/25 bg-black/55 px-3 py-2 text-xs font-extrabold text-white shadow-lg backdrop-blur-sm active:scale-[0.98] touch-manipulation"
+      class="fus-bw-exit-app select-none absolute z-[220] rounded-xl border border-white/25 bg-black/55 px-3 py-2 text-xs font-extrabold text-white shadow-lg backdrop-blur-sm active:scale-[0.98] touch-manipulation"
       style="top: max(0.5rem, env(safe-area-inset-top, 0px)); left: 0.5rem"
       @click="exitToApp"
     >
@@ -608,6 +652,9 @@ onUnmounted(async () => {
   z-index: 30;
   width: 100%;
   max-width: 100%;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .fus-mine-root :deep(canvas) {

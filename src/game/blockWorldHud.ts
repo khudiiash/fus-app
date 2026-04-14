@@ -9,15 +9,20 @@ import heartsSheet from './assets/hearts_sh.png'
 import { BLOCK_WORLD_MAX_HP_HALF_UNITS } from '@/game/playerConstants'
 import { hotbarCellVisualForBwSlot } from '@/game/blockWorldHotbarVisuals'
 
-const STICK_MAX = 56
-/** Max knob deflection (px) for the right-hand look joystick (matches CSS ring × 0.75). */
-const LOOK_STICK_MAX = 72
+/** Move stick: max knob offset scales with `.fus-bw-stick-base` size (120px → radius 60). */
+const STICK_BASE_REF_RADIUS_PX = 60
+const STICK_MAX_REF = 56
+/** Look stick: matches default 162px ring (radius 81) × ~0.89. */
+const LOOK_STICK_BASE_REF_RADIUS_PX = 81
+const LOOK_STICK_MAX_REF = 72
 /** Radians per pixel — full-screen drag look (`.fus-bw-look`). */
 const LOOK_SENS = 0.009
-/** Rad/s when the look stick is held at the rim (continuous spin only there). */
+/** Radians per pixel — look ring *inside* the rim (drag to aim); higher than legacy 0.009. */
+const LOOK_STICK_DRAG_SENS = 0.016
+/** Rad/s only while finger is at the outer rim (continuous spin). */
 const LOOK_STICK_YAW_SPEED = 2.85
 const LOOK_STICK_PITCH_SPEED = 2.2
-/** Finger must reach this fraction of `LOOK_STICK_MAX` radius before rim / continuous spin. */
+/** Finger must reach this fraction of max radius before rim / continuous spin. */
 const LOOK_STICK_RIM_FRAC = 0.94
 /** Joystick deflection maps to [-1,1]; boost so full tilt matches keyboard cruise speed. */
 const TOUCH_ANALOG_GAIN = 1.32
@@ -308,16 +313,20 @@ export function mountBlockWorldHud(
     let stickCy = 0
 
     const applyStick = (clientX: number, clientY: number) => {
+      const sr = stickBase.getBoundingClientRect()
+      const stickRadius = Math.min(sr.width, sr.height) / 2
+      const stickMax =
+        stickRadius * (STICK_MAX_REF / STICK_BASE_REF_RADIUS_PX) || 1
       let dx = clientX - stickCx
       let dy = clientY - stickCy
       const len = Math.hypot(dx, dy) || 0
-      if (len > STICK_MAX) {
-        dx = (dx / len) * STICK_MAX
-        dy = (dy / len) * STICK_MAX
+      if (len > stickMax) {
+        dx = (dx / len) * stickMax
+        dy = (dy / len) * stickMax
       }
       stickKnob.style.transform = `translate(${dx}px, ${dy}px)`
-      let fwd = -dy / STICK_MAX
-      let str = dx / STICK_MAX
+      let fwd = -dy / stickMax
+      let str = dx / stickMax
       const m = Math.max(Math.abs(fwd), Math.abs(str))
       if (m > 1) {
         fwd /= m
@@ -403,7 +412,7 @@ export function mountBlockWorldHud(
     let lookStickDownX = 0
     let lookStickDownY = 0
     let lookStickDownT = 0
-    /** Normalized rim direction (clamped knob / LOOK_STICK_MAX); used only while spinning. */
+    /** Normalized rim knob (clamped); used for continuous spin direction at the rim. */
     let lookStickRimNx = 0
     let lookStickRimNy = 0
     let lookStickSpinActive = false
@@ -424,8 +433,7 @@ export function mountBlockWorldHud(
     }
 
     /**
-     * Updates knob visual and rim direction. Returns true when the finger is at the outer ring
-     * (continuous spin); false = inside ring — use per-move deltas only.
+     * Updates knob visual and rim direction. Returns true at outer rim (continuous spin only there).
      */
     const setLookStickDeflectionFromClient = (clientX: number, clientY: number): boolean => {
       const r = lookStickBase.getBoundingClientRect()
@@ -433,15 +441,18 @@ export function mountBlockWorldHud(
       const cy = r.top + r.height / 2
       let dx = clientX - cx
       let dy = clientY - cy
+      const lookRadius = Math.min(r.width, r.height) / 2
+      const lookMax =
+        lookRadius * (LOOK_STICK_MAX_REF / LOOK_STICK_BASE_REF_RADIUS_PX) || 1
       const rawLen = Math.hypot(dx, dy) || 0
-      const atRim = rawLen >= LOOK_STICK_MAX * LOOK_STICK_RIM_FRAC
-      if (rawLen > LOOK_STICK_MAX) {
-        dx = (dx / rawLen) * LOOK_STICK_MAX
-        dy = (dy / rawLen) * LOOK_STICK_MAX
+      const atRim = rawLen >= lookMax * LOOK_STICK_RIM_FRAC
+      if (rawLen > lookMax) {
+        dx = (dx / rawLen) * lookMax
+        dy = (dy / rawLen) * lookMax
       }
       lookStickKnob.style.transform = `translate(${dx}px, ${dy}px)`
-      lookStickRimNx = dx / LOOK_STICK_MAX
-      lookStickRimNy = dy / LOOK_STICK_MAX
+      lookStickRimNx = dx / lookMax
+      lookStickRimNy = dy / lookMax
       return atRim
     }
 
@@ -480,8 +491,8 @@ export function mountBlockWorldHud(
       } else {
         stopLookStickRaf()
         euler.setFromQuaternion(control.camera.quaternion)
-        euler.y -= LOOK_SENS * (e.clientX - lookStickLsX)
-        euler.x -= LOOK_SENS * (e.clientY - lookStickLsY)
+        euler.y -= LOOK_STICK_DRAG_SENS * (e.clientX - lookStickLsX)
+        euler.x -= LOOK_STICK_DRAG_SENS * (e.clientY - lookStickLsY)
         euler.x = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, euler.x))
         control.camera.quaternion.setFromEuler(euler)
         lookStickLsX = e.clientX
@@ -536,7 +547,8 @@ export function mountBlockWorldHud(
 
     row.appendChild(stickWrap)
     row.appendChild(actions)
-    bottom.insertBefore(row, heartsHud)
+    /* After hearts + hotbar: paint on top; CSS positions row at lower corners above the dock. */
+    bottom.appendChild(row)
 
     cleanups.push(() => {
       resetStick()

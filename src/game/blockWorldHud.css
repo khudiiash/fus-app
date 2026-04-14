@@ -4,6 +4,15 @@
   inset: 0;
   z-index: 50;
   pointer-events: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.fus-bw-hud * {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .fus-bw-top-actions {
@@ -118,6 +127,8 @@
   width: 100%;
   padding: 4px 8px 2px;
   pointer-events: none;
+  position: relative;
+  z-index: 5;
 }
 
 .fus-bw-hearts {
@@ -185,6 +196,8 @@
   align-items: stretch;
   padding-bottom: env(safe-area-inset-bottom, 0px);
   pointer-events: none;
+  /* In-flow hearts + hotbar height; sticks layer above via --fus-bw-dock-stack + safe inset. */
+  --fus-bw-dock-stack: 5.25rem;
 }
 
 .fus-bw-controls {
@@ -196,12 +209,20 @@
   justify-content: space-between;
   gap: 10px;
   padding: 6px 10px 4px;
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + var(--fus-bw-dock-stack));
+  z-index: 3;
+  padding-left: max(8px, env(safe-area-inset-left, 0px));
+  padding-right: max(8px, env(safe-area-inset-right, 0px));
+  padding-bottom: 0;
 }
 
 .fus-bw-stick-wrap {
   pointer-events: auto;
   display: flex;
-  flex-direction: column;
+  flex-direction: column-reverse;
   align-items: center;
   gap: 4px;
 }
@@ -254,8 +275,6 @@
   align-items: flex-end;
   align-content: end;
   min-width: 168px;
-  /* Lift jump + look stick slightly above the hotbar dock */
-  transform: translateY(-18px);
 }
 
 .fus-bw-text-btn {
@@ -395,6 +414,8 @@
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-bottom: none;
   box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.35);
+  position: relative;
+  z-index: 5;
 }
 
 .fus-bw-hotbar-item {
@@ -453,4 +474,129 @@
   image-rendering: pixelated;
   pointer-events: none;
   overflow: visible;
+}
+
+/* Short landscape viewports (phones): larger corner sticks, tighter dock, labels above rings */
+@media (orientation: landscape) and (max-height: 520px) {
+  .fus-bw-bottom {
+    /* Smaller offset + nudge = sticks / jump sit closer to the lower edge (thumbs). */
+    --fus-bw-dock-stack: 2.65rem;
+  }
+
+  .fus-bw-controls {
+    padding: 2px max(6px, env(safe-area-inset-left, 0px)) 0 max(6px, env(safe-area-inset-right, 0px));
+    gap: 8px;
+    transform: translateY(clamp(14px, 4.5vmin, 32px));
+  }
+
+  .fus-bw-stick-wrap {
+    gap: 3px;
+  }
+
+  .fus-bw-stick-base {
+    width: clamp(124px, 30vmin, 168px);
+    height: clamp(124px, 30vmin, 168px);
+  }
+
+  .fus-bw-stick-knob {
+    width: 54px;
+    height: 54px;
+    margin-left: -27px;
+    margin-top: -27px;
+  }
+
+  .fus-bw-look-stick-wrap {
+    gap: 3px;
+    margin-bottom: -6px;
+  }
+
+  .fus-bw-look-stick-base {
+    width: clamp(142px, 34vmin, 188px);
+    height: clamp(142px, 34vmin, 188px);
+  }
+
+  .fus-bw-look-stick-knob {
+    width: 62px;
+    height: 62px;
+    margin-left: -31px;
+    margin-top: -31px;
+  }
+
+  .fus-bw-actions {
+    min-width: min(42vw, 200px);
+  }
+
+  .fus-bw-jump-btn--compact {
+    width: 58px;
+    height: 58px;
+    font-size: 8px;
+    margin-top: -30px;
+  }
+
+  .fus-bw-look-stick-label {
+    max-width: min(42vw, 200px);
+    font-size: 9px;
+  }
+
+  .fus-bw-stick-label {
+    font-size: 9px;
+  }
+
+  .fus-bw-hearts-hud {
+    padding: 2px 6px 0;
+  }
+
+  .fus-bw-heart {
+    width: 15px;
+    height: 14px;
+  }
+
+  .fus-bw-hotbar {
+    padding: 4px 6px 5px;
+    gap: 3px;
+  }
+
+  .fus-bw-hotbar-item {
+    width: 34px;
+    height: 34px;
+  }
+
+  .fus-bw-hotbar-icon,
+  .fus-bw-hotbar-tool-sprite {
+    width: 26px;
+    height: 26px;
+  }
+
+  .fus-bw-hotbar-emoji {
+    font-size: 1.15rem;
+  }
+
+  .fus-bw-status {
+    top: max(0.35rem, env(safe-area-inset-top, 0px));
+    max-width: min(38vw, 11rem);
+  }
+
+  .fus-bw-online {
+    font-size: 11px;
+    padding: 3px 8px;
+  }
+
+  .fus-bw-top-actions {
+    gap: 6px;
+    max-width: min(9.5rem, 34vw);
+  }
+
+  .fus-bw-spawn-btn,
+  .fus-bw-flag-spawn-btn,
+  .fus-bw-restore-world-btn {
+    min-height: 34px;
+    font-size: 11px;
+    padding: 0 10px;
+  }
+
+  .fus-bw-text-btn {
+    min-height: 38px;
+    font-size: 12px;
+    padding: 0 10px;
+  }
 }

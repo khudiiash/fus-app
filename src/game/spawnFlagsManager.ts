@@ -6,7 +6,7 @@ const FLAG_W = 0.95
 const FLAG_H = 1.15
 const POLE_H = 0.08
 
-/** Vertical billboard “flag” with skin head; billboards toward camera each frame. */
+/** Spawn flag: pole + textured plane fixed to world yaw (`pose.ry`), double-sided. */
 export class SpawnFlagsManager {
   private scene: THREE.Scene
   private flags = new Map<
@@ -139,7 +139,10 @@ export class SpawnFlagsManager {
         pole.position.y = FLAG_H * 0.28
         root.add(pole)
 
-        const mat = new THREE.MeshBasicMaterial({ transparent: true })
+        const mat = new THREE.MeshBasicMaterial({
+          transparent: true,
+          side: THREE.DoubleSide,
+        })
         const board = new THREE.Mesh(new THREE.PlaneGeometry(FLAG_W, FLAG_H), mat)
         board.position.set(0, FLAG_H * 0.62 + POLE_H, 0.08)
         board.frustumCulled = false
@@ -163,12 +166,6 @@ export class SpawnFlagsManager {
     }
     for (const uid of this.flags.keys()) {
       if (!seen.has(uid)) this.remove(uid)
-    }
-  }
-
-  update(camera: THREE.PerspectiveCamera) {
-    for (const entry of this.flags.values()) {
-      entry.board.quaternion.copy(camera.quaternion)
     }
   }
 
