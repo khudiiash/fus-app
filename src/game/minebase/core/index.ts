@@ -3,11 +3,20 @@ import * as THREE from 'three'
 export default class Core {
   /** When set (Fus app), renderer mounts here and size follows the element. */
   mountEl: HTMLElement | null = null
+  private readonly touchLikeDevice: boolean
 
   constructor(mountEl?: HTMLElement) {
     this.mountEl = mountEl ?? null
+    this.touchLikeDevice =
+      ('ontouchstart' in window) ||
+      ((navigator.maxTouchPoints || 0) > 0) ||
+      (window.matchMedia?.('(pointer: coarse)').matches ?? false)
     this.camera = new THREE.PerspectiveCamera()
-    this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false })
+    this.renderer = new THREE.WebGLRenderer({
+      antialias: !this.touchLikeDevice,
+      alpha: false,
+      powerPreference: 'high-performance',
+    })
     this.scene = new THREE.Scene()
     this.initScene()
     this.initRenderer()
@@ -17,6 +26,24 @@ export default class Core {
   camera: THREE.PerspectiveCamera
   scene: THREE.Scene
   renderer: THREE.WebGLRenderer
+
+  private targetFov(aspect: number): number {
+    // Portrait phones need wider vertical FOV for navigation.
+    if (this.touchLikeDevice) {
+      if (aspect < 0.9) return 66
+      if (aspect < 1.2) return 60
+      return 54
+    }
+    return 50
+  }
+
+  private targetPixelRatio(aspect: number): number {
+    const dpr = window.devicePixelRatio || 1
+    if (!this.touchLikeDevice) return Math.min(dpr, 2)
+    // Landscape renders many more visible voxels; cap harder to avoid mobile GPU stalls.
+    if (aspect >= 1.2) return Math.min(dpr, 1.1)
+    return Math.min(dpr, 1.35)
+  }
 
   private sizeFromMount = () => {
     if (this.mountEl) {
@@ -36,17 +63,22 @@ export default class Core {
   /** Resize camera + renderer from mount (call after layout / visualViewport changes). */
   syncRendererSize = () => {
     const { w, h } = this.sizeFromMount()
-    this.camera.aspect = w / h
+    const aspect = w / h
+    this.camera.aspect = aspect
+    this.camera.fov = this.targetFov(aspect)
     this.camera.updateProjectionMatrix()
+    this.renderer.setPixelRatio(this.targetPixelRatio(aspect))
     this.renderer.setSize(w, h)
   }
 
   initCamera = () => {
-    this.camera.fov = 50
     const { w, h } = this.sizeFromMount()
-    this.camera.aspect = w / h
+    const aspect = w / h
+    this.camera.fov = this.targetFov(aspect)
+    this.camera.aspect = aspect
     this.camera.near = 0.01
-    this.camera.far = 500
+    // Smaller far plane on touch devices reduces overdraw and fragment load.
+    this.camera.far = this.touchLikeDevice ? 220 : 500
     this.camera.updateProjectionMatrix()
     this.camera.position.set(8, 50, 8)
 
@@ -75,7 +107,7 @@ export default class Core {
 
   initRenderer = () => {
     const { w, h } = this.sizeFromMount()
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2))
+    this.renderer.setPixelRatio(this.targetPixelRatio(w / h))
     this.renderer.outputColorSpace = THREE.SRGBColorSpace
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping
     this.renderer.toneMappingExposure = 1.08
