@@ -75,6 +75,11 @@ const router = createRouter({
         { path: 'history',     name: 'student-history',      component: () => import('@/views/student/HistoryView.vue') },
         { path: 'quests',      name: 'student-quests',       component: () => import('@/views/student/TeacherQuestsView.vue') },
         { path: 'world',       name: 'student-world',        component: () => import('@/views/student/BlockWorldView.vue') },
+        {
+          path: 'world-next',
+          name: 'student-world-next',
+          component: () => import('@/views/student/BlockWorldNextView.vue'),
+        },
         { path: 'room',        name: 'student-room',         component: () => import('@/views/student/RoomView.vue') },
         { path: 'room/:uid',   name: 'student-room-other',   component: () => import('@/views/student/RoomView.vue') },
       ],
