@@ -1,0 +1,21 @@
+Third-party notices — block world / voxel reference work
+==========================================================
+
+This repository may incorporate ideas, algorithms, or patterns studied
+from third-party open-source projects. When code is derived from such
+material, the source is cited in comments next to the implementation.
+
+Reference client (study / non-vendored upstream; CC BY-NC 4.0)
+--------------------------------------------------------------
+  Project: js-minecraft
+  Upstream: https://github.com/LabyStudio/js-minecraft
+  License: Creative Commons Attribution-NonCommercial 4.0 International
+           (see upstream LICENSE in that repository)
+
+  Requirements under CC BY-NC 4.0 include appropriate credit to the
+  licensor and a link to the license; adapted material must indicate
+  changes and retain notices. This file is part of that attribution.
+
+  Non-commercial use: ensure your deployment matches the NC terms.
+  Do not assume Mojang/Microsoft assets or trademarks are licensed by
+  the upstream CC license; treat game art and branding separately.
