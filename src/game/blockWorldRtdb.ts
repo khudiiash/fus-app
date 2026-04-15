@@ -115,12 +115,9 @@ export function subscribePickaxeHitsForVictim(
     const v = snap.val() as Record<string, unknown> | null
     if (!v || typeof v !== 'object') return
     if (String(v.toUid) !== victimUid) return
-    const ts = Number(v.ts)
-    if (
-      ignoreBefore != null &&
-      Number.isFinite(ts) &&
-      ts < ignoreBefore
-    ) {
+    const rawTs = Number(v.ts)
+    const ts = Number.isFinite(rawTs) ? rawTs : 0
+    if (ignoreBefore != null && ts < ignoreBefore) {
       void remove(snap.ref).catch(() => {})
       return
     }

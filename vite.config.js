@@ -1,5 +1,6 @@
 import { defineConfig, loadEnv } from 'vite'
 import vue from '@vitejs/plugin-vue'
+import basicSsl from '@vitejs/plugin-basic-ssl'
 import tailwindcss from '@tailwindcss/vite'
 import { VitePWA } from 'vite-plugin-pwa'
 import { readFileSync, writeFileSync, existsSync } from 'node:fs'
@@ -7,6 +8,10 @@ import { fileURLToPath, URL } from 'node:url'
 import { dirname, resolve } from 'node:path'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
+
+/** Self-signed TLS for `npm run dev:https` / `preview:https` (WebGPU needs a secure context on LAN). */
+const useDevHttps =
+  process.env.DEV_HTTPS === '1' || process.env.DEV_HTTPS === 'true'
 
 const FCM_FB_CDN = '12.11.0'
 
@@ -96,8 +101,9 @@ function prependFcmImportToSwJs() {
 }
 
 export default defineConfig(({ mode }) => ({
-  // Listen on all interfaces so phones / other PCs on the same Wi‑Fi can open the dev app
-  // (use the “Network” URL Vite prints, e.g. http://192.168.x.x:5173).
+  // Listen on all interfaces so phones / other PCs on the same Wi‑Fi can open the dev app.
+  // With `npm run dev:https`, Vite prints `https://192.168.x.x:5173` — trust the cert once in the
+  // browser; add that origin to Firebase Auth “Authorized domains” if you use login on the phone.
   server: {
     host: true,
   },
@@ -122,6 +128,7 @@ export default defineConfig(({ mode }) => ({
     },
   },
   plugins: [
+    ...(useDevHttps ? [basicSsl()] : []),
     fcmBackgroundWorkerPlugin(mode),
     vue(),
     tailwindcss(),

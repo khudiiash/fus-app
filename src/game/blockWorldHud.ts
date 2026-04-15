@@ -43,6 +43,8 @@ export type BlockWorldHudHandle = {
   dispose: () => void
   setHeartsHalfUnits: (hp: number, maxHalf?: number) => void
   setOnlineCount: (n: number) => void
+  /** Brief red vignette when the local player takes damage. */
+  flashDamage: () => void
 }
 
 function swallowPointer(e: Event) {
@@ -58,6 +60,34 @@ export function mountBlockWorldHud(
   const root = document.createElement('div')
   root.className = 'fus-bw-hud'
   mountEl.appendChild(root)
+
+  const damageFlash = document.createElement('div')
+  damageFlash.className = 'fus-bw-damage-flash'
+  damageFlash.setAttribute('aria-hidden', 'true')
+  root.appendChild(damageFlash)
+  let damageFlashTimer: ReturnType<typeof setTimeout> | null = null
+  /** Start of current “burst” for capping how long the vignette can stay on. */
+  let damageFlashBurstT0 = 0
+  const DAMAGE_FLASH_GAP_MS = 650
+  const DAMAGE_FLASH_EXTEND_MS = 200
+  const DAMAGE_FLASH_CAP_MS = 480
+  const flashDamage = () => {
+    const now = performance.now()
+    if (
+      !damageFlashBurstT0 ||
+      now - damageFlashBurstT0 > DAMAGE_FLASH_GAP_MS
+    ) {
+      damageFlashBurstT0 = now
+    }
+    damageFlash.classList.add('fus-bw-damage-flash--on')
+    if (damageFlashTimer != null) clearTimeout(damageFlashTimer)
+    const capAt = damageFlashBurstT0 + DAMAGE_FLASH_CAP_MS
+    const hideAt = Math.min(capAt, now + DAMAGE_FLASH_EXTEND_MS)
+    damageFlashTimer = setTimeout(() => {
+      damageFlashTimer = null
+      damageFlash.classList.remove('fus-bw-damage-flash--on')
+    }, Math.max(0, hideAt - now))
+  }
 
   const status = document.createElement('div')
   status.className = 'fus-bw-status'
@@ -574,6 +604,10 @@ export function mountBlockWorldHud(
   }
 
   const dispose = () => {
+    if (damageFlashTimer != null) clearTimeout(damageFlashTimer)
+    damageFlashTimer = null
+    damageFlashBurstT0 = 0
+    damageFlash.classList.remove('fus-bw-damage-flash--on')
     control.onHotbarIndexChange = undefined
     control.onHotbarLayoutChange = undefined
     control.onPlayerHpChanged = undefined
@@ -583,5 +617,5 @@ export function mountBlockWorldHud(
     root.remove()
   }
 
-  return { dispose, setHeartsHalfUnits, setOnlineCount }
+  return { dispose, setHeartsHalfUnits, setOnlineCount, flashDamage }
 }

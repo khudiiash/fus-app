@@ -10,6 +10,7 @@ import { isMobile, useTouchGameControls } from '../utils'
 import {
   PLAYER_EYE_HEIGHT,
   BLOCK_WORLD_MAX_HP_HALF_UNITS,
+  BLOCK_WORLD_MAX_REACH,
   FIST_MINE_DAMAGE_PER_SWING,
   MINING_DAMAGE_HOLDING_BLOCK,
 } from '@/game/playerConstants'
@@ -27,6 +28,9 @@ export const TOOL_HOTBAR_INDEX = 7
 export const HOTBAR_SLOT_COUNT = BW_HOTBAR_MAX_SLOTS
 export const HOTBAR_MAX_SLOTS = BW_HOTBAR_MAX_SLOTS
 export type BlockWorldInteractionMode = 'mine' | 'build'
+
+/** Min ms between crosshair mine swings (blocks, mobs, PvP ray path). */
+const BW_CROSSHAIR_MINE_COOLDOWN_MS = 240
 
 enum Side {
   front,
@@ -54,12 +58,18 @@ export default class Control {
     this.audio = audio
 
     this.raycaster = new THREE.Raycaster()
-    this.raycaster.far = 8
+    this.raycaster.far = BLOCK_WORLD_MAX_REACH
     this.far = this.player.body.height
 
     this.initRayCaster()
     this.initEventListeners()
     this.syncInteractionFromHotbar()
+  }
+
+  /** After swapping WebGL → WebGPU canvas, reconnect pointer lock to the new element. */
+  rebindPointerLockElement(domElement: HTMLElement) {
+    this.control.disconnect()
+    this.control.connect(domElement)
   }
 
   // core properties
@@ -132,11 +142,18 @@ export default class Control {
   onPlayerHpPresenceFlush?: () => void
   /** After HP hits 0 (then refilled); e.g. teleport to spawn / flag. */
   onHealthDepleted?: () => void
+  /** Brief damage feedback (e.g. HUD red flash) when HP drops from PvP or mobs. */
+  onPlayerDamaged?: () => void
   /** Pickaxe raycast targets (remote `PlayerObject` roots). */
   getRemotePlayerRaycastRoots: () => THREE.Object3D[] = () => []
   /** When pickaxe swing hits a remote rig (cooldown applied). */
   onPickaxeHitRemotePlayer?: (targetUid: string) => void
+  /** Optional mob roots for mine-mode raycasts (see {@link getMobRaycastRoots}). */
+  getMobRaycastRoots: () => THREE.Object3D[] = () => []
+  /** Mine-mode hit on a mob rig (same cooldown as {@link onPickaxeHitRemotePlayer}). */
+  onPickaxeHitMob?: (mobId: string, dmg: number) => void
   private lastPickaxePlayerHitMs = 0
+  private lastCrosshairMineMs = 0
   /** Accumulated mining damage toward the block currently being targeted. */
   private blockBreakDamage = new Map<string, number>()
   private lastMineTargetKey: string | null = null
@@ -412,6 +429,13 @@ export default class Control {
     return this.interactionMode === 'mine' && this.getBwPvpDamageHalf() > 0
   }
 
+  /** Integer damage applied to shared-world mob HP (tool stronger than fist). */
+  getMobMeleeDamage(): number {
+    const pvp = this.getBwPvpDamageHalf()
+    if (pvp > 0) return Math.max(1, Math.floor(pvp * 3 * 0.32))
+    return Math.max(1, Math.ceil(this.getCurrentMineDamage() * 0.22))
+  }
+
   /** RTDB presence: block type in hand when building; mine hand variant. */
   getPresenceHandFields(): {
     bwBlockType: number
@@ -491,7 +515,18 @@ export default class Control {
     return null
   }
 
+  private findMobIdFromIntersect(hit: THREE.Intersection): string | null {
+    let o: THREE.Object3D | null = hit.object
+    while (o) {
+      const id = o.userData?.blockWorldMobId as string | undefined
+      if (typeof id === 'string' && id.length > 0) return id
+      o = o.parent
+    }
+    return null
+  }
+
   applyDamageHalfUnits(dmg: number) {
+    if (dmg > 0) this.onPlayerDamaged?.()
     this.playerHpHalfUnits = Math.max(0, this.playerHpHalfUnits - dmg)
     const dead = this.playerHpHalfUnits <= 0
     if (dead) {
@@ -508,16 +543,10 @@ export default class Control {
     this.onPlayerHpPresenceFlush?.()
   }
 
-  /** Voxel the player is standing on (same XZ column, block below feet). Breaking it causes fall-through / heavy regen. */
-  private blockUnderFeetCell(): { x: number; y: number; z: number } {
-    return {
-      x: Math.round(this.camera.position.x),
-      z: Math.round(this.camera.position.z),
-      y: Math.floor(this.camera.position.y - PLAYER_EYE_HEIGHT - 0.2),
-    }
-  }
-
   crosshairBreak = () => {
+    const now = Date.now()
+    if (now - this.lastCrosshairMineMs < BW_CROSSHAIR_MINE_COOLDOWN_MS) return
+    this.lastCrosshairMineMs = now
     this.requestHandSwing()
     this.raycaster.setFromCamera({ x: 0, y: 0 }, this.camera)
 
@@ -542,21 +571,33 @@ export default class Control {
       }
     }
 
+    const mobRoots = this.getMobRaycastRoots()
+    if (
+      this.interactionMode === 'mine' &&
+      mobRoots.length > 0 &&
+      Date.now() - this.lastPickaxePlayerHitMs > 420
+    ) {
+      const mh = this.raycaster.intersectObjects(mobRoots, true)[0]
+      const bhMob = this.raycaster.intersectObjects(this.terrain.blocks)[0]
+      if (mh && (!bhMob || mh.distance <= bhMob.distance)) {
+        const mobId = this.findMobIdFromIntersect(mh)
+        if (mobId) {
+          this.lastPickaxePlayerHitMs = Date.now()
+          if (mh.point) {
+            spawnPickaxePlayerHitParticles(this.scene, mh.point)
+          }
+          this.onPickaxeHitMob?.(mobId, this.getMobMeleeDamage())
+          return
+        }
+      }
+    }
+
     const block = this.raycaster.intersectObjects(this.terrain.blocks)[0]
     const matrix = new THREE.Matrix4()
     if (!(block && block.object instanceof THREE.InstancedMesh)) return
 
     block.object.getMatrixAt(block.instanceId!, matrix)
     const position = new THREE.Vector3().setFromMatrixPosition(matrix)
-
-    const stand = this.blockUnderFeetCell()
-    if (
-      Math.round(position.x) === stand.x &&
-      Math.round(position.z) === stand.z &&
-      Math.round(position.y) === stand.y
-    ) {
-      return
-    }
 
     const blockTypeEnum = BlockType[block.object.name as any] as unknown as BlockType
     if (blockTypeEnum === BlockType.bedrock) {

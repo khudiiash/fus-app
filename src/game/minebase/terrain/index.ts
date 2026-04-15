@@ -6,6 +6,15 @@ import Noise from './noise'
 
 import Generate from './worker/generate?worker'
 
+/** Fewer generated chunks on phones / coarse pointer (big CPU+GPU win). */
+function terrainReducedViewRange(): boolean {
+  if (typeof window === 'undefined') return false
+  return (
+    (navigator.maxTouchPoints || 0) > 0 ||
+    (window.matchMedia?.('(pointer: coarse)').matches ?? false)
+  )
+}
+
 export enum BlockType {
   grass = 0,
   sand = 1,
@@ -78,7 +87,7 @@ export default class Terrain {
   }
   scene: THREE.Scene
   camera: THREE.PerspectiveCamera
-  distance = 3
+  distance = terrainReducedViewRange() ? 2 : 3
   chunkSize = 24
 
   maxCount: number
@@ -108,6 +117,8 @@ export default class Terrain {
 
   customBlocks: Block[] = []
   private customBlockListeners: Array<() => void> = []
+  /** Throttle expensive {@link BlockHighlight.update} (ms). */
+  private lastHighlightUpdateMs = 0
   onCustomBlockChange(cb: () => void) {
     this.customBlockListeners.push(cb)
   }
@@ -337,6 +348,11 @@ export default class Terrain {
 
     this.previousChunk.copy(this.chunk)
 
-    this.highlight.update()
+    const t = performance.now()
+    const interval = terrainReducedViewRange() ? 140 : 110
+    if (t - this.lastHighlightUpdateMs >= interval) {
+      this.lastHighlightUpdateMs = t
+      this.highlight.update()
+    }
   }
 }

@@ -37,10 +37,18 @@ import {
   subscribePickaxeHitsForVictim,
   pushPickaxeHit,
 } from '@/game/blockWorldRtdb'
+import {
+  ensureWorldMobsSeeded,
+  subscribeMobHitsForVictim,
+  mobDamageFromPlayer,
+  tryClaimMobCoinDrop,
+  removeMobCoinDrop,
+} from '@/game/blockWorldMobsRtdb'
+import { grantStudentCoinsFromGame } from '@/firebase/collections'
+import { BlockWorldMobsManager } from '@/game/blockWorldMobsManager'
 import { PLAYER_EYE_HEIGHT } from '@/game/playerConstants'
 import { normalizeSkinUrlForPresence } from '@/utils/presenceSkinUrl'
 import { cameraYawFromQuaternion } from '@/game/cameraYaw'
-import { useTouchGameControls } from '@/game/minebase/utils'
 import '@/game/minebase/style.css'
 import minecraftSunset from '@/assets/minecraft-sunset.jpg'
 
@@ -48,8 +56,6 @@ const WORLD_ID = 'school'
 
 /** Only this access-code student sees “Скинути світ” in the block world HUD. */
 const BLOCK_WORLD_RESET_ACCESS_CODE = 'GOLD-1531'
-
-const desktopGameHints = !useTouchGameControls()
 
 function applyBlockWorldHotbarFromStores() {
   if (!worldApi || !auth.profile) return
@@ -99,6 +105,68 @@ let unsubWorld = null
 let unsubPresence = null
 let unsubSpawnFlags = null
 let unsubPickaxeHits = null
+let unsubMobHits = null
+let mobsManager = null
+/** Mob coin Firestore grants are debounced; RTDB pickup + HUD update happen immediately. */
+let mobCoinFirestorePending = 0
+let mobCoinFirestoreTimer = null
+const MOB_COIN_FIRESTORE_DEBOUNCE_MS = 720
+
+/** Coins only — XP/level follow the batched Firestore grant (`ceil(total*1.5)`), avoiding per-coin ceil drift. */
+function bumpOptimisticMobCoins(delta) {
+  const p = auth.profile
+  if (!p || delta <= 0) return
+  auth.profile = {
+    ...p,
+    coins: (p.coins || 0) + delta,
+  }
+}
+
+function scheduleMobCoinFirestoreFlush(uid) {
+  if (mobCoinFirestoreTimer) clearTimeout(mobCoinFirestoreTimer)
+  mobCoinFirestoreTimer = setTimeout(() => {
+    mobCoinFirestoreTimer = null
+    void flushMobCoinFirestore(uid)
+  }, MOB_COIN_FIRESTORE_DEBOUNCE_MS)
+}
+
+async function flushMobCoinFirestore(uid) {
+  const amt = mobCoinFirestorePending
+  mobCoinFirestorePending = 0
+  if (!amt || !uid) return
+  try {
+    await grantStudentCoinsFromGame(
+      uid,
+      amt,
+      'Світ блоків: монети з мобів',
+    )
+  } catch (e) {
+    console.warn('[BlockWorld] batched mob coins (Firestore)', e)
+    mobCoinFirestorePending += amt
+    scheduleMobCoinFirestoreFlush(uid)
+  }
+}
+
+async function flushMobCoinFirestoreOnLeave(uid) {
+  if (mobCoinFirestoreTimer) {
+    clearTimeout(mobCoinFirestoreTimer)
+    mobCoinFirestoreTimer = null
+  }
+  const amt = mobCoinFirestorePending
+  mobCoinFirestorePending = 0
+  if (!amt || !uid) return
+  try {
+    await grantStudentCoinsFromGame(
+      uid,
+      amt,
+      'Світ блоків: монети з мобів',
+    )
+  } catch (e) {
+    console.warn('[BlockWorld] flush mob coins on leave', e)
+    mobCoinFirestorePending += amt
+  }
+}
+
 let remotes = null
 let spawnFlags = null
 /** RTDB spawn flags (all players); reassigned in subscribe callback. */
@@ -214,6 +282,15 @@ async function teardownWorld() {
   unsubSpawnFlags = null
   unsubPickaxeHits?.()
   unsubPickaxeHits = null
+  unsubMobHits?.()
+  unsubMobHits = null
+  await flushMobCoinFirestoreOnLeave(leaveUid)
+  mobsManager?.dispose()
+  mobsManager = null
+  if (worldApi?.control) {
+    worldApi.control.getMobRaycastRoots = () => []
+    worldApi.control.onPickaxeHitMob = undefined
+  }
   remotes?.dispose()
   remotes = null
   spawnFlags?.dispose()
@@ -258,6 +335,8 @@ async function beginPlay() {
       },
       onFrame: (dt) => {
         remotes?.update(dt)
+        mobsManager?.setPresenceMap(presenceMapRef)
+        mobsManager?.update(dt)
         if (presenceStopped || !worldApi) return
         const uid = auth.user?.uid
         if (!uid) return
@@ -329,11 +408,59 @@ async function beginPlay() {
 
     const worldFingerprint = await initSharedWorldFromFirestore(WORLD_ID, worldApi.terrain)
 
+    worldApi.syncRendererSize()
+
+    try {
+      await worldApi.prepareWebGpuRenderer()
+    } catch (e) {
+      console.warn('[BlockWorld] WebGPU init', e)
+    }
+
     worldApi.start()
 
     await worldApi.terrain.waitForFirstGenerate()
 
     const rtdbFlag = await fetchPlayerSpawnFlag(WORLD_ID, presenceUid)
+    const restoredPose = rtdbFlag
+      ? null
+      : loadLastCameraPose(WORLD_ID, presenceUid)
+    const mobSeedSpawnX = rtdbFlag
+      ? rtdbFlag.x
+      : restoredPose
+        ? restoredPose.x
+        : worldApi.core.camera.position.x
+    const mobSeedSpawnZ = rtdbFlag
+      ? rtdbFlag.z
+      : restoredPose
+        ? restoredPose.z
+        : worldApi.core.camera.position.z
+
+    try {
+      await ensureWorldMobsSeeded(WORLD_ID, worldApi.terrain, {
+        spawnColumnX: mobSeedSpawnX,
+        spawnColumnZ: mobSeedSpawnZ,
+      })
+    } catch (e) {
+      console.warn('[BlockWorld] seed mobs', e)
+    }
+    mobsManager = new BlockWorldMobsManager(
+      worldApi.core.scene,
+      worldApi.terrain,
+      WORLD_ID,
+      presenceUid,
+    )
+    mobsManager.setCoinPickupHandler(async (dropId) => {
+      const n = await tryClaimMobCoinDrop(WORLD_ID, dropId, presenceUid)
+      if (n <= 0) return 0
+      mobsManager.removeCoinDropLocal(dropId)
+      bumpOptimisticMobCoins(n)
+      void removeMobCoinDrop(WORLD_ID, dropId)
+      mobCoinFirestorePending += n
+      scheduleMobCoinFirestoreFlush(presenceUid)
+      return n
+    })
+    await mobsManager.start()
+
     if (rtdbFlag) {
       spawnTeleportQuat.setFromEuler(new THREE.Euler(0, rtdbFlag.ry, 0, 'YXZ'))
       worldApi.core.camera.position.set(
@@ -344,13 +471,10 @@ async function beginPlay() {
       worldApi.core.camera.quaternion.copy(spawnTeleportQuat)
       worldApi.control.velocity.set(0, 0, 0)
       worldApi.control.setTouchAnalog(0, 0)
-    } else {
-      const restored = loadLastCameraPose(WORLD_ID, presenceUid)
-      if (restored) {
-        applyStoredPoseToCamera(worldApi.core.camera, restored)
-        worldApi.control.velocity.set(0, 0, 0)
-        worldApi.control.setTouchAnalog(0, 0)
-      }
+    } else if (restoredPose) {
+      applyStoredPoseToCamera(worldApi.core.camera, restoredPose)
+      worldApi.control.velocity.set(0, 0, 0)
+      worldApi.control.setTouchAnalog(0, 0)
     }
 
     worldApi.setSpawnTeleportResolver(() => {
@@ -367,6 +491,10 @@ async function beginPlay() {
       if (dmg <= 0) return
       void pushPickaxeHit(WORLD_ID, presenceUid, targetUid, dmg)
     }
+    worldApi.control.getMobRaycastRoots = () => mobsManager?.getRaycastRoots() ?? []
+    worldApi.control.onPickaxeHitMob = (mobId, dmg) => {
+      void mobDamageFromPlayer(WORLD_ID, mobId, dmg, worldApi.terrain)
+    }
     worldApi.control.onHealthDepleted = () => {
       worldApi?.teleportToSpawn()
     }
@@ -379,6 +507,16 @@ async function beginPlay() {
         worldApi?.control.applyDamageHalfUnits(dmg)
       },
       { ignoreHitsBeforeTs: pickaxeHitsIgnoreBefore },
+    )
+
+    const mobHitsIgnoreBefore = Date.now()
+    unsubMobHits = subscribeMobHitsForVictim(
+      WORLD_ID,
+      presenceUid,
+      (dmg) => {
+        worldApi?.control.applyDamageHalfUnits(dmg)
+      },
+      { ignoreHitsBeforeTs: mobHitsIgnoreBefore },
     )
 
     unsubSpawnFlags = subscribeSpawnFlags(WORLD_ID, (m) => {
@@ -634,13 +772,6 @@ onUnmounted(async () => {
     >
       Вийти
     </button>
-    <p
-      v-if="started && !booting && desktopGameHints"
-      class="pointer-events-none absolute z-[215] max-w-[min(92vw,24rem)] text-center text-[11px] font-semibold leading-snug text-white/70 drop-shadow-md"
-      style="top: max(3.25rem, calc(env(safe-area-inset-top, 0px) + 2.75rem)); left: 50%; transform: translateX(-50%)"
-    >
-      Клацни по світу, щоб захопити курсор · WASD — рух · миша — огляд · хотбар (1–9) — предмети з магазину «Світ» · кулак ламає блоки повільно · кайло швидше і може влучати в гравців · ЛКМ — копати / ставити · ПКМ — ставити в режимі будівництва
-    </p>
   </div>
 </template>
 

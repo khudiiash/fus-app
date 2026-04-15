@@ -87,8 +87,14 @@ const _colorMaps = [
   glassMaterial,
   bedrockMaterial,
 ] as const
+const _coarseTex =
+  typeof window !== 'undefined' &&
+  ((navigator.maxTouchPoints || 0) > 0 ||
+    (window.matchMedia?.('(pointer: coarse)').matches ?? false))
+
 for (const t of _colorMaps) {
   t.colorSpace = THREE.SRGBColorSpace
+  t.anisotropy = _coarseTex ? 1 : Math.min(8, t.anisotropy || 8)
 }
 
 export default class Materials {
@@ -113,10 +119,17 @@ export default class Materials {
       new THREE.MeshStandardMaterial({ map: treeMaterial }),
       new THREE.MeshStandardMaterial({ map: treeMaterial })
     ],
+    /**
+     * Alpha cutout (not blended transparency) so leaves write depth and sort correctly
+     * with trunks / instancing — avoids leaf-over-trunk and sky bleed (WebGL + WebGPU).
+     */
     leaf: new THREE.MeshStandardMaterial({
       map: leafMaterial,
       color: new THREE.Color(0.78, 0.94, 0.78),
-      transparent: true,
+      transparent: false,
+      alphaTest: 0.42,
+      depthWrite: true,
+      depthTest: true,
     }),
     // water: new THREE.MeshStandardMaterial({
     //   map: waterMaterial,

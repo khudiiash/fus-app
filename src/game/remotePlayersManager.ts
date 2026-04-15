@@ -20,6 +20,10 @@ import {
 } from './toolGltfUtils'
 import { cloneToolForRemote } from './loadBlockWorldToolsPack'
 import heartsSheetUrl from '@/game/assets/hearts_sh.png'
+import {
+  spawnPickaxePlayerHitParticles,
+  spawnPlayerPvpDeathPoofParticles,
+} from '@/game/blockWorldParticles'
 
 const _heartsSheetImg = new Image()
 _heartsSheetImg.src = heartsSheetUrl as unknown as string
@@ -74,6 +78,8 @@ const MODEL_SCALE = (PLAYER_EYE_HEIGHT + 0.12) / REMOTE_NATIVE_HEIGHT
 const REMOTE_WORLD_HEIGHT = REMOTE_NATIVE_HEIGHT * MODEL_SCALE
 /** Snap teleport if network correction is huge (respawn / bad packet). */
 const TELEPORT_DIST = 28
+const REMOTE_HIT_FLASH_S = 0.3
+const REMOTE_HIT_FLASH_RED = new THREE.Color(0xff2a2a)
 /** Position smoothing (higher → catches sparse network presence updates faster). */
 const POS_SMOOTH = 22
 const ROT_SMOOTH = 18
@@ -84,6 +90,30 @@ function unwrapAngleNear(reference: number, angle: number): number {
   while (a - reference > Math.PI) a -= Math.PI * 2
   while (a - reference < -Math.PI) a += Math.PI * 2
   return a
+}
+
+type RemoteFlashMat = {
+  mat: THREE.MeshStandardMaterial
+  origEmissive: THREE.Color
+  origEmissiveIntensity: number
+}
+
+function collectRemoteFlashMaterials(model: THREE.Object3D): RemoteFlashMat[] {
+  const out: RemoteFlashMat[] = []
+  model.traverse((o) => {
+    if (!(o instanceof THREE.Mesh)) return
+    const mats = Array.isArray(o.material) ? o.material : [o.material]
+    for (const m of mats) {
+      if (m instanceof THREE.MeshStandardMaterial) {
+        out.push({
+          mat: m,
+          origEmissive: m.emissive.clone(),
+          origEmissiveIntensity: m.emissiveIntensity,
+        })
+      }
+    }
+  })
+  return out
 }
 
 function purpleFallbackCanvas() {
@@ -373,6 +403,9 @@ type Entry = {
   lastRemoteSwingSeq: number
   /** Last drawn remote HP (half-hearts); -1 = never applied. */
   lastRemoteHpHalf: number
+  hitFlashRemain: number
+  flashMats: RemoteFlashMat[]
+  flashNeedsRestore: boolean
   handSwingPhase: number
   /**
    * Bumped on each {@link refreshRemoteHand} start so a slower in-flight tool GLB load
@@ -483,6 +516,9 @@ export class RemotePlayersManager {
       lastBwToolMesh: null,
       lastRemoteSwingSeq: -1,
       lastRemoteHpHalf: -1,
+      hitFlashRemain: 0,
+      flashMats: [],
+      flashNeedsRestore: false,
       handSwingPhase: 0,
       handRefreshGen: 0,
     }
@@ -648,7 +684,28 @@ export class RemotePlayersManager {
         hpRaw >= 0
           ? Math.min(BLOCK_WORLD_MAX_HP_HALF_UNITS, Math.floor(hpRaw))
           : BLOCK_WORLD_MAX_HP_HALF_UNITS
-      if (entry.lastRemoteHpHalf !== hpHalf) {
+      const prevHp = entry.lastRemoteHpHalf
+      if (prevHp !== hpHalf) {
+        if (prevHp >= 0 && hpHalf < prevHp) {
+          entry.hitFlashRemain = REMOTE_HIT_FLASH_S
+          entry.flashNeedsRestore = false
+          if (!entry.flashMats.length) {
+            entry.flashMats = collectRemoteFlashMaterials(entry.playerObject)
+          }
+          const chest = entry.root.position.clone()
+          chest.y += REMOTE_WORLD_HEIGHT * 0.42
+          spawnPickaxePlayerHitParticles(this.scene, chest)
+        }
+        if (
+          prevHp >= 0 &&
+          prevHp <= 6 &&
+          hpHalf >= BLOCK_WORLD_MAX_HP_HALF_UNITS - 1 &&
+          hpHalf > prevHp + 4
+        ) {
+          const feet = entry.root.position.clone()
+          feet.y += 0.15
+          spawnPlayerPvpDeathPoofParticles(this.scene, feet)
+        }
         entry.lastRemoteHpHalf = hpHalf
         entry.nameLabel.setHpHalfUnits(hpHalf)
       }
@@ -773,6 +830,25 @@ export class RemotePlayersManager {
         e.handSwingPivot.rotation.y = a * 0.08
       } else {
         e.handSwingPivot.rotation.set(0, 0, 0)
+      }
+
+      if (e.flashMats.length) {
+        if (e.hitFlashRemain > 0) {
+          e.hitFlashRemain = Math.max(0, e.hitFlashRemain - dt)
+          const w =
+            REMOTE_HIT_FLASH_S > 0 ? e.hitFlashRemain / REMOTE_HIT_FLASH_S : 0
+          for (const f of e.flashMats) {
+            f.mat.emissive.copy(f.origEmissive).lerp(REMOTE_HIT_FLASH_RED, 0.62 * w)
+            f.mat.emissiveIntensity = f.origEmissiveIntensity + 1.1 * w
+          }
+          if (e.hitFlashRemain <= 0) e.flashNeedsRestore = true
+        } else if (e.flashNeedsRestore) {
+          e.flashNeedsRestore = false
+          for (const f of e.flashMats) {
+            f.mat.emissive.copy(f.origEmissive)
+            f.mat.emissiveIntensity = f.origEmissiveIntensity
+          }
+        }
       }
     }
   }

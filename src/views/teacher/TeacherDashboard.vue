@@ -22,7 +22,7 @@ onMounted(async () => {
   <div class="flex flex-col gap-6">
     <div>
       <h1 class="text-2xl font-extrabold gradient-heading">Вітаємо, {{ givenNameFromDisplayName(auth.profile?.displayName) }}!</h1>
-      <p class="text-slate-500 text-sm mt-0.5">Оберіть клас, щоб нарахувати монети</p>
+      <p class="text-slate-500 text-sm mt-0.5">Оберіть клас для перегляду списку учнів</p>
     </div>
 
     <div v-if="classes.length === 0" class="text-center py-16 text-slate-600">
@@ -52,15 +52,12 @@ onMounted(async () => {
             <span>{{ (cls.studentIds || []).length }} учнів</span>
           </div>
         </div>
-        <div class="flex items-center gap-2 shrink-0">
-          <span class="hidden sm:inline text-[11px] font-bold text-amber-400/90 whitespace-nowrap">Монети</span>
-          <span
-            class="inline-flex items-center gap-1 rounded-xl px-2.5 py-2 text-[11px] font-extrabold text-white tab-active"
-          >
-            <span class="max-[380px]:hidden">Нарахувати</span>
-            <ChevronRight :size="16" :stroke-width="2.5" class="text-white opacity-95 shrink-0" />
-          </span>
-        </div>
+        <ChevronRight
+          :size="20"
+          :stroke-width="2.5"
+          class="text-slate-500 shrink-0"
+          aria-hidden="true"
+        />
       </button>
     </div>
   </div>

@@ -1,23 +1,48 @@
 import * as THREE from 'three'
+import type { WebGPURenderer } from 'three/webgpu'
 import Core from './minebase/core'
 import Control from './minebase/control'
 import Player, { Mode } from './minebase/player'
 import Terrain from './minebase/terrain'
 import Audio from './minebase/audio'
 import { mountBlockWorldHud, type BlockWorldHudHandle } from './blockWorldHud'
-import { useTouchGameControls } from './minebase/utils'
 import { PLAYER_EYE_HEIGHT } from '@/game/playerConstants'
 import { FirstPersonBlockWorldItems } from './firstPersonBlockWorldItems'
+import { trySwapBlockWorldToWebGpu } from './minebase/blockWorldWebGpuSwap'
+import Stats from 'three/addons/libs/stats.module.js'
+import { useTouchGameControls } from './minebase/utils'
+
+/**
+ * When `true`, {@link prepareWebGpuRenderer} swaps to WebGPU if supported.
+ * WebGPU still has weaker transparency / ordering for instanced voxel foliage in three.js r183;
+ * default WebGL keeps correct depth. Flip to `true` to experiment on your target devices.
+ */
+const BLOCK_WORLD_USE_WEBGPU_RENDERER = false
 
 export type SpawnTeleportResolved = {
   position: THREE.Vector3
   quaternion: THREE.Quaternion
 }
 
+function blockWorldTouchLikeDevice(): boolean {
+  return (
+    'ontouchstart' in window ||
+    (navigator.maxTouchPoints || 0) > 0 ||
+    (window.matchMedia?.('(pointer: coarse)').matches ?? false)
+  )
+}
+
 export type FusBlockWorldApi = {
   start: () => void
   dispose: () => void
-  /** Match WebGL buffer to mount element (e.g. after mobile visualViewport / layout changes). */
+  /** Active graphics API after {@link prepareWebGpuRenderer} (before that, always `webgl`). */
+  get rendererBackend(): 'webgpu' | 'webgl'
+  /**
+   * WebGPU swap when enabled in this module (see `BLOCK_WORLD_USE_WEBGPU_RENDERER`).
+   * Call once after mount / `syncRendererSize`, before {@link start}. Returns `false` if unsupported or init fails.
+   */
+  prepareWebGpuRenderer: () => Promise<boolean>
+  /** Match canvas buffer to mount element (e.g. after mobile visualViewport / layout changes). */
   syncRendererSize: () => void
   /** Move camera to the position set on first {@link start} (after surface height snap). */
   teleportToSpawn: () => void
@@ -57,7 +82,6 @@ export function createFusBlockWorld(
   const core = new Core(mountEl)
   const camera = core.camera
   const scene = core.scene
-  const renderer = core.renderer
 
   const player = new Player()
   const audio = new Audio(camera)
@@ -72,24 +96,35 @@ export function createFusBlockWorld(
     player,
     terrain,
     audio,
-    renderer.domElement,
+    core.renderer.domElement,
   )
 
-  const clock = new THREE.Clock()
+  const timer = new THREE.Timer()
+  if (typeof document !== 'undefined') timer.connect(document)
   let raf = 0
   let running = false
   const spawnPosition = new THREE.Vector3()
   const spawnQuaternion = new THREE.Quaternion()
+  let webGpuActive = false
+
+  let stats: InstanceType<typeof Stats> | null = null
 
   const animate = () => {
     if (!running) return
     raf = requestAnimationFrame(animate)
-    const dt = clock.getDelta()
+    timer.update()
+    const dt = Math.min(timer.getDelta(), 0.25)
     control.update()
     terrain.update()
     fpItems?.update(dt)
     hooks?.onFrame?.(dt)
-    renderer.render(scene, camera)
+    stats?.begin()
+    if (webGpuActive) {
+      ;(core.renderer as WebGPURenderer).render(scene, camera)
+    } else {
+      core.renderer.render(scene, camera)
+    }
+    stats?.end()
   }
 
   const teleportToSpawn = () => {
@@ -107,6 +142,35 @@ export function createFusBlockWorld(
   }
 
   return {
+    get rendererBackend(): 'webgpu' | 'webgl' {
+      return webGpuActive ? 'webgpu' : 'webgl'
+    },
+    prepareWebGpuRenderer: async () => {
+      if (!BLOCK_WORLD_USE_WEBGPU_RENDERER) return false
+      if (webGpuActive) return true
+      core.syncRendererSize()
+      const size = new THREE.Vector2()
+      core.renderer.getSize(size)
+      const w = Math.max(1, Math.floor(size.x))
+      const h = Math.max(1, Math.floor(size.y))
+      const ok = await trySwapBlockWorldToWebGpu({
+        core,
+        control,
+        pixelRatio: core.renderer.getPixelRatio(),
+        width: w,
+        height: h,
+        antialias: !blockWorldTouchLikeDevice(),
+      })
+      webGpuActive = ok
+      if (ok) {
+        console.info('[fusBlockWorld] WebGPU renderer active.')
+      } else if (typeof navigator !== 'undefined' && !navigator.gpu) {
+        console.info(
+          '[fusBlockWorld] WebGPU unavailable (navigator.gpu). Use https:// or localhost; rendering with WebGL.',
+        )
+      }
+      return ok
+    },
     syncRendererSize: () => {
       core.syncRendererSize()
     },
@@ -120,7 +184,6 @@ export function createFusBlockWorld(
     start: () => {
       if (running) return
       running = true
-      clock.start()
       terrain.initBlocks()
       terrain.generate()
       control.player.setMode(Mode.walking)
@@ -144,6 +207,16 @@ export function createFusBlockWorld(
       void fpItems.loadToolModel().catch((err) => {
         console.warn('[fusBlockWorld] pickaxe model', err)
       })
+      stats = new Stats()
+      stats.showPanel(0)
+      const st = stats.dom
+      st.style.position = 'absolute'
+      st.style.left = '0'
+      st.style.bottom = '0'
+      st.style.top = 'auto'
+      st.style.zIndex = '130'
+      mountEl.appendChild(st)
+
       hud = mountBlockWorldHud({
         mountEl,
         control,
@@ -152,13 +225,23 @@ export function createFusBlockWorld(
         onRestoreWorld: hooks?.onRestoreWorld,
         onPlaceSpawnFlag: hooks?.onPlaceSpawnFlag,
       })
+      control.onPlayerDamaged = () => {
+        hud?.flashDamage()
+      }
       raf = requestAnimationFrame(animate)
     },
     dispose: () => {
       running = false
       spawnTeleportResolver = null
+      control.onPlayerDamaged = undefined
       hud?.dispose()
       hud = null
+      if (stats) {
+        const el = stats.dom
+        if (el.parentNode) el.parentNode.removeChild(el)
+        stats = null
+      }
+      timer.dispose()
       fpItems?.dispose()
       fpItems = null
       control.onHandSwingRequested = undefined
@@ -175,9 +258,10 @@ export function createFusBlockWorld(
       } catch {
         /* ignore */
       }
-      renderer.dispose()
-      if (renderer.domElement.parentNode) {
-        renderer.domElement.parentNode.removeChild(renderer.domElement)
+      webGpuActive = false
+      core.renderer.dispose()
+      if (core.renderer.domElement.parentNode) {
+        core.renderer.domElement.parentNode.removeChild(core.renderer.domElement)
       }
     },
     core,

@@ -1,4 +1,7 @@
 import * as THREE from 'three'
+import type { WebGPURenderer } from 'three/webgpu'
+
+export type BlockWorldCanvasRenderer = THREE.WebGLRenderer | WebGPURenderer
 
 export default class Core {
   /** When set (Fus app), renderer mounts here and size follows the element. */
@@ -25,7 +28,7 @@ export default class Core {
 
   camera: THREE.PerspectiveCamera
   scene: THREE.Scene
-  renderer: THREE.WebGLRenderer
+  renderer: BlockWorldCanvasRenderer
 
   private targetFov(aspect: number): number {
     // Portrait phones need wider vertical FOV for navigation.
@@ -39,7 +42,7 @@ export default class Core {
 
   private targetPixelRatio(aspect: number): number {
     const dpr = window.devicePixelRatio || 1
-    if (!this.touchLikeDevice) return Math.min(dpr, 2)
+    if (!this.touchLikeDevice) return Math.min(dpr, 1.65)
     // Landscape renders many more visible voxels; cap harder to avoid mobile GPU stalls.
     if (aspect >= 1.2) return Math.min(dpr, 1.1)
     return Math.min(dpr, 1.35)
@@ -91,7 +94,7 @@ export default class Core {
     this.scene = new THREE.Scene()
     const backgroundColor = 0x87ceeb
 
-    this.scene.fog = new THREE.Fog(backgroundColor, 1, 96)
+    this.scene.fog = new THREE.Fog(backgroundColor, 2, 88)
     this.scene.background = new THREE.Color(backgroundColor)
 
     const hemi = new THREE.HemisphereLight(0xb4dcff, 0x524838, 0.5)
@@ -109,8 +112,13 @@ export default class Core {
     const { w, h } = this.sizeFromMount()
     this.renderer.setPixelRatio(this.targetPixelRatio(w / h))
     this.renderer.outputColorSpace = THREE.SRGBColorSpace
-    this.renderer.toneMapping = THREE.ACESFilmicToneMapping
-    this.renderer.toneMappingExposure = 1.08
+    if (this.touchLikeDevice) {
+      this.renderer.toneMapping = THREE.NoToneMapping
+      this.renderer.toneMappingExposure = 1
+    } else {
+      this.renderer.toneMapping = THREE.ACESFilmicToneMapping
+      this.renderer.toneMappingExposure = 1.08
+    }
     this.renderer.setSize(w, h)
     const parent = this.mountEl ?? document.body
     parent.appendChild(this.renderer.domElement)

@@ -1,20 +1,56 @@
 import * as THREE from 'three'
 import Terrain from '..'
 
+const _pickPos = new THREE.Vector3()
+const _zeroInstance = new THREE.Matrix4().set(
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+)
+
 /**
- * Highlight block on crosshair
+ * Crosshair voxel highlight: reuses GPU buffers and one pick mesh (no per-frame allocations).
  */
 export default class BlockHighlight {
   constructor(
     scene: THREE.Scene,
     camera: THREE.PerspectiveCamera,
-    terrain: Terrain
+    terrain: Terrain,
   ) {
     this.camera = camera
     this.scene = scene
     this.terrain = terrain
     this.raycaster = new THREE.Raycaster()
     this.raycaster.far = 8
+
+    this.simMatrixBuffer = new Float32Array(1000 * 16)
+    this.instanceMesh = new THREE.InstancedMesh(
+      new THREE.BoxGeometry(),
+      new THREE.MeshBasicMaterial(),
+      1000,
+    )
+    this.instanceMesh.instanceMatrix = new THREE.InstancedBufferAttribute(
+      this.simMatrixBuffer,
+      16,
+    )
+    this.instanceMesh.frustumCulled = false
+
+    this.pickMesh = new THREE.Mesh(this.geometry, this.material)
+    this.pickMesh.visible = false
+    this.scene.add(this.pickMesh)
   }
 
   scene: THREE.Scene
@@ -23,63 +59,52 @@ export default class BlockHighlight {
   raycaster: THREE.Raycaster
   block: THREE.Intersection | null = null
 
-  // highlight block mesh
   geometry = new THREE.BoxGeometry(1.01, 1.01, 1.01)
-  material = new THREE.MeshStandardMaterial({
+  material = new THREE.MeshBasicMaterial({
     transparent: true,
-    opacity: 0.25
-    // depthWrite: false
+    opacity: 0.28,
+    depthWrite: false,
   })
-  mesh = new THREE.Mesh(new THREE.BoxGeometry(), this.material)
 
-  // block simulation
-  index = 0
-  instanceMesh = new THREE.InstancedMesh(
-    new THREE.BoxGeometry(),
-    new THREE.MeshBasicMaterial(),
-    1000
-  )
+  instanceMesh: THREE.InstancedMesh
+  private readonly simMatrixBuffer: Float32Array
+  private readonly pickMesh: THREE.Mesh
+  private readonly matrix = new THREE.Matrix4()
+  private index = 0
 
   update() {
-    // remove last highlight and reset block simulation
-    this.scene.remove(this.mesh)
     this.index = 0
-    this.instanceMesh.instanceMatrix = new THREE.InstancedBufferAttribute(
-      new Float32Array(1000 * 16),
-      16
-    )
+    this.pickMesh.visible = false
+    this.block = null
 
     const position = this.camera.position
-    const matrix = new THREE.Matrix4()
-    const idMap = new Map<string, number>()
     const noise = this.terrain.noise
+    const idMap = new Map<string, number>()
 
-    let xPos = Math.round(position.x)
-    let zPos = Math.round(position.z)
+    const xPos = Math.round(position.x)
+    const zPos = Math.round(position.z)
 
     for (let i = -8; i < 8; i++) {
       for (let j = -8; j < 8; j++) {
-        // check terrain
-        let x = xPos + i
-        let z = zPos + j
-        let y =
+        const x = xPos + i
+        const z = zPos + j
+        const y =
           Math.floor(
-            noise.get(x / noise.gap, z / noise.gap, noise.seed) * noise.amp
+            noise.get(x / noise.gap, z / noise.gap, noise.seed) * noise.amp,
           ) + 30
 
         idMap.set(`${x}_${y}_${z}`, this.index)
-        matrix.setPosition(x, y, z)
-        this.instanceMesh.setMatrixAt(this.index++, matrix)
+        this.matrix.setPosition(x, y, z)
+        this.instanceMesh.setMatrixAt(this.index++, this.matrix)
 
-        let stoneOffset =
+        const stoneOffset =
           noise.get(x / noise.stoneGap, z / noise.stoneGap, noise.stoneSeed) *
           noise.stoneAmp
 
-        let treeOffset =
+        const treeOffset =
           noise.get(x / noise.treeGap, z / noise.treeGap, noise.treeSeed) *
           noise.treeAmp
 
-        // check tree
         if (
           treeOffset > noise.treeThreshold &&
           y - 30 >= -3 &&
@@ -87,87 +112,40 @@ export default class BlockHighlight {
         ) {
           for (let t = 1; t <= noise.treeHeight; t++) {
             idMap.set(`${x}_${y + t}_${z}`, this.index)
-            matrix.setPosition(x, y + t, z)
-            this.instanceMesh.setMatrixAt(this.index++, matrix)
+            this.matrix.setPosition(x, y + t, z)
+            this.instanceMesh.setMatrixAt(this.index++, this.matrix)
           }
-
-          // leaf
-          // for (let i = -3; i < 3; i++) {
-          //   for (let j = -3; j < 3; j++) {
-          //     for (let k = -3; k < 3; k++) {
-          //       if (i === 0 && k === 0) {
-          //         continue
-          //       }
-          //     let leafOffset =
-          //       noise.get(
-          //         (x + i + j) / noise.leafGap,
-          //         (z + k) / noise.leafGap,
-          //         noise.leafSeed
-          //       ) * noise.leafAmp
-
-          //       if (leafOffset > noise.leafThreshold) {
-          //         idMap.set(
-          //           `${x + i}_${y + noise.treeHeight + j}_${z + k}`,
-          //           this.index
-          //         )
-          //         matrix.setPosition(x + i, y + noise.treeHeight + j, z + k)
-          //         this.instanceMesh.setMatrixAt(this.index++, matrix)
-          //       }
-          //     }
-          //   }
-          // }
         }
       }
     }
 
-    // check custom blocks
     for (const block of this.terrain.customBlocks) {
       if (block.placed) {
-        matrix.setPosition(block.x, block.y, block.z)
-        this.instanceMesh.setMatrixAt(this.index++, matrix)
+        this.matrix.setPosition(block.x, block.y, block.z)
+        this.instanceMesh.setMatrixAt(this.index++, this.matrix)
       } else {
         if (idMap.has(`${block.x}_${block.y}_${block.z}`)) {
-          let id = idMap.get(`${block.x}_${block.y}_${block.z}`)
-          this.instanceMesh.setMatrixAt(
-            id!,
-            new THREE.Matrix4().set(
-              0,
-              0,
-              0,
-              0,
-              0,
-              0,
-              0,
-              0,
-              0,
-              0,
-              0,
-              0,
-              0,
-              0,
-              0,
-              0
-            )
-          )
+          const id = idMap.get(`${block.x}_${block.y}_${block.z}`)
+          this.instanceMesh.setMatrixAt(id!, _zeroInstance)
         }
       }
     }
 
-    // highlight new block
-    this.raycaster.setFromCamera({ x: 0, y: 0 }, this.camera)
-    this.block = this.raycaster.intersectObject(this.instanceMesh)[0]
-    if (
-      this.block &&
-      this.block.object instanceof THREE.InstancedMesh &&
-      typeof this.block.instanceId === 'number'
-    ) {
-      this.mesh = new THREE.Mesh(this.geometry, this.material)
-      let matrix = new THREE.Matrix4()
-      this.block.object.getMatrixAt(this.block.instanceId, matrix)
-      const position = new THREE.Vector3().setFromMatrixPosition(matrix)
+    this.instanceMesh.count = this.index
+    this.instanceMesh.instanceMatrix.needsUpdate = true
 
-      this.mesh.position.set(position.x, position.y, position.z)
-      this.scene.add(this.mesh)
+    this.raycaster.setFromCamera({ x: 0, y: 0 }, this.camera)
+    const hit = this.raycaster.intersectObject(this.instanceMesh, false)[0]
+    if (
+      hit &&
+      hit.object === this.instanceMesh &&
+      typeof hit.instanceId === 'number'
+    ) {
+      this.block = hit
+      this.instanceMesh.getMatrixAt(hit.instanceId, this.matrix)
+      _pickPos.setFromMatrixPosition(this.matrix)
+      this.pickMesh.position.copy(_pickPos)
+      this.pickMesh.visible = true
     }
   }
 }

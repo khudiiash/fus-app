@@ -109,6 +109,22 @@ export function applySrgbColorMaps(
 }
 
 /**
+ * FP hand / held items: opaque, full depth write, **depth test on** so terrain / glass / foliage
+ * do not paint after the tool in confusing draw order. A small negative polygon offset nudges
+ * the viewmodel slightly toward the camera so nearby blocks do not “win” the same depth value
+ * as the mesh in front of them.
+ */
+export function stampFpHandPresentation(m: THREE.Material) {
+  m.transparent = false
+  m.opacity = 1
+  m.depthTest = true
+  m.depthWrite = true
+  m.polygonOffset = true
+  m.polygonOffsetFactor = -1.75
+  m.polygonOffsetUnits = -1.75
+}
+
+/**
  * One-time axis flip on the tool root fixes inverted faces on many Blender → glTF voxel exports.
  * Compose after scale + orientation. If the pickaxe still looks inside-out, change to
  * `new THREE.Vector3(1, -1, 1)` or `(1, 1, -1)` to match your file.

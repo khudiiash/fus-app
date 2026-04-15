@@ -5,6 +5,7 @@ import { BlockType } from './minebase/terrain'
 import {
   applyHandHeldLightingLift,
   applySrgbColorMaps,
+  stampFpHandPresentation,
 } from './toolGltfUtils'
 import { cloneToolForFirstPerson, loadBlockWorldToolsPackScene } from './loadBlockWorldToolsPack'
 
@@ -26,22 +27,12 @@ const FP_FIST_ARM_LEN = 0.5
 const TOOL_SWING_AXIS_ROOT = new THREE.Vector3(1, 0, 0)
 const _swingQ = new THREE.Quaternion()
 
-const FP_HAND_RENDER_ORDER = 10000
+const FP_HAND_RENDER_ORDER = 10_000
 
 function tagFpHandRenderOrder(root: THREE.Object3D) {
   root.traverse((o) => {
     if (o instanceof THREE.Mesh) o.renderOrder = FP_HAND_RENDER_ORDER
   })
-}
-
-function stampFpHandPresentation(m: THREE.Material) {
-  m.transparent = true
-  m.opacity = 1
-  m.depthTest = false
-  m.depthWrite = false
-  m.polygonOffset = false
-  m.polygonOffsetFactor = 0
-  m.polygonOffsetUnits = 0
 }
 
 function makeHandHeldBlockMaterial(

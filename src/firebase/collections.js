@@ -745,6 +745,35 @@ export async function awardCoins({ fromUid, toUid, amount, note = '', subjectNam
   }
 }
 
+/**
+ * Grant coins + XP to a student from in-app world mechanics (e.g. block-world mob coin pickups).
+ * No teacher budget; logs one journal entry like a self-award.
+ */
+export async function grantStudentCoinsFromGame(uid, amount, note = 'Блок-світ') {
+  const amt = Math.max(0, Math.min(5000, Math.round(Number(amount) || 0)))
+  if (amt === 0 || !uid) return
+  await runTransaction(db, async (tx) => {
+    const uRef = doc(db, 'users', uid)
+    const snap = await tx.get(uRef)
+    if (!snap.exists()) throw new Error('User not found')
+    const u = snap.data()
+    const newCoins = (u.coins || 0) + amt
+    const newXp = (u.xp || 0) + Math.ceil(amt * 1.5)
+    tx.update(uRef, {
+      coins: newCoins,
+      xp: newXp,
+      level: calcLevel(newXp),
+    })
+  })
+  await logTransaction({
+    type: 'award',
+    fromUid: uid,
+    toUid: uid,
+    amount: amt,
+    note: String(note || '').slice(0, 200),
+  })
+}
+
 // ─── Purchase item (transactional) ───────────────────────────────────────────
 export async function purchaseItem({ uid, itemId, price }) {
   await runTransaction(db, async tx => {

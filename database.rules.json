@@ -32,6 +32,50 @@
           ".write": "auth != null && ((!data.exists() && newData.child('fromUid').val() == auth.uid && newData.child('toUid').isString() && newData.child('dmg').isNumber() && newData.child('dmg').val() > 0 && newData.child('dmg').val() <= 20 && newData.child('ts').isNumber()) || (data.exists() && !newData.exists() && (data.child('toUid').val() == auth.uid || data.child('fromUid').val() == auth.uid)))"
         }
       }
+    },
+    "worldMobState": {
+      "$worldId": {
+        ".read": "auth != null",
+        "$mobId": {
+          ".write": "auth != null"
+        }
+      }
+    },
+    "worldMobMeta": {
+      "$worldId": {
+        ".read": "auth != null",
+        ".write": "auth != null"
+      }
+    },
+    "worldMobLease": {
+      "$worldId": {
+        ".read": "auth != null",
+        ".write": "auth != null"
+      }
+    },
+    "worldMobHits": {
+      "$worldId": {
+        ".read": "auth != null",
+        "$pushId": {
+          ".write": "auth != null && ((!data.exists() && newData.child('fromMobId').isString() && newData.child('toUid').isString() && newData.child('dmg').isNumber() && newData.child('dmg').val() > 0 && newData.child('dmg').val() <= 20 && newData.child('ts').isNumber()) || (data.exists() && !newData.exists() && data.child('toUid').val() == auth.uid))"
+        }
+      }
+    },
+    "worldMobDeathLoot": {
+      "$worldId": {
+        "$lockId": {
+          ".read": "auth != null",
+          ".write": "auth != null"
+        }
+      }
+    },
+    "worldMobCoinDrops": {
+      "$worldId": {
+        ".read": "auth != null",
+        "$dropId": {
+          ".write": "auth != null"
+        }
+      }
     }
   }
 }

@@ -6,6 +6,8 @@
   "scripts": {
     "postinstall": "node scripts/apply-patches.cjs",
     "dev": "vite",
+    "dev:https": "cross-env DEV_HTTPS=1 vite",
+    "preview:https": "cross-env DEV_HTTPS=1 vite preview",
     "build": "vite build",
     "start": "node scripts/serve-dist.mjs",
     "preview": "vite preview",
@@ -24,18 +26,20 @@
     "pinia": "^3.0.4",
     "serve": "^14.2.6",
     "skinview-utils": "^0.7.1",
-    "three": "^0.183.2",
+    "three": "0.183.2",
     "vue": "^3.5.30",
     "vue-router": "^4.6.4"
   },
   "devDependencies": {
-    "@types/three": "^0.183.0",
-    "typescript": "^5.9.3",
     "@tailwindcss/vite": "^4.2.2",
+    "@types/three": "^0.183.0",
+    "@vitejs/plugin-basic-ssl": "^2.3.0",
     "@vitejs/plugin-vue": "^6.0.5",
+    "cross-env": "^10.1.0",
     "firebase-admin": "^13.0.0",
     "sharp": "^0.34.5",
     "tailwindcss": "^4.2.2",
+    "typescript": "^5.9.3",
     "vite": "^8.0.1",
     "vite-plugin-pwa": "^1.2.0"
   }

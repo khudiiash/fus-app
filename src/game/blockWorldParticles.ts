@@ -39,6 +39,8 @@ type BurstOpts = {
   gravity: number
   /** Uniform cube half-extent (world units) — crisp square “pixels”. */
   cubeHalf: number
+  /** Added to randomized Y velocity (e.g. death smoke drifting up). */
+  vyBias?: number
 }
 
 const _m = new THREE.Matrix4()
@@ -75,7 +77,8 @@ function spawnVoxelParticleBurst(
     colors[ix + 1] = tmp.g
     colors[ix + 2] = tmp.b
     const vx = (Math.random() - 0.5) * 2 * spread
-    const vy = Math.random() * spread * 0.55 + speed * 0.18
+    const vy =
+      Math.random() * spread * 0.55 + speed * 0.18 + (opts.vyBias ?? 0)
     const vz = (Math.random() - 0.5) * 2 * spread
     const len = Math.hypot(vx, vy, vz) || 1
     const vScale = speed * 7
@@ -191,5 +194,33 @@ export function spawnPickaxePlayerHitParticles(scene: THREE.Scene, hitPoint: THR
     lifetimeMs: 400,
     gravity: 1.6,
     cubeHalf: 0.065,
+  })
+}
+
+/** Grey voxel puff when a block-world mob dies (works without a death clip on the GLTF). */
+export function spawnMobDeathPoofParticles(scene: THREE.Scene, center: THREE.Vector3) {
+  const c = new THREE.Color(0x6e6e6e)
+  spawnVoxelParticleBurst(scene, center.clone(), c, {
+    count: 58,
+    spread: 0.68,
+    speed: 0.38,
+    lifetimeMs: 720,
+    gravity: 1.25,
+    cubeHalf: 0.078,
+    vyBias: 0.26,
+  })
+}
+
+/** PvP / respawn puff when a remote player’s HP resets from near-death (same tech as mob poof). */
+export function spawnPlayerPvpDeathPoofParticles(scene: THREE.Scene, center: THREE.Vector3) {
+  const c = new THREE.Color(0x8a5a5a)
+  spawnVoxelParticleBurst(scene, center.clone(), c, {
+    count: 48,
+    spread: 0.62,
+    speed: 0.42,
+    lifetimeMs: 680,
+    gravity: 1.35,
+    cubeHalf: 0.074,
+    vyBias: 0.22,
   })
 }

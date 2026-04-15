@@ -1,4 +1,23 @@
 /* Embedded block world HUD */
+.fus-bw-damage-flash {
+  position: absolute;
+  inset: 0;
+  z-index: 60;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.1s ease-out;
+  background: radial-gradient(
+    ellipse 85% 75% at 50% 45%,
+    rgba(220, 40, 40, 0) 35%,
+    rgba(120, 10, 20, 0.38) 100%
+  );
+}
+
+.fus-bw-damage-flash--on {
+  opacity: 1;
+  transition: opacity 0.04s ease-in;
+}
+
 .fus-bw-hud {
   position: absolute;
   inset: 0;

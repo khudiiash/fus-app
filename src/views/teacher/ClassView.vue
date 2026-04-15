@@ -28,8 +28,6 @@ import {
   Wallet,
   Flame,
   Gavel,
-  Check,
-  User,
 } from 'lucide-vue-next'
 
 const route  = useRoute()
@@ -44,12 +42,8 @@ const students    = ref([])
 const showAward   = ref(false)
 const awardTarget = ref(null)
 const bulkMode    = ref(false)
-/** Учні, обрані картками в списку класу */
-const selectedStudentIds = ref([])
-/** У модалці «нарахувати класу» — окремий список чекбоксів */
+/** У модалці «нарахувати класу» — чекбокси */
 const bulkModalIds = ref([])
-/** true = нарахування тим, кого обрали картками; false = вибір у модалці */
-const bulkFromCards = ref(false)
 const awardAmount = ref(10)
 const awardNote   = ref('')
 const awardSubject = ref('')   // selected subject name for the award
@@ -90,36 +84,11 @@ const sortedStudents = computed(() =>
 function openBulkAward() {
   awardTarget.value = null
   bulkMode.value = true
-  bulkFromCards.value = false
   bulkModalIds.value = []
   awardAmount.value = 10
   awardNote.value = ''
   awardSubject.value = teacherSubjects.value[0]?.name || ''
   showAward.value = true
-}
-
-function openAwardSelected() {
-  if (!selectedStudentIds.value.length) {
-    error('Оберіть хоча б одного учня')
-    return
-  }
-  awardTarget.value = null
-  bulkMode.value = true
-  bulkFromCards.value = true
-  awardAmount.value = 10
-  awardNote.value = ''
-  awardSubject.value = teacherSubjects.value[0]?.name || ''
-  showAward.value = true
-}
-
-function toggleCardSelect(id) {
-  const idx = selectedStudentIds.value.indexOf(id)
-  if (idx >= 0) selectedStudentIds.value.splice(idx, 1)
-  else selectedStudentIds.value.push(id)
-}
-
-function clearCardSelection() {
-  selectedStudentIds.value = []
 }
 
 function toggleBulkModal(id) {
@@ -133,33 +102,18 @@ function selectAllInModal() {
   else bulkModalIds.value = students.value.map(s => s.id)
 }
 
-/** Усі видимі після пошуку / сортування */
-function toggleSelectAllVisible() {
-  const ids = sortedStudents.value.map(s => s.id)
-  const allSelected = ids.length > 0 && ids.every((id) => selectedStudentIds.value.includes(id))
-  if (allSelected) {
-    selectedStudentIds.value = selectedStudentIds.value.filter((id) => !ids.includes(id))
-  } else {
-    const set = new Set(selectedStudentIds.value)
-    ids.forEach((id) => set.add(id))
-    selectedStudentIds.value = [...set]
-  }
-}
-
 async function doAward() {
   if (!awardAmount.value || awardAmount.value < 1) { error('Введіть правильну суму'); return }
 
   let targets
   if (!bulkMode.value) {
     targets = awardTarget.value ? [awardTarget.value] : []
-  } else if (bulkFromCards.value) {
-    targets = students.value.filter((s) => selectedStudentIds.value.includes(s.id))
   } else {
     targets = students.value.filter((s) => bulkModalIds.value.includes(s.id))
   }
 
   if (!targets.length) {
-    error(bulkFromCards.value ? 'Немає обраних учнів' : 'Оберіть учнів у списку')
+    error('Оберіть учнів у списку')
     return
   }
 
@@ -189,7 +143,6 @@ async function doAward() {
     hapticCoin()
     success(`🪙 +${awardAmount.value} нараховано ${targets.length} учн${targets.length === 1 ? 'ю' : 'ям'}!`)
     showAward.value = false
-    if (bulkFromCards.value) clearCardSelection()
     students.value = await getUsersByClass(route.params.id)
   } catch (e) {
     error(e.message)
@@ -205,67 +158,52 @@ const budgetLowThresh = computed(() => Math.max(15, Math.round((budgetInfo.value
 const budgetMidThresh = computed(() => Math.max(50, Math.round((budgetInfo.value.budget || 1) * 0.35)))
 const awardRecipientCount = computed(() => {
   if (!bulkMode.value) return awardTarget.value ? 1 : 0
-  if (bulkFromCards.value) return selectedStudentIds.value.length
   return bulkModalIds.value.length
 })
 
 const totalCost  = computed(() => awardRecipientCount.value * (Number(awardAmount.value) || 0))
 
-const selectedSummaryNames = computed(() => {
-  if (!selectedStudentIds.value.length) return ''
-  const map = new Map(students.value.map((s) => [s.id, s.displayName]))
-  return selectedStudentIds.value
-    .map((id) => map.get(id))
-    .filter(Boolean)
-    .slice(0, 4)
-    .join(', ')
-})
-
 const awardModalTitle = computed(() => {
   if (!bulkMode.value) return `Нарахувати: ${awardTarget.value?.displayName || ''}`
-  if (bulkFromCards.value) {
-    const n = selectedStudentIds.value.length
-    return `Нарахувати обраним (${n})`
-  }
-  return 'Нарахувати всьому класу'
+  return 'Нарахувати класу'
 })
 const budgetOk = computed(() => totalCost.value <= budgetInfo.value.remaining)
 
 // ── Fine state ───────────────────────────────────────────────────────────────
 const showFine  = ref(false)
-const fineTarget = ref(null)
-/** true = штраф усім, кого обрали картками */
-const fineBulkFromCards = ref(false)
+/** У модалці штрафу — чекбокси */
+const fineModalIds = ref([])
 const fineAmount = ref(10)
 const fineReason = ref('')
 const fining    = ref(false)
 
-const fineModalTitle = computed(() => {
-  if (fineBulkFromCards.value) {
-    return `Штраф обраним (${selectedStudentIds.value.length})`
-  }
-  return `Штраф: ${fineTarget.value?.displayName || ''}`
-})
+const fineModalTitle = computed(() => 'Штраф класу')
 
-const fineSelectedTargets = computed(() =>
-  students.value.filter((s) => selectedStudentIds.value.includes(s.id))
+const fineModalTargets = computed(() =>
+  students.value.filter((s) => fineModalIds.value.includes(s.id)),
 )
 
 const fineSelectedMinCoins = computed(() => {
-  if (!fineBulkFromCards.value || !fineSelectedTargets.value.length) return null
-  return Math.min(...fineSelectedTargets.value.map((s) => s.coins || 0))
+  if (!fineModalTargets.value.length) return null
+  return Math.min(...fineModalTargets.value.map((s) => s.coins || 0))
 })
 
-function openFineSelected() {
-  if (!selectedStudentIds.value.length) {
-    error('Оберіть хоча б одного учня')
-    return
-  }
-  fineBulkFromCards.value = true
-  fineTarget.value = null
+function openBulkFine() {
+  fineModalIds.value = []
   fineAmount.value = 20
   fineReason.value = ''
   showFine.value = true
+}
+
+function toggleFineModal(id) {
+  const idx = fineModalIds.value.indexOf(id)
+  if (idx >= 0) fineModalIds.value.splice(idx, 1)
+  else fineModalIds.value.push(id)
+}
+
+function selectAllFineInModal() {
+  if (fineModalIds.value.length === students.value.length) fineModalIds.value = []
+  else fineModalIds.value = students.value.map(s => s.id)
 }
 
 async function doFine() {
@@ -276,14 +214,10 @@ async function doFine() {
   }
   if (!fineReason.value.trim()) { error('Вкажіть причину штрафу'); return }
 
-  const targets = fineBulkFromCards.value
-    ? students.value.filter((s) => selectedStudentIds.value.includes(s.id))
-    : fineTarget.value
-      ? [fineTarget.value]
-      : []
+  const targets = students.value.filter((s) => fineModalIds.value.includes(s.id))
 
   if (!targets.length) {
-    error(fineBulkFromCards.value ? 'Немає обраних учнів' : 'Учня не знайдено')
+    error('Оберіть учнів у списку')
     return
   }
 
@@ -311,8 +245,6 @@ async function doFine() {
       success(`Штраф до ${amt} монет накладено для ${targets.length} учнів`)
     }
     showFine.value = false
-    if (fineBulkFromCards.value) clearCardSelection()
-    fineBulkFromCards.value = false
     students.value = await getUsersByClass(route.params.id)
   } catch (e) {
     error(e.message)
@@ -334,9 +266,20 @@ async function doFine() {
           </div>
           <p class="text-slate-400 text-xs mt-0.5">{{ students.length }} учнів</p>
         </div>
-        <AppButton variant="coin" size="sm" class="shrink-0" @click="openBulkAward">
-          <Coins :size="14" :stroke-width="2" /> Нарахувати класу
-        </AppButton>
+        <div class="flex flex-wrap items-center gap-1.5 shrink-0 justify-end">
+          <AppButton
+            variant="secondary"
+            size="sm"
+            class="!border !border-red-500/45 !bg-red-600/15 !text-red-100 hover:!bg-red-600/25 hover:!border-red-400/55"
+            @click="openBulkFine"
+          >
+            <Gavel :size="14" :stroke-width="2" />
+            Штраф класу
+          </AppButton>
+          <AppButton variant="coin" size="sm" @click="openBulkAward">
+            <Coins :size="14" :stroke-width="2" /> Нарахувати класу
+          </AppButton>
+        </div>
       </div>
 
       <!-- Daily budget meter -->
@@ -375,138 +318,55 @@ async function doFine() {
       class="w-full bg-game-card border border-game-border rounded-lg px-3 py-2 text-xs font-semibold text-white placeholder-slate-500 focus:outline-none focus:border-violet-500"
     />
 
-    <!-- Вибір кількох учнів: фіксована min-висота — список учнів не зміщується при появі кнопок -->
-    <div
-      class="rounded-xl p-2 box-border min-h-[5.5rem] sm:min-h-[3.25rem] transition-[background-color,border-color]"
-      :class="
-        selectedStudentIds.length > 0
-          ? 'border border-violet-500/35 bg-violet-500/[0.08]'
-          : 'border border-transparent bg-transparent'
-      "
-    >
-      <div
-        v-if="selectedStudentIds.length > 0"
-        class="flex flex-col gap-1.5 sm:flex-row sm:items-center sm:justify-between sm:gap-3"
-      >
-        <div class="min-w-0">
-          <div class="text-xs font-extrabold text-violet-200">
-            Обрано: {{ selectedStudentIds.length }}
-          </div>
-          <div v-if="selectedSummaryNames" class="text-[11px] text-slate-400 truncate mt-0.5 leading-snug">
-            {{ selectedSummaryNames
-            }}<span v-if="selectedStudentIds.length > 4">…</span>
-          </div>
-        </div>
-        <div class="flex flex-wrap items-center gap-1.5 shrink-0">
-          <AppButton variant="secondary" size="sm" @click="clearCardSelection">
-            Скинути
-          </AppButton>
-          <AppButton variant="coin" size="sm" @click="openAwardSelected">
-            <Coins :size="14" :stroke-width="2" />
-            Нарахувати
-          </AppButton>
-          <AppButton
-            variant="secondary"
-            size="sm"
-            class="!border !border-red-500/45 !bg-red-600/15 !text-red-100 hover:!bg-red-600/25 hover:!border-red-400/55"
-            @click="openFineSelected"
-          >
-            <Gavel :size="14" :stroke-width="2" />
-            Штраф усім
-          </AppButton>
-        </div>
-      </div>
-    </div>
-
-    <div class="flex items-center justify-between gap-2 -mt-0.5">
-      <span class="text-[11px] text-slate-500 leading-tight">Торкнись картки — вибір</span>
-      <button
-        type="button"
-        class="text-[11px] font-bold text-violet-400 hover:text-violet-300 shrink-0"
-        @click="toggleSelectAllVisible"
-      >
-        {{ sortedStudents.length > 0 && sortedStudents.every((x) => selectedStudentIds.includes(x.id)) ? 'Зняти видимих' : 'Обрати видимих' }}
-      </button>
-    </div>
-
     <div class="flex flex-col gap-2">
       <div
         v-for="(s, i) in sortedStudents"
         :key="s.id"
-        class="glass-card flex gap-2 items-center p-2 rounded-xl border transition-all"
-        :class="
-          selectedStudentIds.includes(s.id)
-            ? 'border-violet-500/60 bg-violet-500/[0.06] ring-1 ring-violet-500/25'
-            : 'border-white/[0.06] hover:border-violet-500/35'
-        "
+        class="glass-card flex gap-2 items-center p-2 rounded-xl border border-white/[0.06] hover:border-violet-500/35 transition-all cursor-pointer text-left w-full"
+        role="link"
+        tabindex="0"
+        @click="router.push(`/teacher/student/${s.id}/profile`)"
+        @keydown.enter.prevent="router.push(`/teacher/student/${s.id}/profile`)"
+        @keydown.space.prevent="router.push(`/teacher/student/${s.id}/profile`)"
       >
-        <!-- Ряд: вибір учня; ім'я й «Профіль» на одній лінії -->
         <div
-          class="flex gap-2 items-center min-w-0 flex-1 rounded-lg -m-0.5 p-0.5 cursor-pointer transition-colors active:bg-white/[0.04]"
-          role="button"
-          tabindex="0"
-          @click="toggleCardSelect(s.id)"
-          @keydown.enter.prevent="toggleCardSelect(s.id)"
-          @keydown.space.prevent="toggleCardSelect(s.id)"
+          class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-xs font-black tabular-nums relative"
+          :class="
+            i === 0
+              ? 'bg-amber-500/15 text-amber-400 ring-1 ring-amber-500/25'
+              : i === 1
+                ? 'bg-slate-400/10 text-slate-300 ring-1 ring-slate-400/20'
+                : i === 2
+                  ? 'bg-amber-800/20 text-amber-600 ring-1 ring-amber-700/25'
+                  : 'bg-white/[0.04] text-slate-500'
+          "
         >
-          <div
-            class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-xs font-black tabular-nums relative"
-            :class="
-              selectedStudentIds.includes(s.id)
-                ? 'bg-violet-600/40 text-white ring-1 ring-violet-400/50'
-                : i === 0
-                  ? 'bg-amber-500/15 text-amber-400 ring-1 ring-amber-500/25'
-                  : i === 1
-                    ? 'bg-slate-400/10 text-slate-300 ring-1 ring-slate-400/20'
-                    : i === 2
-                      ? 'bg-amber-800/20 text-amber-600 ring-1 ring-amber-700/25'
-                      : 'bg-white/[0.04] text-slate-500'
-            "
-          >
-            <Check
-              v-if="selectedStudentIds.includes(s.id)"
-              :size="15"
-              :stroke-width="2.5"
-              class="text-white"
-            />
-            <template v-else>{{ i + 1 }}</template>
-          </div>
+          {{ i + 1 }}
+        </div>
 
-          <AvatarDisplay
-            circle-only
-            :avatar="s.avatar"
-            :display-name="s.displayName || ''"
-            :items="userStore.items"
-            size="sm"
-            class="shrink-0 pointer-events-none"
-          />
-          <div class="min-w-0 flex-1">
-            <div class="flex items-start justify-between gap-2 min-w-0">
-              <div
-                class="font-bold text-sm leading-tight text-white [overflow-wrap:anywhere] line-clamp-2 min-w-0 flex-1"
-              >
-                {{ s.displayName }}
-              </div>
-              <button
-                type="button"
-                class="shrink-0 inline-flex items-center gap-1 rounded-md border border-violet-400/45 bg-violet-600/18 px-2 py-1 text-[10px] font-extrabold text-violet-100 hover:bg-violet-600/28 active:scale-[0.98] transition-all"
-                :aria-label="`Профіль: ${s.displayName || 'учень'}`"
-                @click.stop="router.push(`/teacher/student/${s.id}/profile`)"
-              >
-                <User :size="12" :stroke-width="2" />
-                Профіль
-              </button>
-            </div>
-            <div
-              class="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] font-semibold text-slate-400"
-            >
-              <span>Рів. {{ s.level ?? 1 }}</span>
-              <span class="inline-flex items-center gap-0.5 text-orange-300/90">
-                <Flame :size="11" :stroke-width="2" class="shrink-0" />
-                {{ s.streak ?? 0 }}
-              </span>
-              <CoinDisplay :amount="s.coins || 0" size="sm" />
-            </div>
+        <AvatarDisplay
+          circle-only
+          :avatar="s.avatar"
+          :display-name="s.displayName || ''"
+          :items="userStore.items"
+          size="sm"
+          class="shrink-0 pointer-events-none"
+        />
+        <div class="min-w-0 flex-1">
+          <div
+            class="font-bold text-sm leading-tight text-white [overflow-wrap:anywhere] line-clamp-2 min-w-0"
+          >
+            {{ s.displayName }}
+          </div>
+          <div
+            class="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] font-semibold text-slate-400"
+          >
+            <span>Рів. {{ s.level ?? 1 }}</span>
+            <span class="inline-flex items-center gap-0.5 text-orange-300/90">
+              <Flame :size="11" :stroke-width="2" class="shrink-0" />
+              {{ s.streak ?? 0 }}
+            </span>
+            <CoinDisplay :amount="s.coins || 0" size="sm" />
           </div>
         </div>
       </div>
@@ -515,18 +375,7 @@ async function doFine() {
     <!-- Award modal -->
     <AppModal v-model="showAward" :title="awardModalTitle">
       <div class="flex flex-col gap-3">
-        <!-- Обрані на картках класу -->
-        <div
-          v-if="bulkMode && bulkFromCards"
-          class="rounded-xl border border-violet-500/25 bg-violet-500/10 px-3 py-2 text-sm text-slate-200"
-        >
-          <span class="font-bold text-violet-200">Учнів у списку: {{ selectedStudentIds.length }}</span>
-          <span class="text-slate-400"> отримають по </span>
-          <span class="font-extrabold text-amber-300">{{ awardAmount }} 🪙</span>
-        </div>
-
-        <!-- Ручний вибір у модалці (кнопка «Нарахувати класу») -->
-        <div v-if="bulkMode && !bulkFromCards">
+        <div v-if="bulkMode">
           <div class="flex items-center justify-between mb-2">
             <label class="text-sm font-bold text-slate-300">Оберіть учнів</label>
             <button type="button" class="text-xs text-violet-400 font-bold" @click="selectAllInModal">
@@ -632,36 +481,39 @@ async function doFine() {
         <div class="flex items-start gap-2.5 rounded-2xl p-3" style="background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.18)">
           <Gavel :size="16" :stroke-width="2" class="text-red-400 flex-shrink-0 mt-0.5" />
           <div class="text-xs text-red-300">
-            <template v-if="fineBulkFromCards">
-              Кожному з обраних зніметься до {{ fineAmount }} монет (не більше його балансу). Монети повернуться до твого денного бюджету.
-            </template>
-            <template v-else>
-              Монети будуть знято з балансу учня і повернуті до твого денного бюджету.
-            </template>
+            Кожному з обраних зніметься до {{ fineAmount }} монет (не більше його балансу). Монети повернуться до твого денного бюджету.
           </div>
         </div>
 
-        <!-- Bulk summary -->
-        <div
-          v-if="fineBulkFromCards"
-          class="rounded-xl border border-red-500/25 bg-red-500/10 px-3 py-2 text-sm text-slate-200"
-        >
-          <span class="font-bold text-red-200">Учнів у списку: {{ selectedStudentIds.length }}</span>
-          <span class="text-slate-400"> — штраф до </span>
-          <span class="font-extrabold text-red-300">{{ fineAmount }} 🪙</span>
-          <span class="text-slate-400"> кожному</span>
+        <div>
+          <div class="flex items-center justify-between mb-2">
+            <label class="text-sm font-bold text-slate-300">Оберіть учнів</label>
+            <button type="button" class="text-xs text-violet-400 font-bold" @click="selectAllFineInModal">
+              {{ fineModalIds.length === students.length ? 'Зняти вибір' : 'Вибрати всіх' }}
+            </button>
+          </div>
+          <div class="max-h-48 overflow-y-auto flex flex-col gap-2">
+            <label
+              v-for="s in students"
+              :key="s.id"
+              class="flex items-center gap-3 glass-card p-2 cursor-pointer rounded-xl border"
+              :class="fineModalIds.includes(s.id) ? 'border-red-500/60' : 'border-transparent'"
+            >
+              <input
+                type="checkbox"
+                :checked="fineModalIds.includes(s.id)"
+                class="accent-red-500 w-4 h-4 shrink-0"
+                @change="toggleFineModal(s.id)"
+              />
+              <AvatarDisplay :avatar="s.avatar" :display-name="s.displayName" size="xs" />
+              <span class="font-semibold text-sm truncate">{{ s.displayName }}</span>
+              <CoinDisplay :amount="s.coins || 0" size="sm" class="ml-auto shrink-0" />
+            </label>
+          </div>
           <div v-if="fineSelectedMinCoins !== null" class="text-xs text-slate-500 mt-1">
             Найменший баланс серед обраних: {{ fineSelectedMinCoins }} 🪙
           </div>
-        </div>
-
-        <!-- Student current balance (single) -->
-        <div
-          v-if="!fineBulkFromCards && fineTarget"
-          class="flex items-center justify-between rounded-xl px-3 py-2 bg-white/[0.04]"
-        >
-          <span class="text-sm text-slate-400">Баланс учня</span>
-          <CoinDisplay :amount="fineTarget?.coins || 0" size="sm" />
+          <div class="text-xs text-slate-400 mt-1">{{ fineModalIds.length }} обрано</div>
         </div>
 
         <!-- Amount -->
@@ -695,16 +547,11 @@ async function doFine() {
           size="md"
           block
           :loading="fining"
-          :disabled="!fineReason.trim() || (fineBulkFromCards && selectedStudentIds.length === 0)"
+          :disabled="!fineReason.trim() || fineModalIds.length === 0"
           @click="doFine"
         >
           <Gavel :size="14" :stroke-width="2" />
-          <template v-if="fineBulkFromCards">
-            Накласти штраф обраним ({{ selectedStudentIds.length }}× −{{ fineAmount }})
-          </template>
-          <template v-else>
-            Накласти штраф −{{ fineAmount }}
-          </template>
+          Накласти штраф обраним ({{ fineModalIds.length }}× −{{ fineAmount }})
         </AppButton>
       </div>
     </AppModal>

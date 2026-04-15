@@ -10,17 +10,11 @@ import {
   orientPickaxeForFirstPerson,
   REMOTE_TOOL_MAX_DIM,
   scaleGltfToMaxDimension,
+  stampFpHandPresentation,
 } from '@/game/toolGltfUtils'
 
 let packScene: THREE.Group | null = null
 let loadPromise: Promise<THREE.Group> | null = null
-
-function stampFpHandPresentation(m: THREE.Material) {
-  m.transparent = true
-  m.opacity = 1
-  m.depthTest = false
-  m.depthWrite = false
-}
 
 function configureFpToolMaterials(root: THREE.Object3D) {
   root.traverse((o) => {
