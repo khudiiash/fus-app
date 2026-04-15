@@ -35,6 +35,8 @@ export type BlockWorldHudOptions = {
   teleportToSpawn?: () => void
   /** Clear all custom blocks for everyone (confirm before calling). */
   onRestoreWorld?: () => void | Promise<void>
+  /** Revive default mob slots (RTDB); confirm before calling. */
+  onRespawnMobs?: () => void | Promise<void>
   /** Place / update this player’s spawn flag at current feet position. */
   onPlaceSpawnFlag?: () => void | Promise<void>
 }
@@ -54,8 +56,15 @@ function swallowPointer(e: Event) {
 export function mountBlockWorldHud(
   options: BlockWorldHudOptions,
 ): BlockWorldHudHandle {
-  const { mountEl, control, touchUi, teleportToSpawn, onRestoreWorld, onPlaceSpawnFlag } =
-    options
+  const {
+    mountEl,
+    control,
+    touchUi,
+    teleportToSpawn,
+    onRestoreWorld,
+    onRespawnMobs,
+    onPlaceSpawnFlag,
+  } = options
 
   const root = document.createElement('div')
   root.className = 'fus-bw-hud'
@@ -131,7 +140,7 @@ export function mountBlockWorldHud(
   }
   setHeartsHalfUnits(control.playerHpHalfUnits)
 
-  if (teleportToSpawn || onRestoreWorld || onPlaceSpawnFlag) {
+  if (teleportToSpawn || onRestoreWorld || onRespawnMobs || onPlaceSpawnFlag) {
     const topActions = document.createElement('div')
     topActions.className = 'fus-bw-top-actions'
     if (teleportToSpawn) {
@@ -164,6 +173,23 @@ export function mountBlockWorldHud(
       })
       restoreBtn.addEventListener('pointerdown', swallowPointer)
       topActions.appendChild(restoreBtn)
+    }
+    if (onRespawnMobs) {
+      const respawnBtn = document.createElement('button')
+      respawnBtn.type = 'button'
+      respawnBtn.className = 'fus-bw-respawn-mobs-btn'
+      respawnBtn.textContent = 'Моби знову'
+      respawnBtn.setAttribute(
+        'aria-label',
+        'Оживити всіх стандартних мобів у цьому світі',
+      )
+      respawnBtn.addEventListener('click', (e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        void onRespawnMobs()
+      })
+      respawnBtn.addEventListener('pointerdown', swallowPointer)
+      topActions.appendChild(respawnBtn)
     }
     if (onPlaceSpawnFlag) {
       const flagBtn = document.createElement('button')

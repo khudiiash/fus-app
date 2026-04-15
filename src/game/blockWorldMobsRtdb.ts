@@ -129,13 +129,19 @@ const DEFAULT_SEED_MOBS: SeedKindRow[] = [
   { id: 'm3', kind: 'golem' },
   { id: 'm4', kind: 'mutant_iron_golem' },
   { id: 'm5', kind: 'gigant_warden' },
+  { id: 'm6', kind: 'spider' },
+  { id: 'm7', kind: 'wild_bore' },
+  { id: 'm8', kind: 'fenmaw' },
+  { id: 'm9', kind: 'golem' },
+  { id: 'm10', kind: 'mutant_iron_golem' },
+  { id: 'm11', kind: 'gigant_warden' },
 ]
 
 /** Default world spawn column (see minebase `Core.initCamera` XZ ≈ 8,8). */
 export const BLOCKWORLD_DEFAULT_SPAWN_XZ = { x: 8, z: 8 } as const
 
 /** Bump when spawn layout rules change — clients rewrite RTDB mob positions once. */
-const CURRENT_MOB_SPAWN_LAYOUT_V = 3
+const CURRENT_MOB_SPAWN_LAYOUT_V = 4
 
 /** At least this horizontal distance from the spawn anchor (mobs stay findable, not map-edge). */
 const MOB_SEED_MIN_DIST_FROM_SPAWN = 14
@@ -257,37 +263,50 @@ export async function ensureWorldMobsSeeded(
     seeded && parseableMobCount > 0 && layoutV < CURRENT_MOB_SPAWN_LAYOUT_V
 
   if (needsRelayout && rawState && typeof rawState === 'object') {
-    const entries = Object.entries(rawState as Record<string, unknown>)
-      .map(([id, v]) => {
-        if (!v || typeof v !== 'object') return null
-        const doc = parseMobState(v as Record<string, unknown>)
-        return doc ? { id, doc } : null
-      })
-      .filter((e): e is { id: string; doc: MobStateDoc } => e != null)
-      .sort((a, b) => a.id.localeCompare(b.id))
-
-    if (entries.length === 0) {
-      console.warn('[worldMobs] relayout skipped: state had no parseable mobs')
-      return
+    const byId = new Map<string, MobStateDoc>()
+    for (const [id, v] of Object.entries(rawState as Record<string, unknown>)) {
+      if (!v || typeof v !== 'object') continue
+      const doc = parseMobState(v as Record<string, unknown>)
+      if (doc) byId.set(id, doc)
     }
 
-    const n = Math.max(entries.length, 1)
-    const offsets = mobSeedOffsetsFromSpawn(worldId, n)
-    for (let i = 0; i < entries.length; i++) {
-      const { id, doc: old } = entries[i]!
+    const nSlots = Math.max(DEFAULT_SEED_MOBS.length, byId.size, 1)
+    const offsets = mobSeedOffsetsFromSpawn(worldId, nSlots)
+
+    for (let i = 0; i < DEFAULT_SEED_MOBS.length; i++) {
+      const row = DEFAULT_SEED_MOBS[i]!
       const off = offsets[i]!
+      const old = byId.get(row.id)
       const x = relocateAnchorX + off.dx
       const z = relocateAnchorZ + off.dz
       const feetY = resolveMobFeetY(terrain, x, z)
-      const doc: MobStateDoc = {
-        ...old,
-        x,
-        y: feetY,
-        z,
-        ax: x,
-        az: z,
+      if (old) {
+        const doc: MobStateDoc = {
+          ...old,
+          x,
+          y: feetY,
+          z,
+          ax: x,
+          az: z,
+        }
+        payload[`${RTDB_MOB_STATE}/${worldId}/${row.id}`] = doc
+      } else {
+        const def = MOB_KIND_DEFS[row.kind]
+        const doc: MobStateDoc = {
+          kind: row.kind,
+          x,
+          y: feetY,
+          z,
+          ry: Math.random() * Math.PI * 2,
+          hp: def.hpMax,
+          hpMax: def.hpMax,
+          anim: 'idle',
+          ax: x,
+          az: z,
+          deadAt: 0,
+        }
+        payload[`${RTDB_MOB_STATE}/${worldId}/${row.id}`] = doc
       }
-      payload[`${RTDB_MOB_STATE}/${worldId}/${id}`] = doc
     }
   } else {
     const anchorX = firstSeedAnchorX
@@ -328,6 +347,65 @@ export async function ensureWorldMobsSeeded(
   payload[`${RTDB_MOB_META}/${worldId}/seeded`] = true
   payload[`${RTDB_MOB_META}/${worldId}/mobSpawnLayoutV`] =
     CURRENT_MOB_SPAWN_LAYOUT_V
+  await update(dbRef(rtdb), payload)
+}
+
+/**
+ * Admin / debug: revive all default mob slots at their anchors (full HP, alive).
+ * Does not change mobSpawnLayoutV or meta.seeded.
+ */
+export async function forceRespawnWorldMobs(worldId: string, terrain: Terrain) {
+  if (!rtdb) return
+  const stateRef = dbRef(rtdb, `${RTDB_MOB_STATE}/${worldId}`)
+  const snap = await get(stateRef)
+  const rawState = snap.exists() ? snap.val() : null
+  const byId = new Map<string, MobStateDoc>()
+  if (rawState && typeof rawState === 'object') {
+    for (const [id, v] of Object.entries(rawState as Record<string, unknown>)) {
+      if (!v || typeof v !== 'object') continue
+      const doc = parseMobState(v as Record<string, unknown>)
+      if (doc) byId.set(id, doc)
+    }
+  }
+
+  const anchorX = BLOCKWORLD_DEFAULT_SPAWN_XZ.x
+  const anchorZ = BLOCKWORLD_DEFAULT_SPAWN_XZ.z
+  const offsets = mobSeedOffsetsFromSpawn(worldId, DEFAULT_SEED_MOBS.length)
+  const payload: Record<string, unknown> = {}
+
+  for (let i = 0; i < DEFAULT_SEED_MOBS.length; i++) {
+    const row = DEFAULT_SEED_MOBS[i]!
+    const old = byId.get(row.id)
+    let x: number
+    let z: number
+    if (old && Number.isFinite(old.ax) && Number.isFinite(old.az)) {
+      x = Math.round(old.ax)
+      z = Math.round(old.az)
+    } else {
+      const off = offsets[i]!
+      x = anchorX + off.dx
+      z = anchorZ + off.dz
+    }
+    const feetY = resolveMobFeetY(terrain, x, z)
+    const def = MOB_KIND_DEFS[row.kind]
+    const ry =
+      old && Number.isFinite(old.ry) ? old.ry : Math.random() * Math.PI * 2
+    const doc: MobStateDoc = {
+      kind: row.kind,
+      x,
+      y: feetY,
+      z,
+      ry,
+      hp: def.hpMax,
+      hpMax: def.hpMax,
+      anim: 'idle',
+      ax: x,
+      az: z,
+      deadAt: 0,
+    }
+    payload[`${RTDB_MOB_STATE}/${worldId}/${row.id}`] = doc
+  }
+
   await update(dbRef(rtdb), payload)
 }
 

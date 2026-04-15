@@ -1015,37 +1015,116 @@ export async function openMysteryBox(uid, boxItemId) {
   return result
 }
 
-/** Допустимі суми штрафу (монети). */
+/** Допустимі суми «одним кроком» у профілі учня (перший штраф дня або після дрібних −5). */
 export const FINE_AMOUNT_OPTIONS = [10, 20, 30]
 
-/** Чи вчитель уже штрафував цього учня сьогодні (локальний календарний день як у бюджеті). */
-export async function hasTeacherFinedStudentToday(teacherUid, studentUid) {
-  if (!teacherUid || !studentUid) return false
+/** Максимум монет штрафу на одного учня за календарний день (як у бюджеті вчителя). */
+export const MAX_TEACHER_DAILY_FINE_PER_STUDENT = 30
+
+/** Крок штрафу зі списку класу (−5). */
+export const FINE_INCREMENT = 5
+
+/**
+ * Сума вже накладених штрафів на цього учня сьогодні цим вчителем (0…30).
+ * Застарілі cap-документи без `totalFined` вважаються повним денним лімітом.
+ */
+export async function getTeacherFineTotalToday(teacherUid, studentUid) {
+  if (!teacherUid || !studentUid) return 0
   const today = getCurrentBudgetDayDate()
   const capRef = doc(db, 'users', teacherUid, 'finesAppliedToday', `${studentUid}_${today}`)
   const snap = await getDoc(capRef)
-  return snap.exists()
+  if (!snap.exists()) return 0
+  const d = snap.data()
+  if (typeof d.totalFined === 'number' && Number.isFinite(d.totalFined)) {
+    return Math.min(
+      MAX_TEACHER_DAILY_FINE_PER_STUDENT,
+      Math.max(0, Math.floor(d.totalFined)),
+    )
+  }
+  return MAX_TEACHER_DAILY_FINE_PER_STUDENT
+}
+
+/** Чи вичерпано денний ліміт штрафів на цього учня (30 монет). */
+export async function hasTeacherFinedStudentToday(teacherUid, studentUid) {
+  const t = await getTeacherFineTotalToday(teacherUid, studentUid)
+  return t >= MAX_TEACHER_DAILY_FINE_PER_STUDENT
 }
 
 // ─── Fine student (transactional) ────────────────────────────────────────────
 export async function fineStudent({ fromUid, toUid, amount, reason = '' }) {
   const today = getCurrentBudgetDayDate()
-  const amt = Number(amount)
-  if (!FINE_AMOUNT_OPTIONS.includes(amt)) {
-    throw new Error('Неприпустима сума штрафу (лише 10, 20 або 30 монет)')
+  const amt = Math.round(Number(amount))
+  const reasonTrim = typeof reason === 'string' ? reason.trim() : ''
+
+  const isLump = FINE_AMOUNT_OPTIONS.includes(amt)
+  const isStep = amt === FINE_INCREMENT
+  if (!isLump && !isStep) {
+    throw new Error(
+      `Неприпустима сума штрафу (допускається −${FINE_INCREMENT} або разово: ${FINE_AMOUNT_OPTIONS.join(', ')} монет)`,
+    )
   }
+
+  let fineDeduction = 0
+  let fineLogNote = ''
 
   await runTransaction(db, async (tx) => {
     const capRef = doc(db, 'users', fromUid, 'finesAppliedToday', `${toUid}_${today}`)
     const uRef = doc(db, 'users', toUid)
     const tRef = doc(db, 'users', fromUid)
-    const [capSnap, uSnap, tSnap] = await Promise.all([tx.get(capRef), tx.get(uRef), tx.get(tRef)])
+    const [capSnap, uSnap, tSnap] = await Promise.all([
+      tx.get(capRef),
+      tx.get(uRef),
+      tx.get(tRef),
+    ])
 
-    if (capSnap.exists()) throw new Error('Ви вже наклали штраф на цього учня сьогодні')
     if (!uSnap.exists()) throw new Error('Учня не знайдено')
 
+    let prevTotal = 0
+    let storedReason = ''
+    if (capSnap.exists()) {
+      const capData = capSnap.data()
+      if (typeof capData.totalFined === 'number' && Number.isFinite(capData.totalFined)) {
+        prevTotal = Math.min(
+          MAX_TEACHER_DAILY_FINE_PER_STUDENT,
+          Math.max(0, Math.floor(capData.totalFined)),
+        )
+        storedReason = String(capData.reason || '').trim()
+      } else {
+        prevTotal = MAX_TEACHER_DAILY_FINE_PER_STUDENT
+      }
+    }
+
+    if (prevTotal >= MAX_TEACHER_DAILY_FINE_PER_STUDENT) {
+      throw new Error('Денний ліміт штрафу для цього учня вже вичерпано (30 монет)')
+    }
+
+    if (prevTotal > 0 && isLump) {
+      throw new Error(
+        'Сьогодні вже накладено частковий штраф. Далі можна лише по −5 монет зі списку класу.',
+      )
+    }
+
+    if (prevTotal === 0 && !reasonTrim) {
+      throw new Error('Вкажіть причину штрафу')
+    }
+
+    const remainingCap = MAX_TEACHER_DAILY_FINE_PER_STUDENT - prevTotal
     const student = uSnap.data()
-    const deduction = Math.min(amt, student.coins || 0)
+    const coins = student.coins || 0
+
+    const requested = isStep
+      ? FINE_INCREMENT
+      : Math.min(amt, remainingCap)
+    const deduction = Math.min(requested, coins, remainingCap)
+
+    if (deduction <= 0) {
+      throw new Error('Неможливо зняти монети (нульовий баланс або ліміт)')
+    }
+
+    const nextTotal = prevTotal + deduction
+    const nextReason = storedReason || reasonTrim
+    fineDeduction = deduction
+    fineLogNote = nextReason
 
     tx.update(uRef, { coins: increment(-deduction) })
 
@@ -1057,10 +1136,29 @@ export async function fineStudent({ fromUid, toUid, amount, reason = '' }) {
       }
     }
 
-    tx.set(capRef, { studentUid: toUid, day: today, createdAt: serverTimestamp() })
+    tx.set(
+      capRef,
+      {
+        studentUid: toUid,
+        day: today,
+        totalFined: nextTotal,
+        reason: nextReason,
+        createdAt: capSnap.exists()
+          ? (capSnap.data().createdAt ?? serverTimestamp())
+          : serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true },
+    )
   })
 
-  await logTransaction({ type: 'fine', fromUid, toUid, amount: -amt, note: reason })
+  await logTransaction({
+    type: 'fine',
+    fromUid,
+    toUid,
+    amount: -fineDeduction,
+    note: String(fineLogNote || reasonTrim).slice(0, 200),
+  })
 }
 
 /** Unequip room/pet/accessory/skin that are no longer owned after a trade. */

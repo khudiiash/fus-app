@@ -72,6 +72,8 @@ export function createFusBlockWorld(
     onFrame?: (dt: number) => void
     /** Optional: reset world (Firestore + terrain); confirm in UI before calling. */
     onRestoreWorld?: () => void | Promise<void>
+    /** Optional: revive default mob slots (RTDB); confirm in UI before calling. */
+    onRespawnMobs?: () => void | Promise<void>
     /** Set this player’s spawn flag at current feet position (RTDB / UI). */
     onPlaceSpawnFlag?: () => void | Promise<void>
   },
@@ -223,6 +225,7 @@ export function createFusBlockWorld(
         touchUi: useTouchGameControls(),
         teleportToSpawn,
         onRestoreWorld: hooks?.onRestoreWorld,
+        onRespawnMobs: hooks?.onRespawnMobs,
         onPlaceSpawnFlag: hooks?.onPlaceSpawnFlag,
       })
       control.onPlayerDamaged = () => {

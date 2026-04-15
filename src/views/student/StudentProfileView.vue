@@ -49,7 +49,8 @@ import {
   checkAndGrantAchievements,
   getTeacherBudgetInfo,
   FINE_AMOUNT_OPTIONS,
-  hasTeacherFinedStudentToday,
+  getTeacherFineTotalToday,
+  MAX_TEACHER_DAILY_FINE_PER_STUDENT,
   updateUser,
 } from '@/firebase/collections'
 import { BW_HOTBAR_MAX_SLOTS, parseBlockWorldItem } from '@/game/blockWorldItems'
@@ -416,8 +417,15 @@ async function doFine() {
     error('Вкажіть причину штрафу')
     return
   }
-  if (await hasTeacherFinedStudentToday(auth.profile.id, uid)) {
-    error('Сьогодні штраф для цього учня вже накладено')
+  const finedSoFar = await getTeacherFineTotalToday(auth.profile.id, uid)
+  if (finedSoFar >= MAX_TEACHER_DAILY_FINE_PER_STUDENT) {
+    error('Денний ліміт штрафів для цього учня (30 монет) вичерпано')
+    return
+  }
+  if (finedSoFar > 0) {
+    error(
+      'Сьогодні вже накладено частковий штраф. Разово 10/20/30 — лише як перший штраф дня; далі використовуй −5 у списку класу.',
+    )
     return
   }
   fining.value = true

@@ -39,6 +39,7 @@ import {
 } from '@/game/blockWorldRtdb'
 import {
   ensureWorldMobsSeeded,
+  forceRespawnWorldMobs,
   subscribeMobHitsForVictim,
   mobDamageFromPlayer,
   tryClaimMobCoinDrop,
@@ -361,6 +362,22 @@ async function beginPlay() {
                 console.error('[BlockWorld] restore world', err)
                 window.alert(
                   'Не вдалося скинути світ. Перевір права доступу до Firestore або зʼєднання.',
+                )
+              }
+            },
+            onRespawnMobs: async () => {
+              if (!worldApi) return
+              const ok = confirm(
+                'Оживити всіх стандартних мобів у цьому світі (повне HP, без очікування респавну)?\n' +
+                  'Це не скасовує вбиті блоки чи будівлі.',
+              )
+              if (!ok) return
+              try {
+                await forceRespawnWorldMobs(WORLD_ID, worldApi.terrain)
+              } catch (err) {
+                console.error('[BlockWorld] respawn mobs', err)
+                window.alert(
+                  'Не вдалося оновити мобів. Перевір зʼєднання з Realtime Database.',
                 )
               }
             },
