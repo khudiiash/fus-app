@@ -1,6 +1,10 @@
 import * as THREE from 'three'
 import { PointerLockControls } from 'three/examples/jsm/controls/PointerLockControls.js'
-import { PLAYER_EYE_HEIGHT } from '@/game/playerConstants'
+import {
+  BLOCK_WORLD_MAX_REACH,
+  FIST_MINE_DAMAGE_PER_SWING,
+  PLAYER_EYE_HEIGHT,
+} from '@/game/playerConstants'
 import type { SerializedBlock } from '@/game/sharedWorldFirestore'
 import {
   applyStoredPoseToCamera,
@@ -12,7 +16,8 @@ import { blockTypeBreakHp } from '@/game/blockWorldBlockStats'
 
 const CHUNK_SIDE = 16
 const MAX_SHARED_CUSTOM_BLOCKS = 20_000
-const SWING_COOLDOWN_MS = 220
+const PLACE_COOLDOWN_MS = 220
+const MINE_REPEAT_MS = 230
 
 /** Procedural column height for the prototype chunk (original math; not copied from upstream). */
 function columnHeight(ix: number, iz: number): number {
@@ -70,10 +75,25 @@ function upsertBlock(blocks: SerializedBlock[], edit: SerializedBlock): Serializ
   )
 }
 
+/** Keys `Digit1`…`Digit9` while pointer-locked (same order as classic-ish palette). */
+const PLACE_HOTKEY: BlockType[] = [
+  BlockType.grass,
+  BlockType.dirt,
+  BlockType.stone,
+  BlockType.sand,
+  BlockType.glass,
+  BlockType.wood,
+  BlockType.leaf,
+  BlockType.quartz,
+  BlockType.coal,
+]
+
 export type BlockWorldNextGameOptions = {
   onPointerLockChange?: (locked: boolean) => void
   /** After a local mine/place; use to schedule {@link scheduleFlushSharedWorldBlocksList}. */
   onBlocksEdited?: () => void
+  /** Fired when player picks another block type for RMB place (keys 1–9). */
+  onPlaceTypeChange?: (type: BlockType) => void
 }
 
 export type BlockWorldNextSpawnFlag = {
@@ -99,11 +119,14 @@ export type BlockWorldNextGame = {
   requestPointerLock: () => void
   unlockPointer: () => void
   isPointerLocked: () => boolean
+  /** Block type used for the next RMB place (hotkeys 1–9). */
+  getSelectedPlaceType: () => BlockType
   readonly domElement: HTMLCanvasElement
 }
 
 /**
- * First-person slice: demo chunk, live shared blocks, mine (LMB) / place grass (RMB), WASD + gravity.
+ * First-person slice: demo chunk, live shared blocks, progressive mine (LMB hold),
+ * place with RMB (type via keys 1–9), WASD + gravity.
  */
 export function createBlockWorldNextGame(
   mountEl: HTMLElement,
@@ -182,6 +205,8 @@ export function createBlockWorldNextGame(
 
   const customMeta: (SerializedBlock | null)[] = new Array(MAX_SHARED_CUSTOM_BLOCKS).fill(null)
   let workingBlocks: SerializedBlock[] = []
+  const damageByCell = new Map<string, number>()
+  let selectedPlaceType: BlockType = BlockType.grass
 
   const colorTmp = new THREE.Color()
   const posTmp = new THREE.Vector3()
@@ -208,6 +233,7 @@ export function createBlockWorldNextGame(
   }
 
   const applyCustomBlocks = (blocks: SerializedBlock[]) => {
+    damageByCell.clear()
     workingBlocks = blocks.map((b) => ({
       x: b.x,
       y: b.y,
@@ -228,32 +254,46 @@ export function createBlockWorldNextGame(
   const onKeyDown = (e: KeyboardEvent) => {
     keys.add(e.code)
     if (e.code === 'Escape') controls.unlock()
+    if (!controls.isLocked || e.repeat) return
+    if (e.code >= 'Digit1' && e.code <= 'Digit9') {
+      const idx = Number(e.code.slice(5)) - 1
+      const t = PLACE_HOTKEY[idx]
+      if (t !== undefined && t !== selectedPlaceType) {
+        selectedPlaceType = t
+        options?.onPlaceTypeChange?.(t)
+      }
+    }
   }
   const onKeyUp = (e: KeyboardEvent) => keys.delete(e.code)
 
   const raycaster = new THREE.Raycaster()
   const ndcCenter = new THREE.Vector2(0, 0)
   const hitNormalScratch = new THREE.Vector3()
-  let lastSwingAt = 0
+  let lastPlaceAt = 0
+  let mineHoldTimer: ReturnType<typeof setInterval> | null = null
 
-  const tryMineOrPlace = (button: number) => {
+  const cellKeyStr = (x: number, y: number, z: number) => `${x},${y},${z}`
+
+  const trySwingMineOnce = () => {
     if (!controls.isLocked) return
-    const now = performance.now()
-    if (now - lastSwingAt < SWING_COOLDOWN_MS) return
+    raycaster.near = 0.06
+    raycaster.far = BLOCK_WORLD_MAX_REACH
     raycaster.setFromCamera(ndcCenter, camera)
-    const hits = raycaster.intersectObjects([customMesh, inst, ground], false)
+    const hits = raycaster.intersectObject(customMesh, false)
     if (hits.length === 0) return
     const hit = hits[0]
-    hitNormalScratch.copy(hit.face?.normal ?? new THREE.Vector3(0, 1, 0))
-    hitNormalScratch.transformDirection(hit.object.matrixWorld)
-
-    if (button === 0) {
-      if (hit.object !== customMesh || hit.instanceId == null) return
-      const id = hit.instanceId
-      if (id < 0 || id >= customMesh.count) return
-      const meta = customMeta[id]
-      if (!meta || !meta.placed) return
-      if (blockTypeBreakHp(meta.type as BlockType) === Number.POSITIVE_INFINITY) return
+    if (hit.instanceId == null) return
+    const id = hit.instanceId
+    if (id < 0 || id >= customMesh.count) return
+    const meta = customMeta[id]
+    if (!meta || !meta.placed) return
+    const bt = meta.type as BlockType
+    const maxHp = blockTypeBreakHp(bt)
+    if (maxHp === Number.POSITIVE_INFINITY) return
+    const k = cellKeyStr(meta.x, meta.y, meta.z)
+    const acc = (damageByCell.get(k) ?? 0) + FIST_MINE_DAMAGE_PER_SWING
+    if (acc >= maxHp) {
+      damageByCell.delete(k)
       workingBlocks = upsertBlock(workingBlocks, {
         x: meta.x,
         y: meta.y,
@@ -262,40 +302,69 @@ export function createBlockWorldNextGame(
         placed: false,
       })
       rebuildCustomInstancedFromWorking()
-      lastSwingAt = now
       options?.onBlocksEdited?.()
+    } else {
+      damageByCell.set(k, acc)
+    }
+  }
+
+  const tryPlaceOnce = () => {
+    if (!controls.isLocked) return
+    const now = performance.now()
+    if (now - lastPlaceAt < PLACE_COOLDOWN_MS) return
+    raycaster.near = 0.06
+    raycaster.far = BLOCK_WORLD_MAX_REACH
+    raycaster.setFromCamera(ndcCenter, camera)
+    const hits = raycaster.intersectObjects([customMesh, inst, ground], false)
+    if (hits.length === 0) return
+    const hit = hits[0]
+    hitNormalScratch.copy(hit.face?.normal ?? new THREE.Vector3(0, 1, 0))
+    hitNormalScratch.transformDirection(hit.object.matrixWorld)
+    const cell = voxelCellFromPointOnSurface(hit.point, hitNormalScratch, true)
+    if (blocksPlacedAt(workingBlocks, cell.x, cell.y, cell.z)) return
+    if (isDemoVoxelAt(cell.x, cell.y, cell.z)) return
+    const cam = camera.position
+    if (
+      Math.abs(cam.x - cell.x) < 0.55 &&
+      Math.abs(cam.z - cell.z) < 0.55 &&
+      cam.y < cell.y + 1.2 &&
+      cam.y > cell.y - 0.2
+    ) {
       return
     }
+    workingBlocks = upsertBlock(workingBlocks, {
+      x: cell.x,
+      y: cell.y,
+      z: cell.z,
+      type: selectedPlaceType,
+      placed: true,
+    })
+    rebuildCustomInstancedFromWorking()
+    lastPlaceAt = now
+    options?.onBlocksEdited?.()
+  }
 
-    if (button === 2) {
-      const cell = voxelCellFromPointOnSurface(hit.point, hitNormalScratch, true)
-      if (blocksPlacedAt(workingBlocks, cell.x, cell.y, cell.z)) return
-      if (isDemoVoxelAt(cell.x, cell.y, cell.z)) return
-      const cam = camera.position
-      if (
-        Math.abs(cam.x - cell.x) < 0.55 &&
-        Math.abs(cam.z - cell.z) < 0.55 &&
-        cam.y < cell.y + 1.2 &&
-        cam.y > cell.y - 0.2
-      ) {
-        return
-      }
-      workingBlocks = upsertBlock(workingBlocks, {
-        x: cell.x,
-        y: cell.y,
-        z: cell.z,
-        type: BlockType.grass,
-        placed: true,
-      })
-      rebuildCustomInstancedFromWorking()
-      lastSwingAt = now
-      options?.onBlocksEdited?.()
+  const clearMineHold = () => {
+    if (mineHoldTimer) {
+      clearInterval(mineHoldTimer)
+      mineHoldTimer = null
     }
   }
 
   const onMouseDown = (e: MouseEvent) => {
-    if (e.button === 0 || e.button === 2) tryMineOrPlace(e.button)
+    if (e.button === 0) {
+      clearMineHold()
+      trySwingMineOnce()
+      mineHoldTimer = setInterval(trySwingMineOnce, MINE_REPEAT_MS)
+    } else if (e.button === 2) {
+      tryPlaceOnce()
+    }
   }
+
+  const onWindowMouseUp = (e: MouseEvent) => {
+    if (e.button === 0) clearMineHold()
+  }
+
   const onContextMenu = (e: MouseEvent) => {
     e.preventDefault()
   }
@@ -399,19 +468,23 @@ export function createBlockWorldNextGame(
       mountEl.appendChild(renderer.domElement)
       window.addEventListener('keydown', onKeyDown)
       window.addEventListener('keyup', onKeyUp)
+      window.addEventListener('mouseup', onWindowMouseUp)
       renderer.domElement.addEventListener('mousedown', onMouseDown)
       renderer.domElement.addEventListener('contextmenu', onContextMenu)
       syncRendererSize()
       clock.getDelta()
       running = true
+      options?.onPlaceTypeChange?.(selectedPlaceType)
       tick()
     },
 
     dispose() {
       running = false
+      clearMineHold()
       cancelAnimationFrame(raf)
       window.removeEventListener('keydown', onKeyDown)
       window.removeEventListener('keyup', onKeyUp)
+      window.removeEventListener('mouseup', onWindowMouseUp)
       renderer.domElement.removeEventListener('mousedown', onMouseDown)
       renderer.domElement.removeEventListener('contextmenu', onContextMenu)
       controls.removeEventListener('lock', onLock)
@@ -429,5 +502,6 @@ export function createBlockWorldNextGame(
     requestPointerLock: () => controls.lock(),
     unlockPointer: () => controls.unlock(),
     isPointerLocked: () => controls.isLocked,
+    getSelectedPlaceType: () => selectedPlaceType,
   }
 }

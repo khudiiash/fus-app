@@ -31,9 +31,22 @@ import {
   createBlockWorldNextGame,
   BlockWorldNextPresenceAvatars,
 } from '@/game/blockWorldNext'
+import { BlockType } from '@/game/minebase/terrain'
 import '@/game/minebase/style.css'
 
 const WORLD_ID = 'school'
+
+const PLACE_LABEL_UK = {
+  [BlockType.grass]: 'Трава',
+  [BlockType.dirt]: 'Земля',
+  [BlockType.stone]: 'Камінь',
+  [BlockType.sand]: 'Пісок',
+  [BlockType.glass]: 'Скло',
+  [BlockType.wood]: 'Дерево',
+  [BlockType.leaf]: 'Листя',
+  [BlockType.quartz]: 'Кварц',
+  [BlockType.coal]: 'Вугілля',
+}
 
 const router = useRouter()
 const auth = useAuthStore()
@@ -46,6 +59,7 @@ const playing = ref(false)
 const booting = ref(false)
 const errorMsg = ref('')
 const pointerHint = ref(false)
+const placeLabelUk = ref(PLACE_LABEL_UK[BlockType.grass])
 let game = null
 /** @type {null | (() => void)} */
 let unsubBlocks = null
@@ -80,9 +94,9 @@ function buildPresencePayload() {
     skinUrl,
     photoUrl,
     displayName: auth.profile?.displayName || 'Гравець',
-    mode: 'mine',
+    mode: 'build',
     slot: 0,
-    bwBlockType: 0,
+    bwBlockType: game.getSelectedPlaceType(),
     bwHandMine: 'fist',
     handSwingSeq: 0,
     playerHpHalfUnits: BLOCK_WORLD_MAX_HP_HALF_UNITS,
@@ -228,6 +242,9 @@ async function beginPlay() {
           game ? game.getWorkingBlocksSnapshot() : [],
         )
       },
+      onPlaceTypeChange(t) {
+        placeLabelUk.value = PLACE_LABEL_UK[t] ?? `блок ${t}`
+      },
     })
     g.applyCustomBlocks(initial.blocks)
     g.applyCameraSpawnFromRtdbOrLocal(rtdbFlag, storedPose)
@@ -343,8 +360,8 @@ onUnmounted(async () => {
       class="absolute inset-0 z-20 flex flex-col items-center justify-center bg-gradient-to-b from-slate-900 via-slate-950 to-black px-6 text-center text-white"
     >
       <p class="mb-2 max-w-sm text-xs font-semibold leading-snug text-slate-400">
-        Експериментальний рушій. ЛКМ — зламати поставлений блок, ПКМ — трава на сусідній клітині (той самий світ у
-        RTDB/Firestore). Класичний режим — «Світ».
+        Експериментальний рушій. ЛКМ утримувати — копати (як кулаком у класичному світі), ПКМ — поставити блок, 1–9 —
+        тип блоку. Той самий світ у RTDB/Firestore. Класичний режим — «Світ».
       </p>
       <p
         v-if="errorMsg"
@@ -387,6 +404,13 @@ onUnmounted(async () => {
     >
       Вийти
     </button>
+
+    <div
+      v-if="playing && !booting"
+      class="pointer-events-none absolute bottom-[max(1rem,env(safe-area-inset-bottom,0px))] left-1/2 z-[210] max-w-[min(22rem,calc(100%-2rem))] -translate-x-1/2 rounded-xl border border-white/15 bg-black/50 px-3 py-2 text-center text-[11px] font-bold leading-snug text-white/90 backdrop-blur-sm"
+    >
+      Поставити: {{ placeLabelUk }} · 1–9
+    </div>
   </div>
 </template>
 
