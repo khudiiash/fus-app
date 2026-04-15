@@ -421,6 +421,75 @@ async function flushCustomBlocksNow(worldId: string, terrain: Terrain) {
   }
 }
 
+let flushSharedListTimer: ReturnType<typeof setTimeout> | null = null
+let flushSharedListChain: Promise<void> = Promise.resolve()
+
+/** Cancel debounced {@link scheduleFlushSharedWorldBlocksList} (e.g. when leaving world-next). */
+export function cancelScheduledFlushSharedWorldBlocksList() {
+  if (flushSharedListTimer) {
+    clearTimeout(flushSharedListTimer)
+    flushSharedListTimer = null
+  }
+}
+
+/**
+ * Merge `getLocalBlocks()` into Firestore / RTDB the same way as terrain-based flushes
+ * ({@link scheduleFlushCustomBlocks}), without a {@link Terrain} instance.
+ */
+export function scheduleFlushSharedWorldBlocksList(
+  worldId: string,
+  getLocalBlocks: () => SerializedBlock[],
+) {
+  if (flushSharedListTimer) clearTimeout(flushSharedListTimer)
+  const debounceMs = blockWorldAggressiveMobile() ? 105 : FLUSH_DEBOUNCE_MS
+  flushSharedListTimer = setTimeout(() => {
+    flushSharedListTimer = null
+    const list = getLocalBlocks()
+    flushSharedListChain = flushSharedListChain
+      .then(() => flushSharedWorldCustomBlocksList(worldId, list))
+      .catch((e) => {
+        console.warn('[sharedWorld] flushSharedWorldCustomBlocksList', e)
+      })
+  }, debounceMs)
+}
+
+/** One RTDB / Firestore transaction: remote ⊕ `localBlocks` (per-cell local wins, same as terrain flush). */
+export async function flushSharedWorldCustomBlocksList(
+  worldId: string,
+  localBlocks: SerializedBlock[],
+): Promise<void> {
+  const sorted = sortSerializedBlocks(
+    localBlocks
+      .map((b) => parseSerializedBlock(b))
+      .filter((b): b is SerializedBlock => b != null),
+  )
+  if (!rtdb) {
+    const worldDocRef = doc(db, WORLD_COLLECTION, worldId)
+    await runFirestoreTransaction(db, async (tx) => {
+      const snap = await tx.get(worldDocRef)
+      const data = snap.data() ?? {}
+      const remote = ((data.customBlocks ?? []) as unknown[])
+        .map((b) => parseSerializedBlock(b))
+        .filter((b): b is SerializedBlock => b != null)
+      const merged = mergeCustomBlockLists(remote, sorted)
+      tx.set(
+        worldDocRef,
+        {
+          customBlocks: merged,
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true },
+      )
+    })
+    return
+  }
+  const blockRef = dbRef(rtdb, worldCustomBlocksRtdbPath(worldId))
+  await runTransaction(blockRef, (current) => {
+    const remote = blocksFromRtdbVal(current)
+    return mergeCustomBlockLists(remote, sorted)
+  })
+}
+
 export type PresenceDoc = {
   x: number
   y: number

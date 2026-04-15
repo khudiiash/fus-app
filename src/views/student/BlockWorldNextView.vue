@@ -16,6 +16,8 @@ import {
   writePresence,
   deletePresence,
   bindPresenceDisconnectRemove,
+  scheduleFlushSharedWorldBlocksList,
+  cancelScheduledFlushSharedWorldBlocksList,
 } from '@/game/sharedWorldFirestore'
 import { fetchPlayerSpawnFlag } from '@/game/blockWorldRtdb'
 import {
@@ -140,6 +142,7 @@ function installPinchLock() {
 }
 
 async function teardownGame() {
+  cancelScheduledFlushSharedWorldBlocksList()
   presenceStopped = true
   if (poseSaveTimer) {
     clearInterval(poseSaveTimer)
@@ -219,6 +222,11 @@ async function beginPlay() {
     const g = createBlockWorldNextGame(el, {
       onPointerLockChange(locked) {
         pointerHint.value = !locked
+      },
+      onBlocksEdited() {
+        scheduleFlushSharedWorldBlocksList(WORLD_ID, () =>
+          game ? game.getWorkingBlocksSnapshot() : [],
+        )
       },
     })
     g.applyCustomBlocks(initial.blocks)
@@ -335,7 +343,8 @@ onUnmounted(async () => {
       class="absolute inset-0 z-20 flex flex-col items-center justify-center bg-gradient-to-b from-slate-900 via-slate-950 to-black px-6 text-center text-white"
     >
       <p class="mb-2 max-w-sm text-xs font-semibold leading-snug text-slate-400">
-        Експериментальний рушій. Той самий спільний світ (блоки + гравці з RTDB); класичний режим — «Світ».
+        Експериментальний рушій. ЛКМ — зламати поставлений блок, ПКМ — трава на сусідній клітині (той самий світ у
+        RTDB/Firestore). Класичний режим — «Світ».
       </p>
       <p
         v-if="errorMsg"

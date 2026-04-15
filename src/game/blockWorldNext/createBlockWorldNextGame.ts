@@ -7,9 +7,12 @@ import {
   type StoredCameraPose,
 } from '@/game/blockWorldLocalPersist'
 import { blockTypeHex } from './blockTypeColor'
+import { BlockType } from '@/game/minebase/terrain'
+import { blockTypeBreakHp } from '@/game/blockWorldBlockStats'
 
 const CHUNK_SIDE = 16
 const MAX_SHARED_CUSTOM_BLOCKS = 20_000
+const SWING_COOLDOWN_MS = 220
 
 /** Procedural column height for the prototype chunk (original math; not copied from upstream). */
 function columnHeight(ix: number, iz: number): number {
@@ -19,9 +22,58 @@ function columnHeight(ix: number, iz: number): number {
   return Math.max(1, Math.min(6, Math.floor(h)))
 }
 
+function isDemoVoxelAt(wx: number, wy: number, wz: number): boolean {
+  for (let iz = 0; iz < CHUNK_SIDE; iz++) {
+    for (let ix = 0; ix < CHUNK_SIDE; ix++) {
+      const h = columnHeight(ix, iz)
+      const cx = ix + 0.5
+      const cz = iz + 0.5
+      if (Math.abs(wx - cx) > 0.501 || Math.abs(wz - cz) > 0.501) continue
+      for (let k = 0; k < h; k++) {
+        const cy = k + 0.5
+        if (Math.abs(wy - cy) < 0.501) return true
+      }
+    }
+  }
+  return false
+}
+
+function voxelCellFromPointOnSurface(
+  point: THREE.Vector3,
+  normalWorld: THREE.Vector3,
+  outward: boolean,
+): { x: number; y: number; z: number } {
+  const p = point.clone().addScaledVector(normalWorld, outward ? 0.05 : -0.05)
+  return {
+    x: Math.floor(p.x) + 0.5,
+    y: Math.floor(p.y) + 0.5,
+    z: Math.floor(p.z) + 0.5,
+  }
+}
+
+function blocksPlacedAt(blocks: SerializedBlock[], x: number, y: number, z: number): SerializedBlock | null {
+  for (const b of blocks) {
+    if (!b.placed) continue
+    if (Math.abs(b.x - x) < 1e-4 && Math.abs(b.y - y) < 1e-4 && Math.abs(b.z - z) < 1e-4) return b
+  }
+  return null
+}
+
+function upsertBlock(blocks: SerializedBlock[], edit: SerializedBlock): SerializedBlock[] {
+  const m = new Map<string, SerializedBlock>()
+  const key = (b: Pick<SerializedBlock, 'x' | 'y' | 'z'>) => `${b.x},${b.y},${b.z}`
+  for (const b of blocks) m.set(key(b), { ...b })
+  m.set(key(edit), { ...edit })
+  return [...m.values()].sort(
+    (a, b) =>
+      a.x - b.x || a.y - b.y || a.z - b.z || a.type - b.type || Number(a.placed) - Number(b.placed),
+  )
+}
+
 export type BlockWorldNextGameOptions = {
-  /** Fired when pointer lock is acquired or released. */
   onPointerLockChange?: (locked: boolean) => void
+  /** After a local mine/place; use to schedule {@link scheduleFlushSharedWorldBlocksList}. */
+  onBlocksEdited?: () => void
 }
 
 export type BlockWorldNextSpawnFlag = {
@@ -35,16 +87,11 @@ export type BlockWorldNextGame = {
   start: () => void
   dispose: () => void
   syncRendererSize: () => void
-  /** Replace instanced overlay from shared world `customBlocks` (placed entries only). */
   applyCustomBlocks: (blocks: SerializedBlock[]) => void
+  getWorkingBlocksSnapshot: () => SerializedBlock[]
   getCamera: () => THREE.PerspectiveCamera
   getScene: () => THREE.Scene
-  /** True when WASD / space intent or vertical motion suggests movement (presence heartbeat). */
   isMovingForPresence: () => boolean
-  /**
-   * Prefer RTDB spawn flag (feet + yaw), else last localStorage pose; otherwise keep constructor default.
-   * Call before {@link start} so the first rendered frame matches classic world spawn rules.
-   */
   applyCameraSpawnFromRtdbOrLocal: (
     rtdbFlag: BlockWorldNextSpawnFlag | null,
     storedPose: StoredCameraPose | null,
@@ -56,8 +103,7 @@ export type BlockWorldNextGame = {
 }
 
 /**
- * Minimal first-person slice: renderer, lighting, demo chunk, live shared custom blocks, WASD + gravity.
- * Intended to grow into the full shared world; see repo `THIRD_PARTY_NOTICES.txt`.
+ * First-person slice: demo chunk, live shared blocks, mine (LMB) / place grass (RMB), WASD + gravity.
  */
 export function createBlockWorldNextGame(
   mountEl: HTMLElement,
@@ -134,14 +180,18 @@ export function createBlockWorldNextGame(
   customMesh.count = 0
   scene.add(customMesh)
 
+  const customMeta: (SerializedBlock | null)[] = new Array(MAX_SHARED_CUSTOM_BLOCKS).fill(null)
+  let workingBlocks: SerializedBlock[] = []
+
   const colorTmp = new THREE.Color()
   const posTmp = new THREE.Vector3()
   const quatId = new THREE.Quaternion()
   const scaleOne = new THREE.Vector3(1, 1, 1)
 
-  const applyCustomBlocks = (blocks: SerializedBlock[]) => {
+  const rebuildCustomInstancedFromWorking = () => {
+    customMeta.fill(null)
     let idx = 0
-    for (const b of blocks) {
+    for (const b of workingBlocks) {
       if (!b.placed) continue
       if (idx >= MAX_SHARED_CUSTOM_BLOCKS) break
       posTmp.set(b.x, b.y, b.z)
@@ -149,11 +199,23 @@ export function createBlockWorldNextGame(
       customMesh.setMatrixAt(idx, m)
       colorTmp.setHex(blockTypeHex(b.type))
       customMesh.setColorAt(idx, colorTmp)
+      customMeta[idx] = { ...b }
       idx++
     }
     customMesh.count = idx
     customMesh.instanceMatrix.needsUpdate = true
     if (customMesh.instanceColor) customMesh.instanceColor.needsUpdate = true
+  }
+
+  const applyCustomBlocks = (blocks: SerializedBlock[]) => {
+    workingBlocks = blocks.map((b) => ({
+      x: b.x,
+      y: b.y,
+      z: b.z,
+      type: b.type,
+      placed: b.placed,
+    }))
+    rebuildCustomInstancedFromWorking()
   }
 
   const controls = new PointerLockControls(camera, renderer.domElement)
@@ -168,6 +230,75 @@ export function createBlockWorldNextGame(
     if (e.code === 'Escape') controls.unlock()
   }
   const onKeyUp = (e: KeyboardEvent) => keys.delete(e.code)
+
+  const raycaster = new THREE.Raycaster()
+  const ndcCenter = new THREE.Vector2(0, 0)
+  const hitNormalScratch = new THREE.Vector3()
+  let lastSwingAt = 0
+
+  const tryMineOrPlace = (button: number) => {
+    if (!controls.isLocked) return
+    const now = performance.now()
+    if (now - lastSwingAt < SWING_COOLDOWN_MS) return
+    raycaster.setFromCamera(ndcCenter, camera)
+    const hits = raycaster.intersectObjects([customMesh, inst, ground], false)
+    if (hits.length === 0) return
+    const hit = hits[0]
+    hitNormalScratch.copy(hit.face?.normal ?? new THREE.Vector3(0, 1, 0))
+    hitNormalScratch.transformDirection(hit.object.matrixWorld)
+
+    if (button === 0) {
+      if (hit.object !== customMesh || hit.instanceId == null) return
+      const id = hit.instanceId
+      if (id < 0 || id >= customMesh.count) return
+      const meta = customMeta[id]
+      if (!meta || !meta.placed) return
+      if (blockTypeBreakHp(meta.type as BlockType) === Number.POSITIVE_INFINITY) return
+      workingBlocks = upsertBlock(workingBlocks, {
+        x: meta.x,
+        y: meta.y,
+        z: meta.z,
+        type: meta.type,
+        placed: false,
+      })
+      rebuildCustomInstancedFromWorking()
+      lastSwingAt = now
+      options?.onBlocksEdited?.()
+      return
+    }
+
+    if (button === 2) {
+      const cell = voxelCellFromPointOnSurface(hit.point, hitNormalScratch, true)
+      if (blocksPlacedAt(workingBlocks, cell.x, cell.y, cell.z)) return
+      if (isDemoVoxelAt(cell.x, cell.y, cell.z)) return
+      const cam = camera.position
+      if (
+        Math.abs(cam.x - cell.x) < 0.55 &&
+        Math.abs(cam.z - cell.z) < 0.55 &&
+        cam.y < cell.y + 1.2 &&
+        cam.y > cell.y - 0.2
+      ) {
+        return
+      }
+      workingBlocks = upsertBlock(workingBlocks, {
+        x: cell.x,
+        y: cell.y,
+        z: cell.z,
+        type: BlockType.grass,
+        placed: true,
+      })
+      rebuildCustomInstancedFromWorking()
+      lastSwingAt = now
+      options?.onBlocksEdited?.()
+    }
+  }
+
+  const onMouseDown = (e: MouseEvent) => {
+    if (e.button === 0 || e.button === 2) tryMineOrPlace(e.button)
+  }
+  const onContextMenu = (e: MouseEvent) => {
+    e.preventDefault()
+  }
 
   const clock = new THREE.Clock()
   let raf = 0
@@ -257,6 +388,7 @@ export function createBlockWorldNextGame(
   return {
     domElement: renderer.domElement,
     applyCustomBlocks,
+    getWorkingBlocksSnapshot: () => workingBlocks.map((b) => ({ ...b })),
     getCamera: () => camera,
     getScene: () => scene,
     isMovingForPresence,
@@ -267,6 +399,8 @@ export function createBlockWorldNextGame(
       mountEl.appendChild(renderer.domElement)
       window.addEventListener('keydown', onKeyDown)
       window.addEventListener('keyup', onKeyUp)
+      renderer.domElement.addEventListener('mousedown', onMouseDown)
+      renderer.domElement.addEventListener('contextmenu', onContextMenu)
       syncRendererSize()
       clock.getDelta()
       running = true
@@ -278,6 +412,8 @@ export function createBlockWorldNextGame(
       cancelAnimationFrame(raf)
       window.removeEventListener('keydown', onKeyDown)
       window.removeEventListener('keyup', onKeyUp)
+      renderer.domElement.removeEventListener('mousedown', onMouseDown)
+      renderer.domElement.removeEventListener('contextmenu', onContextMenu)
       controls.removeEventListener('lock', onLock)
       controls.removeEventListener('unlock', onUnlock)
       controls.disconnect()
