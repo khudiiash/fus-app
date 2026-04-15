@@ -29,9 +29,6 @@ export const HOTBAR_SLOT_COUNT = BW_HOTBAR_MAX_SLOTS
 export const HOTBAR_MAX_SLOTS = BW_HOTBAR_MAX_SLOTS
 export type BlockWorldInteractionMode = 'mine' | 'build'
 
-/** Min ms between crosshair mine swings (blocks, mobs, PvP ray path). */
-const BW_CROSSHAIR_MINE_COOLDOWN_MS = 240
-
 enum Side {
   front,
   back,
@@ -146,14 +143,10 @@ export default class Control {
   onPlayerDamaged?: () => void
   /** Pickaxe raycast targets (remote `PlayerObject` roots). */
   getRemotePlayerRaycastRoots: () => THREE.Object3D[] = () => []
-  /** When pickaxe swing hits a remote rig (cooldown applied). */
   onPickaxeHitRemotePlayer?: (targetUid: string) => void
   /** Optional mob roots for mine-mode raycasts (see {@link getMobRaycastRoots}). */
   getMobRaycastRoots: () => THREE.Object3D[] = () => []
-  /** Mine-mode hit on a mob rig (same cooldown as {@link onPickaxeHitRemotePlayer}). */
   onPickaxeHitMob?: (mobId: string, dmg: number) => void
-  private lastPickaxePlayerHitMs = 0
-  private lastCrosshairMineMs = 0
   /** Accumulated mining damage toward the block currently being targeted. */
   private blockBreakDamage = new Map<string, number>()
   private lastMineTargetKey: string | null = null
@@ -544,24 +537,16 @@ export default class Control {
   }
 
   crosshairBreak = () => {
-    const now = Date.now()
-    if (now - this.lastCrosshairMineMs < BW_CROSSHAIR_MINE_COOLDOWN_MS) return
-    this.lastCrosshairMineMs = now
     this.requestHandSwing()
     this.raycaster.setFromCamera({ x: 0, y: 0 }, this.camera)
 
     const roots = this.getRemotePlayerRaycastRoots()
-    if (
-      this.canMeleePvP() &&
-      roots.length > 0 &&
-      Date.now() - this.lastPickaxePlayerHitMs > 420
-    ) {
+    if (this.canMeleePvP() && roots.length > 0) {
       const ph = this.raycaster.intersectObjects(roots, true)[0]
       const bh = this.raycaster.intersectObjects(this.terrain.blocks)[0]
       if (ph && (!bh || ph.distance <= bh.distance)) {
         const uid = this.findRemoteUidFromIntersect(ph)
         if (uid) {
-          this.lastPickaxePlayerHitMs = Date.now()
           if (ph.point) {
             spawnPickaxePlayerHitParticles(this.scene, ph.point)
           }
@@ -572,17 +557,12 @@ export default class Control {
     }
 
     const mobRoots = this.getMobRaycastRoots()
-    if (
-      this.interactionMode === 'mine' &&
-      mobRoots.length > 0 &&
-      Date.now() - this.lastPickaxePlayerHitMs > 420
-    ) {
+    if (this.interactionMode === 'mine' && mobRoots.length > 0) {
       const mh = this.raycaster.intersectObjects(mobRoots, true)[0]
       const bhMob = this.raycaster.intersectObjects(this.terrain.blocks)[0]
       if (mh && (!bhMob || mh.distance <= bhMob.distance)) {
         const mobId = this.findMobIdFromIntersect(mh)
         if (mobId) {
-          this.lastPickaxePlayerHitMs = Date.now()
           if (mh.point) {
             spawnPickaxePlayerHitParticles(this.scene, mh.point)
           }

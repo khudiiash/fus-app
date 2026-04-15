@@ -26,7 +26,8 @@ import { spawnMobDeathPoofParticles } from '@/game/blockWorldParticles'
 
 const COIN_PICKUP_GLB_URL = new URL('./assets/coin.glb', import.meta.url).href
 
-const RESPAWN_MS = 14_000
+/** Real-time day cycle: same mob slot respawns one day after death. */
+const RESPAWN_MS = 24 * 60 * 60 * 1000
 
 let coinPickupTemplate: THREE.Group | null = null
 let coinPickupTemplatePromise: Promise<void> | null = null

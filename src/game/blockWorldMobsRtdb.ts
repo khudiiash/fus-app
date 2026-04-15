@@ -121,7 +121,7 @@ export function resolveMobFeetY(terrain: Terrain, x: number, z: number) {
 
 type SeedKindRow = { id: string; kind: MobKindId }
 
-/** Mob kinds and stable ids; XZ offsets are computed so packs sit far from world spawn. */
+/** Mob kinds and stable ids; XZ offsets ring near the seed anchor (see {@link mobSeedOffsetsFromSpawn}). */
 const DEFAULT_SEED_MOBS: SeedKindRow[] = [
   { id: 'm0', kind: 'spider' },
   { id: 'm1', kind: 'wild_bore' },
@@ -135,13 +135,13 @@ const DEFAULT_SEED_MOBS: SeedKindRow[] = [
 export const BLOCKWORLD_DEFAULT_SPAWN_XZ = { x: 8, z: 8 } as const
 
 /** Bump when spawn layout rules change — clients rewrite RTDB mob positions once. */
-const CURRENT_MOB_SPAWN_LAYOUT_V = 2
+const CURRENT_MOB_SPAWN_LAYOUT_V = 3
 
-/** At least this horizontal distance from the spawn anchor (detect + patrol + safety margin). */
-const MOB_SEED_MIN_DIST_FROM_SPAWN = 58
+/** At least this horizontal distance from the spawn anchor (mobs stay findable, not map-edge). */
+const MOB_SEED_MIN_DIST_FROM_SPAWN = 14
 /** Base ring radius from spawn; extra rings add separation between mobs. */
-const MOB_SEED_RADIUS_BASE = 72
-const MOB_SEED_RADIUS_STEP = 16
+const MOB_SEED_RADIUS_BASE = 22
+const MOB_SEED_RADIUS_STEP = 7
 
 export type EnsureWorldMobsSeedOpts = {
   /** Feet / column XZ the player will stand on (flag, saved pose, or camera); used for first-time seed only. */
@@ -159,8 +159,8 @@ function hashWorldIdToPhase(worldId: string): number {
 }
 
 /**
- * Evenly spaced directions around spawn, staggered radii so mobs are not stacked
- * and stay outside {@link MOB_SEED_MIN_DIST_FROM_SPAWN}.
+ * Evenly spaced directions around the anchor, staggered radii so mobs are not stacked
+ * and stay at least {@link MOB_SEED_MIN_DIST_FROM_SPAWN} from it (unless scaled up).
  */
 function mobSeedOffsetsFromSpawn(
   worldId: string,
