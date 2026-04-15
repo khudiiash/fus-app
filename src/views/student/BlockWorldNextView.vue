@@ -1,23 +1,41 @@
 <script setup>
 /**
  * Experimental voxel playground (new engine path). Production world remains `/student/world`.
- * Loads the same shared `customBlocks` stream as the classic world (RTDB when configured).
+ * Same shared `customBlocks`, spawn / last pose, and RTDB presence as the classic world.
  */
 import { ref, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import { useUserStore } from '@/stores/user'
 import { useBlockWorldSession } from '@/stores/blockWorldSession'
+import { rtdb } from '@/firebase/config'
 import {
   loadSharedWorldInitialState,
   subscribeSharedWorldCustomBlocks,
+  subscribePresence,
+  writePresence,
+  deletePresence,
+  bindPresenceDisconnectRemove,
 } from '@/game/sharedWorldFirestore'
-import { createBlockWorldNextGame } from '@/game/blockWorldNext'
+import { fetchPlayerSpawnFlag } from '@/game/blockWorldRtdb'
+import {
+  loadLastCameraPose,
+  saveLastCameraPose,
+} from '@/game/blockWorldLocalPersist'
+import { cameraYawFromQuaternion } from '@/game/cameraYaw'
+import { normalizeSkinUrlForPresence } from '@/utils/presenceSkinUrl'
+import { BLOCK_WORLD_MAX_HP_HALF_UNITS } from '@/game/playerConstants'
+import {
+  createBlockWorldNextGame,
+  BlockWorldNextPresenceAvatars,
+} from '@/game/blockWorldNext'
 import '@/game/minebase/style.css'
 
 const WORLD_ID = 'school'
 
 const router = useRouter()
 const auth = useAuthStore()
+const userStore = useUserStore()
 const bwSession = useBlockWorldSession()
 
 const mineRootRef = ref(null)
@@ -29,6 +47,45 @@ const pointerHint = ref(false)
 let game = null
 /** @type {null | (() => void)} */
 let unsubBlocks = null
+/** @type {null | (() => void)} */
+let unsubPresence = null
+/** @type {BlockWorldNextPresenceAvatars | null} */
+let avatars = null
+let presenceTimer = null
+let poseSaveTimer = null
+let presenceStopped = true
+
+function resolvePresenceSkinUrl(profile, items) {
+  const direct = normalizeSkinUrlForPresence(profile?.avatar?.skinUrl ?? null)
+  if (direct) return direct
+  const sid = profile?.avatar?.skinId
+  if (!sid || sid === 'default' || !items?.length) return null
+  const it = items.find((i) => i.skinId === sid || i.id === sid)
+  return normalizeSkinUrlForPresence(it?.skinUrl ?? null)
+}
+
+function buildPresencePayload() {
+  const cam = game.getCamera()
+  const moving = game.isMovingForPresence()
+  const skinUrl = resolvePresenceSkinUrl(auth.profile, userStore.items)
+  const photoUrl = normalizeSkinUrlForPresence(auth.profile?.avatar?.photoUrl ?? null)
+  return {
+    x: cam.position.x,
+    y: cam.position.y,
+    z: cam.position.z,
+    ry: cameraYawFromQuaternion(cam.quaternion),
+    moving,
+    skinUrl,
+    photoUrl,
+    displayName: auth.profile?.displayName || 'Гравець',
+    mode: 'mine',
+    slot: 0,
+    bwBlockType: 0,
+    bwHandMine: 'fist',
+    handSwingSeq: 0,
+    playerHpHalfUnits: BLOCK_WORLD_MAX_HP_HALF_UNITS,
+  }
+}
 
 function syncPlayViewport() {
   const root = mineRootRef.value
@@ -82,7 +139,45 @@ function installPinchLock() {
   }
 }
 
-function teardownGame() {
+async function teardownGame() {
+  presenceStopped = true
+  if (poseSaveTimer) {
+    clearInterval(poseSaveTimer)
+    poseSaveTimer = null
+  }
+  if (presenceTimer) {
+    clearInterval(presenceTimer)
+    presenceTimer = null
+  }
+  if (unsubPresence) {
+    try {
+      unsubPresence()
+    } catch {
+      /* ignore */
+    }
+    unsubPresence = null
+  }
+  if (avatars) {
+    avatars.dispose()
+    avatars = null
+  }
+
+  const leaveUid = auth.user?.uid
+  if (leaveUid && game) {
+    try {
+      saveLastCameraPose(WORLD_ID, leaveUid, game.getCamera())
+    } catch {
+      /* ignore */
+    }
+  }
+  if (leaveUid) {
+    try {
+      await deletePresence(WORLD_ID, leaveUid)
+    } catch {
+      /* ignore */
+    }
+  }
+
   if (unsubBlocks) {
     try {
       unsubBlocks()
@@ -102,6 +197,7 @@ async function beginPlay() {
   errorMsg.value = ''
   booting.value = true
   await auth.init()
+  await userStore.fetchItems()
   if (!auth.user?.uid) {
     errorMsg.value =
       'Потрібна активна сесія Firebase Auth. Якщо зайшли з IP (наприклад 192.168.x.x), додайте цей хост у Firebase → Authentication → Authorized domains.'
@@ -115,6 +211,10 @@ async function beginPlay() {
       booting.value = false
       return
     }
+    const uid = auth.user.uid
+    const rtdbFlag = await fetchPlayerSpawnFlag(WORLD_ID, uid)
+    const storedPose = rtdbFlag ? null : loadLastCameraPose(WORLD_ID, uid)
+
     const initial = await loadSharedWorldInitialState(WORLD_ID)
     const g = createBlockWorldNextGame(el, {
       onPointerLockChange(locked) {
@@ -122,8 +222,10 @@ async function beginPlay() {
       },
     })
     g.applyCustomBlocks(initial.blocks)
+    g.applyCameraSpawnFromRtdbOrLocal(rtdbFlag, storedPose)
     g.start()
     game = g
+
     unsubBlocks = subscribeSharedWorldCustomBlocks(
       WORLD_ID,
       (blocks) => {
@@ -131,6 +233,31 @@ async function beginPlay() {
       },
       initial.blocksFingerprint,
     )
+
+    if (rtdb) {
+      presenceStopped = false
+      avatars = new BlockWorldNextPresenceAvatars(g.getScene(), uid)
+      unsubPresence = subscribePresence(WORLD_ID, (map) => {
+        avatars?.sync(map)
+      })
+      try {
+        await bindPresenceDisconnectRemove(WORLD_ID, uid)
+      } catch (e) {
+        console.warn('[BlockWorldNext] bindPresenceDisconnectRemove', e)
+      }
+      const presenceTickMs = 88
+      presenceTimer = window.setInterval(() => {
+        if (presenceStopped || !game) return
+        void writePresence(WORLD_ID, uid, buildPresencePayload()).catch(() => {})
+      }, presenceTickMs)
+      void writePresence(WORLD_ID, uid, buildPresencePayload()).catch(() => {})
+    }
+
+    poseSaveTimer = window.setInterval(() => {
+      if (!playing.value || !game || !auth.user?.uid) return
+      saveLastCameraPose(WORLD_ID, auth.user.uid, game.getCamera())
+    }, 3600)
+
     playing.value = true
     bwSession.setImmersive(true)
     await nextTick()
@@ -143,7 +270,7 @@ async function beginPlay() {
   } catch (e) {
     console.error('[BlockWorldNext]', e)
     errorMsg.value = e?.message || String(e)
-    teardownGame()
+    await teardownGame()
     playing.value = false
     bwSession.setImmersive(false)
   } finally {
@@ -154,7 +281,7 @@ async function beginPlay() {
 async function exitToApp() {
   clearPinchLock()
   bwSession.setImmersive(false)
-  teardownGame()
+  await teardownGame()
   playing.value = false
   pointerHint.value = false
   await router.push('/student')
@@ -184,14 +311,14 @@ onMounted(() => {
   window.addEventListener('orientationchange', onVisualViewportChange)
 })
 
-onUnmounted(() => {
+onUnmounted(async () => {
   clearPinchLock()
   window.visualViewport?.removeEventListener('resize', onVisualViewportChange)
   window.visualViewport?.removeEventListener('scroll', onVisualViewportChange)
   window.removeEventListener('resize', onVisualViewportChange)
   window.removeEventListener('orientationchange', onVisualViewportChange)
   bwSession.setImmersive(false)
-  teardownGame()
+  await teardownGame()
 })
 </script>
 
@@ -208,7 +335,7 @@ onUnmounted(() => {
       class="absolute inset-0 z-20 flex flex-col items-center justify-center bg-gradient-to-b from-slate-900 via-slate-950 to-black px-6 text-center text-white"
     >
       <p class="mb-2 max-w-sm text-xs font-semibold leading-snug text-slate-400">
-        Експериментальний рушій. Той самий спільний світ (блоки з сервера); класичний режим — «Світ».
+        Експериментальний рушій. Той самий спільний світ (блоки + гравці з RTDB); класичний режим — «Світ».
       </p>
       <p
         v-if="errorMsg"

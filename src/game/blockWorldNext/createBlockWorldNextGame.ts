@@ -2,6 +2,10 @@ import * as THREE from 'three'
 import { PointerLockControls } from 'three/examples/jsm/controls/PointerLockControls.js'
 import { PLAYER_EYE_HEIGHT } from '@/game/playerConstants'
 import type { SerializedBlock } from '@/game/sharedWorldFirestore'
+import {
+  applyStoredPoseToCamera,
+  type StoredCameraPose,
+} from '@/game/blockWorldLocalPersist'
 import { blockTypeHex } from './blockTypeColor'
 
 const CHUNK_SIDE = 16
@@ -20,12 +24,31 @@ export type BlockWorldNextGameOptions = {
   onPointerLockChange?: (locked: boolean) => void
 }
 
+export type BlockWorldNextSpawnFlag = {
+  x: number
+  y: number
+  z: number
+  ry: number
+}
+
 export type BlockWorldNextGame = {
   start: () => void
   dispose: () => void
   syncRendererSize: () => void
   /** Replace instanced overlay from shared world `customBlocks` (placed entries only). */
   applyCustomBlocks: (blocks: SerializedBlock[]) => void
+  getCamera: () => THREE.PerspectiveCamera
+  getScene: () => THREE.Scene
+  /** True when WASD / space intent or vertical motion suggests movement (presence heartbeat). */
+  isMovingForPresence: () => boolean
+  /**
+   * Prefer RTDB spawn flag (feet + yaw), else last localStorage pose; otherwise keep constructor default.
+   * Call before {@link start} so the first rendered frame matches classic world spawn rules.
+   */
+  applyCameraSpawnFromRtdbOrLocal: (
+    rtdbFlag: BlockWorldNextSpawnFlag | null,
+    storedPose: StoredCameraPose | null,
+  ) => void
   requestPointerLock: () => void
   unlockPointer: () => void
   isPointerLocked: () => boolean
@@ -202,9 +225,42 @@ export function createBlockWorldNextGame(
     renderer.setSize(w, h, false)
   }
 
+  const applyCameraSpawnFromRtdbOrLocal = (
+    rtdbFlag: BlockWorldNextSpawnFlag | null,
+    storedPose: StoredCameraPose | null,
+  ) => {
+    if (rtdbFlag) {
+      camera.position.set(
+        rtdbFlag.x,
+        rtdbFlag.y + PLAYER_EYE_HEIGHT + 0.08,
+        rtdbFlag.z,
+      )
+      camera.quaternion.setFromEuler(new THREE.Euler(0, rtdbFlag.ry, 0, 'YXZ'))
+      return
+    }
+    if (storedPose) applyStoredPoseToCamera(camera, storedPose)
+  }
+
+  const isMovingForPresence = () => {
+    if (
+      keys.has('KeyW') ||
+      keys.has('KeyS') ||
+      keys.has('KeyA') ||
+      keys.has('KeyD') ||
+      keys.has('Space')
+    ) {
+      return true
+    }
+    return Math.abs(velocityY.v) > 0.45
+  }
+
   return {
     domElement: renderer.domElement,
     applyCustomBlocks,
+    getCamera: () => camera,
+    getScene: () => scene,
+    isMovingForPresence,
+    applyCameraSpawnFromRtdbOrLocal,
 
     start() {
       if (running) return
