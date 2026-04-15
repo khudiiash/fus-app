@@ -1,8 +1,11 @@
 import * as THREE from 'three'
 import { PointerLockControls } from 'three/examples/jsm/controls/PointerLockControls.js'
 import { PLAYER_EYE_HEIGHT } from '@/game/playerConstants'
+import type { SerializedBlock } from '@/game/sharedWorldFirestore'
+import { blockTypeHex } from './blockTypeColor'
 
 const CHUNK_SIDE = 16
+const MAX_SHARED_CUSTOM_BLOCKS = 20_000
 
 /** Procedural column height for the prototype chunk (original math; not copied from upstream). */
 function columnHeight(ix: number, iz: number): number {
@@ -21,6 +24,8 @@ export type BlockWorldNextGame = {
   start: () => void
   dispose: () => void
   syncRendererSize: () => void
+  /** Replace instanced overlay from shared world `customBlocks` (placed entries only). */
+  applyCustomBlocks: (blocks: SerializedBlock[]) => void
   requestPointerLock: () => void
   unlockPointer: () => void
   isPointerLocked: () => boolean
@@ -28,8 +33,8 @@ export type BlockWorldNextGame = {
 }
 
 /**
- * Minimal first-person slice: renderer, lighting, one 16×16 heightmap chunk, WASD + gravity.
- * Intended to grow into the shared Firestore/RTDB world; see repo `THIRD_PARTY_NOTICES.txt`.
+ * Minimal first-person slice: renderer, lighting, demo chunk, live shared custom blocks, WASD + gravity.
+ * Intended to grow into the full shared world; see repo `THIRD_PARTY_NOTICES.txt`.
  */
 export function createBlockWorldNextGame(
   mountEl: HTMLElement,
@@ -37,9 +42,9 @@ export function createBlockWorldNextGame(
 ): BlockWorldNextGame {
   const scene = new THREE.Scene()
   scene.background = new THREE.Color(0x87b8e8)
-  scene.fog = new THREE.Fog(0x87b8e8, 32, 140)
+  scene.fog = new THREE.Fog(0x87b8e8, 48, 280)
 
-  const camera = new THREE.PerspectiveCamera(70, 1, 0.08, 256)
+  const camera = new THREE.PerspectiveCamera(70, 1, 0.08, 512)
   camera.position.set(CHUNK_SIDE / 2, PLAYER_EYE_HEIGHT + 5, CHUNK_SIDE + 6)
 
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false })
@@ -55,22 +60,22 @@ export function createBlockWorldNextGame(
   sun.castShadow = true
   sun.shadow.mapSize.setScalar(1024)
   sun.shadow.camera.near = 0.5
-  sun.shadow.camera.far = 120
-  sun.shadow.camera.left = -40
-  sun.shadow.camera.right = 40
-  sun.shadow.camera.top = 40
-  sun.shadow.camera.bottom = -40
+  sun.shadow.camera.far = 220
+  sun.shadow.camera.left = -96
+  sun.shadow.camera.right = 96
+  sun.shadow.camera.top = 96
+  sun.shadow.camera.bottom = -96
   scene.add(sun)
 
   const groundMat = new THREE.MeshStandardMaterial({ color: 0x3d6e3d, roughness: 1, metalness: 0 })
-  const ground = new THREE.Mesh(new THREE.PlaneGeometry(200, 200), groundMat)
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(400, 400), groundMat)
   ground.rotation.x = -Math.PI / 2
   ground.receiveShadow = true
   scene.add(ground)
 
-  const boxGeo = new THREE.BoxGeometry(1, 1, 1)
+  const demoBoxGeo = new THREE.BoxGeometry(1, 1, 1)
   const topMat = new THREE.MeshStandardMaterial({ color: 0x6ab06a, roughness: 0.92, metalness: 0 })
-  const inst = new THREE.InstancedMesh(boxGeo, topMat, CHUNK_SIDE * CHUNK_SIDE)
+  const inst = new THREE.InstancedMesh(demoBoxGeo, topMat, CHUNK_SIDE * CHUNK_SIDE)
   inst.castShadow = true
   inst.receiveShadow = true
   const m = new THREE.Matrix4()
@@ -88,6 +93,45 @@ export function createBlockWorldNextGame(
   }
   inst.instanceMatrix.needsUpdate = true
   scene.add(inst)
+
+  const customBoxGeo = new THREE.BoxGeometry(1, 1, 1)
+  const customMat = new THREE.MeshStandardMaterial({
+    roughness: 0.88,
+    metalness: 0.02,
+    vertexColors: false,
+  })
+  const customMesh = new THREE.InstancedMesh(customBoxGeo, customMat, MAX_SHARED_CUSTOM_BLOCKS)
+  customMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
+  customMesh.instanceColor = new THREE.InstancedBufferAttribute(
+    new Float32Array(MAX_SHARED_CUSTOM_BLOCKS * 3),
+    3,
+  )
+  customMesh.castShadow = true
+  customMesh.receiveShadow = true
+  customMesh.count = 0
+  scene.add(customMesh)
+
+  const colorTmp = new THREE.Color()
+  const posTmp = new THREE.Vector3()
+  const quatId = new THREE.Quaternion()
+  const scaleOne = new THREE.Vector3(1, 1, 1)
+
+  const applyCustomBlocks = (blocks: SerializedBlock[]) => {
+    let idx = 0
+    for (const b of blocks) {
+      if (!b.placed) continue
+      if (idx >= MAX_SHARED_CUSTOM_BLOCKS) break
+      posTmp.set(b.x, b.y, b.z)
+      m.compose(posTmp, quatId, scaleOne)
+      customMesh.setMatrixAt(idx, m)
+      colorTmp.setHex(blockTypeHex(b.type))
+      customMesh.setColorAt(idx, colorTmp)
+      idx++
+    }
+    customMesh.count = idx
+    customMesh.instanceMatrix.needsUpdate = true
+    if (customMesh.instanceColor) customMesh.instanceColor.needsUpdate = true
+  }
 
   const controls = new PointerLockControls(camera, renderer.domElement)
   const onLock = () => options?.onPointerLockChange?.(true)
@@ -160,6 +204,7 @@ export function createBlockWorldNextGame(
 
   return {
     domElement: renderer.domElement,
+    applyCustomBlocks,
 
     start() {
       if (running) return
@@ -183,6 +228,7 @@ export function createBlockWorldNextGame(
       if (renderer.domElement.parentElement === mountEl) mountEl.removeChild(renderer.domElement)
       renderer.dispose()
       inst.dispose()
+      customMesh.dispose()
       ground.geometry.dispose()
       groundMat.dispose()
     },

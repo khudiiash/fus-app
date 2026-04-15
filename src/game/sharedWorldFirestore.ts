@@ -21,6 +21,7 @@ import type Terrain from './minebase/terrain'
 import Block from './minebase/terrain/mesh/block'
 import type { BlockType } from './minebase/terrain'
 import { BLOCK_WORLD_MAX_HP_HALF_UNITS } from '@/game/playerConstants'
+import { blockWorldAggressiveMobile } from './minebase/utils'
 
 const WORLD_COLLECTION = 'sharedWorlds'
 /** Realtime DB path for ephemeral player poses. */
@@ -168,14 +169,19 @@ function terrainMatchesBlockList(terrain: Terrain, rawBlocks: SerializedBlock[])
   )
 }
 
+export type SharedWorldInitialState = {
+  seeds: SharedWorldSeeds | undefined
+  blocks: SerializedBlock[]
+  blocksFingerprint: string
+}
+
 /**
- * Ensure world doc exists with noise seeds; load custom blocks from RTDB (migrates from Firestore once if needed).
- * @returns blocks fingerprint for {@link subscribeSharedWorldDoc} to skip the first redundant regen.
+ * Ensure `sharedWorlds/{worldId}` exists, migrate Firestore → RTDB custom blocks when needed,
+ * and return the canonical block list + fingerprint (no {@link Terrain} required).
  */
-export async function initSharedWorldFromFirestore(
+export async function loadSharedWorldInitialState(
   worldId: string,
-  terrain: Terrain,
-): Promise<string> {
+): Promise<SharedWorldInitialState> {
   const worldDocRef = doc(db, WORLD_COLLECTION, worldId)
   const snap = await getDoc(worldDocRef)
   if (!snap.exists()) {
@@ -194,18 +200,11 @@ export async function initSharedWorldFromFirestore(
     if (rtdb) {
       await set(dbRef(rtdb, worldCustomBlocksRtdbPath(worldId)), [])
     }
+    return { seeds, blocks: [], blocksFingerprint: fingerprintBlocksList([]) }
   }
 
   const data = (await getDoc(worldDocRef)).data() as Record<string, unknown> | undefined
   const seeds = data?.seeds as SharedWorldSeeds | undefined
-  if (seeds) {
-    terrain.noise.seed = seeds.noise
-    terrain.noise.stoneSeed = seeds.stone
-    terrain.noise.treeSeed = seeds.tree
-    terrain.noise.coalSeed = seeds.coal
-    terrain.noise.leafSeed = seeds.leaf
-  }
-
   const fsBlocksRaw = (data?.customBlocks ?? []) as SerializedBlock[]
   const fsBlocks = sortSerializedBlocks(
     fsBlocksRaw
@@ -221,16 +220,78 @@ export async function initSharedWorldFromFirestore(
       await set(br, fsBlocks)
       rtdbBlocks = fsBlocks.slice()
     }
-    terrain.customBlocks = rtdbBlocks.map(
-      (b) => new Block(b.x, b.y, b.z, b.type as BlockType, b.placed),
-    )
-  } else {
-    terrain.customBlocks = fsBlocks.map(
-      (b) => new Block(b.x, b.y, b.z, b.type as BlockType, b.placed),
-    )
+    return {
+      seeds,
+      blocks: rtdbBlocks,
+      blocksFingerprint: fingerprintBlocksList(rtdbBlocks),
+    }
   }
 
+  return {
+    seeds,
+    blocks: fsBlocks,
+    blocksFingerprint: fingerprintBlocksList(fsBlocks),
+  }
+}
+
+/**
+ * Ensure world doc exists with noise seeds; load custom blocks from RTDB (migrates from Firestore once if needed).
+ * @returns blocks fingerprint for {@link subscribeSharedWorldDoc} to skip the first redundant regen.
+ */
+export async function initSharedWorldFromFirestore(
+  worldId: string,
+  terrain: Terrain,
+): Promise<string> {
+  const { seeds, blocks } = await loadSharedWorldInitialState(worldId)
+  if (seeds) {
+    terrain.noise.seed = seeds.noise
+    terrain.noise.stoneSeed = seeds.stone
+    terrain.noise.treeSeed = seeds.tree
+    terrain.noise.coalSeed = seeds.coal
+    terrain.noise.leafSeed = seeds.leaf
+  }
+  terrain.customBlocks = blocks.map(
+    (b) => new Block(b.x, b.y, b.z, b.type as BlockType, b.placed),
+  )
   return fingerprintBlocksList(serializedBlocksFromTerrain(terrain))
+}
+
+/**
+ * Live custom block list (same source as {@link subscribeSharedWorldDoc}).
+ * When RTDB is configured, listens there; otherwise listens on the Firestore world document.
+ */
+export function subscribeSharedWorldCustomBlocks(
+  worldId: string,
+  onBlocks: (blocks: SerializedBlock[]) => void,
+  /** From {@link loadSharedWorldInitialState} to skip the first duplicate callback. */
+  initialFingerprint = '',
+): () => void {
+  if (!rtdb) {
+    const worldDocRef = doc(db, WORLD_COLLECTION, worldId)
+    let lastFp = initialFingerprint
+    return onSnapshot(worldDocRef, (snap) => {
+      if (!snap.exists()) return
+      if (snap.metadata.hasPendingWrites) return
+      const data = snap.data() as Record<string, unknown> | undefined
+      const rawBlocks = ((data?.customBlocks ?? []) as unknown[])
+        .map((b) => parseSerializedBlock(b))
+        .filter((b): b is SerializedBlock => b != null)
+      const fp = fingerprintBlocksList(rawBlocks)
+      if (fp === lastFp) return
+      lastFp = fp
+      onBlocks(rawBlocks)
+    })
+  }
+
+  const blockRef = dbRef(rtdb, worldCustomBlocksRtdbPath(worldId))
+  let lastFp = initialFingerprint
+  return onValue(blockRef, (snap) => {
+    const rawBlocks = blocksFromRtdbVal(snap.val())
+    const fp = fingerprintBlocksList(rawBlocks)
+    if (fp === lastFp) return
+    lastFp = fp
+    onBlocks(rawBlocks)
+  })
 }
 
 export function subscribeSharedWorldDoc(
@@ -310,12 +371,13 @@ const FLUSH_MAX_ROUNDS = 12
 
 export function scheduleFlushCustomBlocks(worldId: string, terrain: Terrain) {
   if (flushTimer) clearTimeout(flushTimer)
+  const debounceMs = blockWorldAggressiveMobile() ? 105 : FLUSH_DEBOUNCE_MS
   flushTimer = setTimeout(() => {
     flushTimer = null
     flushChain = flushChain.then(() => flushCustomBlocksNow(worldId, terrain)).catch((e) => {
       console.warn('[sharedWorld] flushCustomBlocks', e)
     })
-  }, FLUSH_DEBOUNCE_MS)
+  }, debounceMs)
 }
 
 async function flushCustomBlocksNow(worldId: string, terrain: Terrain) {

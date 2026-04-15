@@ -1,21 +1,34 @@
 <script setup>
 /**
  * Experimental voxel playground (new engine path). Production world remains `/student/world`.
+ * Loads the same shared `customBlocks` stream as the classic world (RTDB when configured).
  */
 import { ref, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
+import { useAuthStore } from '@/stores/auth'
 import { useBlockWorldSession } from '@/stores/blockWorldSession'
+import {
+  loadSharedWorldInitialState,
+  subscribeSharedWorldCustomBlocks,
+} from '@/game/sharedWorldFirestore'
 import { createBlockWorldNextGame } from '@/game/blockWorldNext'
 import '@/game/minebase/style.css'
 
+const WORLD_ID = 'school'
+
 const router = useRouter()
+const auth = useAuthStore()
 const bwSession = useBlockWorldSession()
 
 const mineRootRef = ref(null)
 const mountRef = ref(null)
 const playing = ref(false)
+const booting = ref(false)
+const errorMsg = ref('')
 const pointerHint = ref(false)
 let game = null
+/** @type {null | (() => void)} */
+let unsubBlocks = null
 
 function syncPlayViewport() {
   const root = mineRootRef.value
@@ -69,34 +82,79 @@ function installPinchLock() {
   }
 }
 
+function teardownGame() {
+  if (unsubBlocks) {
+    try {
+      unsubBlocks()
+    } catch {
+      /* ignore */
+    }
+    unsubBlocks = null
+  }
+  if (game) {
+    game.dispose()
+    game = null
+  }
+}
+
 async function beginPlay() {
-  await nextTick()
-  const el = mountRef.value
-  if (!el) return
-  game = createBlockWorldNextGame(el, {
-    onPointerLockChange(locked) {
-      pointerHint.value = !locked
-    },
-  })
-  game.start()
-  playing.value = true
-  bwSession.setImmersive(true)
-  await nextTick()
-  syncPlayViewport()
+  if (booting.value || playing.value) return
+  errorMsg.value = ''
+  booting.value = true
+  await auth.init()
+  if (!auth.user?.uid) {
+    errorMsg.value =
+      'Потрібна активна сесія Firebase Auth. Якщо зайшли з IP (наприклад 192.168.x.x), додайте цей хост у Firebase → Authentication → Authorized domains.'
+    booting.value = false
+    return
+  }
   try {
-    game.requestPointerLock()
-  } catch {
-    pointerHint.value = true
+    await nextTick()
+    const el = mountRef.value
+    if (!el) {
+      booting.value = false
+      return
+    }
+    const initial = await loadSharedWorldInitialState(WORLD_ID)
+    const g = createBlockWorldNextGame(el, {
+      onPointerLockChange(locked) {
+        pointerHint.value = !locked
+      },
+    })
+    g.applyCustomBlocks(initial.blocks)
+    g.start()
+    game = g
+    unsubBlocks = subscribeSharedWorldCustomBlocks(
+      WORLD_ID,
+      (blocks) => {
+        game?.applyCustomBlocks(blocks)
+      },
+      initial.blocksFingerprint,
+    )
+    playing.value = true
+    bwSession.setImmersive(true)
+    await nextTick()
+    syncPlayViewport()
+    try {
+      g.requestPointerLock()
+    } catch {
+      pointerHint.value = true
+    }
+  } catch (e) {
+    console.error('[BlockWorldNext]', e)
+    errorMsg.value = e?.message || String(e)
+    teardownGame()
+    playing.value = false
+    bwSession.setImmersive(false)
+  } finally {
+    booting.value = false
   }
 }
 
 async function exitToApp() {
   clearPinchLock()
   bwSession.setImmersive(false)
-  if (game) {
-    game.dispose()
-    game = null
-  }
+  teardownGame()
   playing.value = false
   pointerHint.value = false
   await router.push('/student')
@@ -133,10 +191,7 @@ onUnmounted(() => {
   window.removeEventListener('resize', onVisualViewportChange)
   window.removeEventListener('orientationchange', onVisualViewportChange)
   bwSession.setImmersive(false)
-  if (game) {
-    game.dispose()
-    game = null
-  }
+  teardownGame()
 })
 </script>
 
@@ -144,7 +199,7 @@ onUnmounted(() => {
   <div
     ref="mineRootRef"
     class="relative h-full min-h-0 w-full overflow-hidden bg-black fus-mine-root"
-    :class="{ 'fus-mine-play-fixed': playing }"
+    :class="{ 'fus-mine-play-fixed': playing && !booting }"
   >
     <div ref="mountRef" class="fus-minecraft-engine absolute inset-0 h-full min-h-0 w-full" />
 
@@ -153,19 +208,33 @@ onUnmounted(() => {
       class="absolute inset-0 z-20 flex flex-col items-center justify-center bg-gradient-to-b from-slate-900 via-slate-950 to-black px-6 text-center text-white"
     >
       <p class="mb-2 max-w-sm text-xs font-semibold leading-snug text-slate-400">
-        Експериментальний рушій (окрема гілка розробки). Звичайний спільний світ — вкладка «Світ».
+        Експериментальний рушій. Той самий спільний світ (блоки з сервера); класичний режим — «Світ».
+      </p>
+      <p
+        v-if="errorMsg"
+        class="mb-3 max-w-sm text-xs font-semibold leading-snug text-red-200/95"
+      >
+        {{ errorMsg }}
       </p>
       <button
         type="button"
-        class="rounded-2xl bg-amber-500 px-10 py-3.5 text-base font-extrabold tracking-tight text-black shadow-lg shadow-amber-950/45 transition-all hover:bg-amber-400 hover:brightness-[1.02] focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-300 focus-visible:ring-offset-2 focus-visible:ring-offset-black/60 active:scale-[0.97]"
+        class="rounded-2xl bg-amber-500 px-10 py-3.5 text-base font-extrabold tracking-tight text-black shadow-lg shadow-amber-950/45 transition-all hover:bg-amber-400 hover:brightness-[1.02] focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-300 focus-visible:ring-offset-2 focus-visible:ring-offset-black/60 active:scale-[0.97] disabled:pointer-events-none disabled:opacity-45"
+        :disabled="booting || !auth.user?.uid || auth.loading"
         @click="beginPlay"
       >
-        Грати
+        {{ booting ? 'Підключення…' : 'Грати' }}
       </button>
     </div>
 
+    <div
+      v-else-if="booting"
+      class="absolute inset-0 z-10 flex items-center justify-center bg-black/60 text-sm font-bold text-white"
+    >
+      Завантаження…
+    </div>
+
     <button
-      v-if="playing && pointerHint"
+      v-if="playing && !booting && pointerHint"
       type="button"
       class="absolute inset-0 z-30 flex cursor-pointer items-center justify-center bg-black/55 px-6 text-center text-sm font-extrabold text-white backdrop-blur-sm"
       @click="resumePointer"
@@ -174,7 +243,7 @@ onUnmounted(() => {
     </button>
 
     <button
-      v-if="playing"
+      v-if="playing && !booting"
       type="button"
       class="fus-bw-exit-app pointer-events-auto absolute z-[220] touch-manipulation select-none rounded-xl border border-white/25 bg-black/55 px-3 py-2 text-xs font-extrabold text-white shadow-lg backdrop-blur-sm active:scale-[0.98]"
       style="top: max(0.5rem, env(safe-area-inset-top, 0px)); left: 0.5rem"
