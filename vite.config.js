@@ -112,6 +112,9 @@ export default defineConfig(({ mode }) => ({
     rollupOptions: {
       output: {
         manualChunks(id) {
+          if (id.includes('third-party/js-minecraft') || id.includes('third-party\\js-minecraft')) {
+            return 'vendor-labyminecraft'
+          }
           if (!id.includes('node_modules')) return
           if (id.includes('three') || id.includes('skinview-utils')) return 'vendor-three'
           if (id.includes('firebase') || id.includes('@firebase')) return 'vendor-firebase'
@@ -142,7 +145,8 @@ export default defineConfig(({ mode }) => ({
         theme_color: '#6d28d9',
         background_color: '#0f0f1a',
         display: 'standalone',
-        orientation: 'portrait',
+        /** Allow landscape in installed PWA (portrait-only kept browser + game unusable sideways). */
+        orientation: 'any',
         start_url: '/',
         icons: [
           { src: 'icons/icon-192.png', sizes: '192x192', type: 'image/png' },
@@ -160,6 +164,19 @@ export default defineConfig(({ mode }) => ({
         globPatterns: ['**/*.{js,css,html,png,woff2,ico}', '**/manifest.webmanifest', 'icons/*.png', 'icons/*.svg'],
         globIgnores: ['**/*.map'],
         runtimeCaching: [
+          // Large Laby chunk: CacheFirst so repeat visits on mobile reuse SW disk cache
+          // (precache also lists hashed assets, but this helps first post-install loads).
+          {
+            urlPattern: ({ url }) =>
+              url.origin === self.location.origin &&
+              /\/assets\/vendor-labyminecraft-[^/]+\.js$/i.test(url.pathname),
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'fus-labyminecraft',
+              expiration: { maxEntries: 3, maxAgeSeconds: 60 * 60 * 24 * 365 },
+              cacheableResponse: { statuses: [200] },
+            },
+          },
           // Firestore uses long‑lived Write/Listen "channel" fetches — never cache or
           // NetworkFirst them; that breaks streams and spams "No route found" / flaky sync.
           {
@@ -199,7 +216,11 @@ export default defineConfig(({ mode }) => ({
     prependFcmImportToSwJs(),
   ],
   resolve: {
-    alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
+    alias: {
+      '@': fileURLToPath(new URL('./src', import.meta.url)),
+      /** FUS fork: git submodule `third-party/js-minecraft` → github.com/khudiiash/js-minecraft */
+      '@labymc': fileURLToPath(new URL('./third-party/js-minecraft', import.meta.url)),
+    },
     // Force a single three.js instance so post-processing and the skin host scene
     // share the same class constructors.
     dedupe: ['three'],
