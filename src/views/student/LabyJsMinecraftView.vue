@@ -53,22 +53,10 @@ const showTouchHud = computed(() => useTouchGameControls())
 const labyCanvasGuiOpen = ref(false)
 /** FUS-owned settings panel (replaces non-interactive canvas {@link GuiOptions} in embed). */
 const labyVueSettingsOpen = ref(false)
-const labyInGameHud = computed(
-  () =>
-    Boolean(
-      gameMc.value &&
-        !worldBootstrapping.value &&
-        !labyCanvasGuiOpen.value &&
-        !labyVueSettingsOpen.value,
-    ),
-)
 /** Needs `VITE_FIREBASE_DATABASE_URL` so RTDB presence (other players) is enabled. */
 const noRtdb = computed(() => !rtdb)
 /** Full-screen overlay during Laby bootstrap (max duration capped in `createFusLabySharedBridge`). */
 const worldBootstrapping = ref(true)
-/** Mirrors `player.inventory.selectedSlotIndex` (0–8) for the HTML hotbar. */
-const hotbarSlot = ref(0)
-
 /** Local copies while the Vue settings sheet is open (written back on Done / backdrop close). */
 const panelFov = ref(70)
 const panelViewDistance = ref(3)
@@ -146,25 +134,10 @@ function applySpawnPose(mc, pose) {
   }
 }
 
-function selectHotbarSlot(slot) {
-  const mc = gameMc.value
-  if (!mc?.player?.inventory) return
-  if (slot < 0 || slot > 8) return
-  mc.player.inventory.selectedSlotIndex = slot
-  hotbarSlot.value = slot
-}
-
 /** Prefer pointer/touch events over `click` so controls work under mobile hit-testing quirks. */
 function isPrimaryPointer(ev) {
   if (ev.pointerType === 'mouse' && ev.button !== 0) return false
   return true
-}
-
-function onHotbarPointerUp(slot, ev) {
-  ev.stopPropagation()
-  if (!isPrimaryPointer(ev)) return
-  if (!labyInGameHud.value) return
-  selectHotbarSlot(slot)
 }
 
 function syncLabyPanelFromMc() {
@@ -226,13 +199,6 @@ function onSettingsTouchEnd(ev) {
   toggleLabyVueSettings()
 }
 
-function onHotbarTouchEnd(slot, ev) {
-  ev.preventDefault()
-  ev.stopPropagation()
-  if (!labyInGameHud.value) return
-  selectHotbarSlot(slot)
-}
-
 function onHomePointerUp(ev) {
   ev.stopPropagation()
   if (!isPrimaryPointer(ev)) return
@@ -255,10 +221,6 @@ function tickCoordsHud() {
     labyCanvasGuiOpen.value = Boolean(mc && mc.currentScreen != null)
     if (mc?.player && mc.world) {
       const p = mc.player
-      const inv = p.inventory
-      if (inv && typeof inv.selectedSlotIndex === 'number') {
-        hotbarSlot.value = inv.selectedSlotIndex
-      }
       positionLine.value = `${Math.round(p.x)}  ${Math.round(p.y)}  ${Math.round(p.z)}`
       if (showTouchHud.value) {
         const wantsMove =
@@ -807,27 +769,6 @@ function onLabySettingsPanelPointerdown(ev) {
 
     <div :id="hostId" class="host" />
 
-    <div
-      v-if="labyInGameHud"
-      class="laby-hotbar"
-      role="toolbar"
-      aria-label="Хотбар"
-    >
-      <button
-        v-for="i in 9"
-        :key="i"
-        type="button"
-        class="laby-hotbar-slot"
-        :class="{ 'laby-hotbar-slot--active': hotbarSlot === i - 1 }"
-        :aria-label="`Слот ${i}`"
-        :aria-pressed="hotbarSlot === i - 1"
-        @pointerup.stop="onHotbarPointerUp(i - 1, $event)"
-        @touchend.stop="onHotbarTouchEnd(i - 1, $event)"
-      >
-        <span class="laby-hotbar-slot-mark" aria-hidden="true" />
-      </button>
-    </div>
-
     <!-- Last in tree + high z-index so canvas/touch layers never steal taps from HUD chrome. -->
     <div class="laby-topbar">
       <button type="button" class="exit" @click="goBack">← Назад</button>
@@ -1149,62 +1090,6 @@ function onLabySettingsPanelPointerdown(ev) {
 .hud-warn .code-env {
   font-size: 9px;
   color: #fde68a;
-}
-.laby-hotbar {
-  position: absolute;
-  left: 50%;
-  bottom: max(10px, env(safe-area-inset-bottom, 0px));
-  transform: translateX(-50%);
-  z-index: 90;
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 14px;
-  border-radius: 14px;
-  background: rgba(12, 10, 18, 0.55);
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
-  pointer-events: auto;
-  max-width: calc(100vw - 24px);
-}
-.laby-hotbar-slot {
-  min-width: 52px;
-  min-height: 52px;
-  width: 52px;
-  height: 52px;
-  padding: 0;
-  border-radius: 10px;
-  border: 2px solid rgba(255, 255, 255, 0.18);
-  background: rgba(0, 0, 0, 0.42);
-  color: #f4f4f8;
-  font-size: 16px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
-  touch-action: manipulation;
-}
-.laby-hotbar-slot--active {
-  border-color: #c4b5fd;
-  background: rgba(99, 102, 241, 0.35);
-  color: #fff;
-}
-.laby-hotbar-slot-mark {
-  display: block;
-  width: 12px;
-  height: 12px;
-  margin: 0 auto;
-  border-radius: 4px;
-  background: rgba(255, 255, 255, 0.14);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
-  pointer-events: none;
-}
-.laby-hotbar-slot--active .laby-hotbar-slot-mark {
-  background: rgba(255, 255, 255, 0.72);
-  box-shadow:
-    0 0 14px rgba(167, 139, 250, 0.55),
-    inset 0 1px 0 rgba(255, 255, 255, 0.35);
 }
 .touch-layer {
   position: absolute;
