@@ -10,9 +10,19 @@
     },
     "worldBlockEdits": {
       "$worldId": {
+        ".read": "auth != null",
+        ".write": "auth != null",
         "customBlocks": {
           ".read": "auth != null",
           ".write": "auth != null"
+        },
+        "cells": {
+          ".read": "auth != null",
+          ".write": "auth != null",
+          "$cellKey": {
+            ".read": "auth != null",
+            ".write": "auth != null"
+          }
         }
       }
     },

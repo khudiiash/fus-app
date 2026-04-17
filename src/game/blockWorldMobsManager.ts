@@ -23,6 +23,7 @@ import {
 } from '@/game/blockWorldMobsRtdb'
 import { PLAYER_EYE_HEIGHT } from '@/game/playerConstants'
 import { spawnMobDeathPoofParticles } from '@/game/blockWorldParticles'
+import { blockWorldAggressiveMobile, isLowPowerTouchDevice } from '@/game/minebase/utils'
 
 const COIN_PICKUP_GLB_URL = new URL('./assets/coin.glb', import.meta.url).href
 
@@ -114,9 +115,19 @@ function coarsePointerForPerf(): boolean {
 }
 
 /** Sim tick rate (authoritative); lower = fewer RTDB writes & less CPU. */
-const SIM_DT_TARGET_MS = coarsePointerForPerf() ? 380 : 300
+const MOB_SIM_DT_TARGET_MS = (() => {
+  if (typeof window === 'undefined') return 300
+  if (blockWorldAggressiveMobile()) return 520
+  if (isLowPowerTouchDevice()) return 480
+  return coarsePointerForPerf() ? 380 : 300
+})()
 /** Min interval between RTDB mob state flushes (throttle, not debounce). */
-const MOB_NET_FLUSH_MS = coarsePointerForPerf() ? 220 : 180
+const MOB_NET_FLUSH_MS = (() => {
+  if (typeof window === 'undefined') return 180
+  if (blockWorldAggressiveMobile()) return 340
+  if (isLowPowerTouchDevice()) return 290
+  return coarsePointerForPerf() ? 220 : 180
+})()
 /** Lease heartbeat (RTDB transaction). */
 const LEASE_CALL_MS = 1200
 const ATTACK_ANIM_MS = 520
@@ -1053,10 +1064,13 @@ export class BlockWorldMobsManager {
     const cx = this.terrain.camera.position.x
     const cz = this.terrain.camera.position.z
     const farSq = 68 * 68
+    const farAnimMask = blockWorldAggressiveMobile() ? 3 : 1
     for (const v of this.visuals.values()) {
       const dx = v.root.position.x - cx
       const dz = v.root.position.z - cz
-      if (dx * dx + dz * dz > farSq && (this.animTick & 1) === 0) continue
+      if (dx * dx + dz * dz > farSq && (this.animTick & farAnimMask) !== 0) {
+        continue
+      }
       v.mixer.update(dt)
     }
 
@@ -1065,9 +1079,9 @@ export class BlockWorldMobsManager {
       void this.tickLease(now)
     }
     this.accSim += dt * 1000
-    if (this.accSim >= SIM_DT_TARGET_MS) {
-      this.accSim -= SIM_DT_TARGET_MS
-      this.accSim = Math.min(this.accSim, SIM_DT_TARGET_MS * 2)
+    if (this.accSim >= MOB_SIM_DT_TARGET_MS) {
+      this.accSim -= MOB_SIM_DT_TARGET_MS
+      this.accSim = Math.min(this.accSim, MOB_SIM_DT_TARGET_MS * 2)
       this.stepSimSync(now)
     }
 
@@ -1240,7 +1254,7 @@ export class BlockWorldMobsManager {
         }
       }
 
-      const dtSim = SIM_DT_TARGET_MS / 1000
+      const dtSim = MOB_SIM_DT_TARGET_MS / 1000
       const yawCombat = MOB_YAW_RATE_COMBAT * dtSim
       const yawPatrol = MOB_YAW_RATE_PATROL * dtSim
 

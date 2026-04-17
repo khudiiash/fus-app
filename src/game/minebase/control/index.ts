@@ -109,6 +109,18 @@ export default class Control {
     16,
   )
 
+  /** Reused by {@link collideCheck} (was 6× `new Float32Array` per frame). */
+  private readonly collideInstanceAttr = new THREE.InstancedBufferAttribute(
+    new Float32Array(100 * 16),
+    16,
+  )
+  private collideTreeScratch: boolean[] = []
+  private readonly scratchMatrixA = new THREE.Matrix4()
+  private readonly scratchMatrixB = new THREE.Matrix4()
+  private readonly scratchVectorA = new THREE.Vector3()
+  private readonly scratchVectorB = new THREE.Vector3()
+  private readonly scratchMoveDir = new THREE.Vector3()
+
   // other properties
   p1 = performance.now()
   p2 = performance.now()
@@ -573,14 +585,14 @@ export default class Control {
     }
 
     const block = this.raycaster.intersectObjects(this.terrain.blocks)[0]
-    const matrix = new THREE.Matrix4()
+    const matrix = this.scratchMatrixA
     if (!(block && block.object instanceof THREE.InstancedMesh)) return
 
     block.object.getMatrixAt(block.instanceId!, matrix)
-    const position = new THREE.Vector3().setFromMatrixPosition(matrix)
+    const position = this.scratchVectorA.setFromMatrixPosition(matrix)
 
     const blockTypeEnum = BlockType[block.object.name as any] as unknown as BlockType
-    if (blockTypeEnum === BlockType.bedrock) {
+    if (blockTypeEnum === BlockType.bedrock || blockTypeEnum === BlockType.water) {
       this.terrain.generateAdjacentBlocks(position)
       return
     }
@@ -604,7 +616,7 @@ export default class Control {
 
     block.object.setMatrixAt(
       block.instanceId!,
-      new THREE.Matrix4().set(
+      this.scratchMatrixB.set(
         0,
         0,
         0,
@@ -672,12 +684,12 @@ export default class Control {
     const placeType = slot.meta.blockType
     this.raycaster.setFromCamera({ x: 0, y: 0 }, this.camera)
     const block = this.raycaster.intersectObjects(this.terrain.blocks)[0]
-    const matrix = new THREE.Matrix4()
+    const matrix = this.scratchMatrixA
     if (!(block && block.object instanceof THREE.InstancedMesh)) return
 
     const normal = block.face!.normal
     block.object.getMatrixAt(block.instanceId!, matrix)
-    const position = new THREE.Vector3().setFromMatrixPosition(matrix)
+    const position = this.scratchVectorA.setFromMatrixPosition(matrix)
 
     if (
       position.x + normal.x === Math.round(this.camera.position.x) &&
@@ -900,18 +912,16 @@ export default class Control {
     customBlocks: Block[],
     far: number = this.player.body.width,
   ) => {
-    const matrix = new THREE.Matrix4()
+    const matrix = this.scratchMatrixA
 
     let index = 0
-    this.tempMesh.instanceMatrix = new THREE.InstancedBufferAttribute(
-      new Float32Array(100 * 16),
-      16,
-    )
+    this.tempMesh.instanceMatrix = this.collideInstanceAttr
 
     let removed = false
-    const treeRemoved = new Array<boolean>(
-      this.terrain.noise.treeHeight + 1,
-    ).fill(false)
+    const th = this.terrain.noise.treeHeight + 1
+    while (this.collideTreeScratch.length < th) this.collideTreeScratch.push(false)
+    for (let i = 0; i < th; i++) this.collideTreeScratch[i] = false
+    const treeRemoved = this.collideTreeScratch
 
     let x = Math.round(position.x)
     let z = Math.round(position.z)
@@ -1010,37 +1020,33 @@ export default class Control {
     this.tempMesh.boundingBox = null
 
     // Second horizontal sample 1m below eye — matches upstream minecraft-threejs.
-    const bodyLowerOrigin = new THREE.Vector3(
-      position.x,
-      position.y - 1,
-      position.z,
-    )
+    this.scratchVectorB.set(position.x, position.y - 1, position.z)
 
     switch (side) {
       case Side.front: {
         const c1 = this.raycasterFront.intersectObject(this.tempMesh).length
-        this.raycasterFront.ray.origin.copy(bodyLowerOrigin)
+        this.raycasterFront.ray.origin.copy(this.scratchVectorB)
         const c2 = this.raycasterFront.intersectObject(this.tempMesh).length
         this.frontCollide = Boolean(c1 || c2)
         break
       }
       case Side.back: {
         const c1 = this.raycasterBack.intersectObject(this.tempMesh).length
-        this.raycasterBack.ray.origin.copy(bodyLowerOrigin)
+        this.raycasterBack.ray.origin.copy(this.scratchVectorB)
         const c2 = this.raycasterBack.intersectObject(this.tempMesh).length
         this.backCollide = Boolean(c1 || c2)
         break
       }
       case Side.left: {
         const c1 = this.raycasterLeft.intersectObject(this.tempMesh).length
-        this.raycasterLeft.ray.origin.copy(bodyLowerOrigin)
+        this.raycasterLeft.ray.origin.copy(this.scratchVectorB)
         const c2 = this.raycasterLeft.intersectObject(this.tempMesh).length
         this.leftCollide = Boolean(c1 || c2)
         break
       }
       case Side.right: {
         const c1 = this.raycasterRight.intersectObject(this.tempMesh).length
-        this.raycasterRight.ray.origin.copy(bodyLowerOrigin)
+        this.raycasterRight.ray.origin.copy(this.scratchVectorB)
         const c2 = this.raycasterRight.intersectObject(this.tempMesh).length
         this.rightCollide = Boolean(c1 || c2)
         break
@@ -1108,10 +1114,10 @@ export default class Control {
       }
 
       // side collide handler
-      let vector = new THREE.Vector3(0, 0, -1).applyQuaternion(
-        this.camera.quaternion
+      const vector = this.scratchMoveDir.set(0, 0, -1).applyQuaternion(
+        this.camera.quaternion,
       )
-      let direction = Math.atan2(vector.x, vector.z)
+      const direction = Math.atan2(vector.x, vector.z)
       if (
         this.frontCollide ||
         this.backCollide ||

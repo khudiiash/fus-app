@@ -24,6 +24,7 @@ export function blockTypeBreakHp(t: BlockType): number {
     case BlockType.diamond:
       return 90
     case BlockType.bedrock:
+    case BlockType.water:
       return Number.POSITIVE_INFINITY
     default:
       return 20

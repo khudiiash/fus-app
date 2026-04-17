@@ -417,6 +417,17 @@ async function doFine() {
     error('Вкажіть причину штрафу')
     return
   }
+  const bal = Math.max(0, Math.floor(Number(viewedStudent.value?.coins) || 0))
+  if (bal < 1) {
+    error('У учня нульовий баланс монет')
+    return
+  }
+  if (amt > bal) {
+    error(
+      `На балансі учня лише ${bal} монет — разовий штраф ${amt} неможливий. Оберіть меншу суму (10/20) або зніміть решту по −5 у списку класу.`,
+    )
+    return
+  }
   const finedSoFar = await getTeacherFineTotalToday(auth.profile.id, uid)
   if (finedSoFar >= MAX_TEACHER_DAILY_FINE_PER_STUDENT) {
     error('Денний ліміт штрафів для цього учня (30 монет) вичерпано')
@@ -430,13 +441,13 @@ async function doFine() {
   }
   fining.value = true
   try {
-    await fineStudent({
+    const { deducted } = await fineStudent({
       fromUid: auth.profile.id,
       toUid: uid,
       amount: amt,
       reason: fineReason.value.trim(),
     })
-    success(`Штраф ${amt} монет накладено`)
+    success(`Штраф накладено: знято ${deducted} монет`)
     showFine.value = false
     await loadProfile()
   } catch (e) {

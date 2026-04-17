@@ -50,6 +50,7 @@ import { BlockWorldMobsManager } from '@/game/blockWorldMobsManager'
 import { PLAYER_EYE_HEIGHT } from '@/game/playerConstants'
 import { normalizeSkinUrlForPresence } from '@/utils/presenceSkinUrl'
 import { cameraYawFromQuaternion } from '@/game/cameraYaw'
+import { blockWorldAggressiveMobile, isLowPowerTouchDevice } from '@/game/minebase/utils'
 import '@/game/minebase/style.css'
 import minecraftSunset from '@/assets/minecraft-sunset.jpg'
 
@@ -329,6 +330,7 @@ async function beginPlay() {
 
   try {
     presenceStopped = false
+    const bwCpuTight = blockWorldAggressiveMobile()
     let lastPoseSaveAt = 0
     worldApi = createFusBlockWorld(mountRef.value, {
       onCustomBlocksChange: () => {
@@ -342,7 +344,7 @@ async function beginPlay() {
         const uid = auth.user?.uid
         if (!uid) return
         const t = Date.now()
-        if (t - lastPoseSaveAt < 3500) return
+        if (t - lastPoseSaveAt < (bwCpuTight ? 5200 : 3500)) return
         lastPoseSaveAt = t
         saveLastCameraPose(WORLD_ID, uid, worldApi.core.camera)
       },
@@ -541,6 +543,7 @@ async function beginPlay() {
       syncSpawnFlagMeshes()
     })
 
+    const terrainRegenDebounceMs = bwCpuTight ? 140 : 70
     unsubWorld = subscribeSharedWorldDoc(
       WORLD_ID,
       worldApi.terrain,
@@ -549,7 +552,7 @@ async function beginPlay() {
         terrainRegenTimer = setTimeout(() => {
           terrainRegenTimer = null
           if (worldApi) regenerateTerrain(worldApi.terrain)
-        }, 70)
+        }, terrainRegenDebounceMs)
       },
       worldFingerprint,
     )
@@ -583,6 +586,7 @@ async function beginPlay() {
         y: cam.position.y,
         z: cam.position.z,
         ry: cameraYawFromQuaternion(cam.quaternion),
+        hr: 0,
         moving,
         skinUrl,
         photoUrl,
@@ -604,21 +608,23 @@ async function beginPlay() {
     }
 
     let presenceIdleCounter = 0
+    const presenceTickMs = bwCpuTight ? 110 : isLowPowerTouchDevice() ? 88 : 50
     presenceTimer = window.setInterval(() => {
       if (presenceStopped || !worldApi) return
       const uid = auth.user?.uid
       if (!uid) return
       const v = worldApi.control.velocity
       const moving = v.x * v.x + v.y * v.y + v.z * v.z > 0.15
+      const idleStride = bwCpuTight ? 3 : isLowPowerTouchDevice() ? 3 : 4
       if (!moving) {
-        presenceIdleCounter = (presenceIdleCounter + 1) % 4
+        presenceIdleCounter = (presenceIdleCounter + 1) % idleStride
         if (presenceIdleCounter !== 0) return
       } else {
         presenceIdleCounter = 0
       }
       presencePendingPayload = buildPresencePayload()
       void flushPresenceQueue(WORLD_ID)
-    }, 50)
+    }, presenceTickMs)
 
     bwSession.setImmersive(true)
     await nextTick()
@@ -653,6 +659,8 @@ const onVisualViewportChange = () => {
 onMounted(() => {
   window.visualViewport?.addEventListener('resize', onVisualViewportChange)
   window.visualViewport?.addEventListener('scroll', onVisualViewportChange)
+  window.addEventListener('resize', onVisualViewportChange)
+  window.addEventListener('orientationchange', onVisualViewportChange)
 })
 
 watch([started, booting], () => {
@@ -721,6 +729,8 @@ onUnmounted(async () => {
   clearPinchLock()
   window.visualViewport?.removeEventListener('resize', onVisualViewportChange)
   window.visualViewport?.removeEventListener('scroll', onVisualViewportChange)
+  window.removeEventListener('resize', onVisualViewportChange)
+  window.removeEventListener('orientationchange', onVisualViewportChange)
   await exitFullscreenSafe()
   bwSession.setImmersive(false)
   await teardownWorld()

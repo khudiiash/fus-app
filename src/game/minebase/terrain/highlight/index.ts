@@ -1,5 +1,13 @@
 import * as THREE from 'three'
 import Terrain from '..'
+import { blockWorldAggressiveMobile, useTouchGameControls } from '../../utils'
+
+/** Voxel grid half-extent around camera for crosshair pick (smaller = less CPU). */
+function highlightPickHalfExtent(): number {
+  if (blockWorldAggressiveMobile()) return 5
+  if (useTouchGameControls()) return 6
+  return 8
+}
 
 const _pickPos = new THREE.Vector3()
 const _zeroInstance = new THREE.Matrix4().set(
@@ -83,9 +91,10 @@ export default class BlockHighlight {
 
     const xPos = Math.round(position.x)
     const zPos = Math.round(position.z)
+    const ext = highlightPickHalfExtent()
 
-    for (let i = -8; i < 8; i++) {
-      for (let j = -8; j < 8; j++) {
+    for (let i = -ext; i < ext; i++) {
+      for (let j = -ext; j < ext; j++) {
         const x = xPos + i
         const z = zPos + j
         const y =

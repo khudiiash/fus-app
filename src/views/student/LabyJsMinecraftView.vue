@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useUserStore } from '@/stores/user'
@@ -19,7 +19,23 @@ import {
 } from '@/game/labyminecraft/createFusLabySharedBridge'
 import { attachFusLabyPresence } from '@/game/labyminecraft/attachFusLabyPresence'
 import { buildLabyPresenceDoc } from '@/game/labyminecraft/labyPresencePayload'
-import { fillLabyPlayerHotbar } from '@/game/labyminecraft/labyHotbarDefaults'
+import { applyLabyHotbarFromShop } from '@/game/labyminecraft/applyLabyHotbarFromShop'
+import { createFusLabyRemoteMeleeTry } from '@/game/labyminecraft/fusLabyRemoteMelee'
+import { installFusLabyToolsSpriteHelpers } from '@/game/labyminecraft/fusLabyToolsSpriteInstall'
+import { installFusLabyHeartsSprite } from '@/game/labyminecraft/fusLabyHeartsInstall'
+import { FusLabyFirstPersonHeld } from '@/game/labyminecraft/fusLabyFirstPersonHeld'
+import { fusLabyPresenceHandFromBwSlots } from '@/game/labyminecraft/labyHotbarSlotMeta'
+import {
+  BW_HOTBAR_MAX_SLOTS,
+  buildBlockWorldHotbarSlots,
+  parseBlockWorldItem,
+} from '@/game/blockWorldItems'
+import { subscribePickaxeHitsForVictim } from '@/game/blockWorldRtdb'
+import { hotbarCellVisualForBwSlot } from '@/game/blockWorldHotbarVisuals'
+import { updateUser } from '@/firebase/collections'
+import AppModal from '@/components/ui/AppModal.vue'
+import BlockWorldHotbarIconInner from '@/components/blockWorld/BlockWorldHotbarIconInner.vue'
+import '@/game/blockWorldHud.css'
 import { tickLabyFusMobileAutoJump } from '@/game/labyminecraft/labyMobileAutoJump'
 import {
   fetchSharedWorldLabySpawnPose,
@@ -31,7 +47,7 @@ import GameProfile from '@labymc/src/js/net/minecraft/util/GameProfile.js'
 import Session from '@labymc/src/js/net/minecraft/util/Session.js'
 import UUID from '@labymc/src/js/net/minecraft/util/UUID.js'
 import Keyboard from '@labymc/src/js/net/minecraft/util/Keyboard.js'
-import { Home, Settings } from 'lucide-vue-next'
+import { Home, Package, Settings, Trash2 } from 'lucide-vue-next'
 
 const router = useRouter()
 const auth = useAuthStore()
@@ -49,10 +65,31 @@ const respawning = ref(false)
 const sharedSpawn = ref(null)
 
 const showTouchHud = computed(() => useTouchGameControls())
+/** Same slot count as Block World profile editor (slot 0 = fist in-game; 8 assignable ids). */
+const LABY_BW_ITEM_SLOTS = BW_HOTBAR_MAX_SLOTS - 1
 /** Updated each HUD tick so we hide HTML chrome when a vanilla canvas GUI (inventory, etc.) is open. */
 const labyCanvasGuiOpen = ref(false)
 /** FUS-owned settings panel (replaces non-interactive canvas {@link GuiOptions} in embed). */
 const labyVueSettingsOpen = ref(false)
+/** Shop hotbar: `blockWorldHotbarOrder` (8 strings) + owned `block_world` items. */
+const labyInvModalOpen = ref(false)
+const labyInvPickSlot = ref(null)
+const labyInvSaving = ref(false)
+const labyHotbarDraft = ref([])
+const labyHotbarEditorIndices = computed(() =>
+  Array.from({ length: LABY_BW_ITEM_SLOTS }, (_, i) => i),
+)
+const ownedLabyBlockWorldShopItems = computed(() => {
+  const inv = new Set(auth.profile?.inventory || [])
+  const rows = []
+  for (const it of userStore.items) {
+    if (!inv.has(it.id) || it.category !== 'block_world' || it.active === false) continue
+    if (!parseBlockWorldItem(it)) continue
+    rows.push(it)
+  }
+  rows.sort((a, b) => String(a.name || a.id).localeCompare(String(b.name || b.id), 'uk'))
+  return rows
+})
 /** Needs `VITE_FIREBASE_DATABASE_URL` so RTDB presence (other players) is enabled. */
 const noRtdb = computed(() => !rtdb)
 /** Full-screen overlay during Laby bootstrap (max duration capped in `createFusLabySharedBridge`). */
@@ -71,8 +108,140 @@ const sneakKeyCode = computed(() => {
   return typeof k === 'string' && k ? k : 'ShiftLeft'
 })
 
-/** Dynamic joystick (minecraft-web-client style). */
-const joy = ref({
+const labyFistCellVisual = hotbarCellVisualForBwSlot({ kind: 'fist' })
+
+function syncLabyHotbarDraftFromProfile() {
+  const src = auth.profile?.blockWorldHotbarOrder
+  const arr = []
+  for (let i = 0; i < LABY_BW_ITEM_SLOTS; i++) {
+    arr.push(typeof src?.[i] === 'string' ? src[i] : '')
+  }
+  labyHotbarDraft.value = arr
+}
+
+function applyLabyHotbarToGame() {
+  const mc = gameMc.value
+  if (!mc?.player?.inventory) return
+  applyLabyHotbarFromShop(
+    mc,
+    auth.profile?.inventory || [],
+    auth.profile?.inventoryCounts,
+    userStore.items,
+    auth.profile?.blockWorldHotbarOrder || null,
+  )
+}
+
+function labyEditorItemSlotForIndex(slotIndex) {
+  const id =
+    typeof labyHotbarDraft.value[slotIndex] === 'string'
+      ? labyHotbarDraft.value[slotIndex].trim()
+      : ''
+  if (!id) return null
+  const item = userStore.items.find((x) => x.id === id)
+  if (!item || item.category !== 'block_world' || item.active === false) return null
+  const meta = parseBlockWorldItem(item)
+  if (!meta) return null
+  const c = Math.max(1, Math.floor(Number(auth.profile?.inventoryCounts?.[id]) || 1))
+  return { kind: 'item', itemId: id, meta, count: c }
+}
+
+function labyEditorCellVisual(slotIndex) {
+  const slot = labyEditorItemSlotForIndex(slotIndex)
+  if (!slot) return { type: 'emoji', text: '+' }
+  return hotbarCellVisualForBwSlot(slot)
+}
+
+function labyShopItemCellVisual(it) {
+  const meta = parseBlockWorldItem(it)
+  if (!meta) return { type: 'emoji', text: '?' }
+  const c = Math.max(1, Math.floor(Number(auth.profile?.inventoryCounts?.[it.id]) || 1))
+  return hotbarCellVisualForBwSlot({ kind: 'item', itemId: it.id, meta, count: c })
+}
+
+function assignLabyDraftSlot(slotIndex, rawId) {
+  const v = typeof rawId === 'string' ? rawId.trim() : ''
+  const next = [...labyHotbarDraft.value]
+  while (next.length < LABY_BW_ITEM_SLOTS) next.push('')
+  next[slotIndex] = v
+  for (let j = 0; j < next.length; j++) {
+    if (j !== slotIndex && v && next[j] === v) next[j] = ''
+  }
+  labyHotbarDraft.value = next
+}
+
+function openLabyInvModal() {
+  syncLabyHotbarDraftFromProfile()
+  labyInvPickSlot.value = null
+  labyInvModalOpen.value = true
+}
+
+function cancelLabyInvModal() {
+  syncLabyHotbarDraftFromProfile()
+  labyInvPickSlot.value = null
+  labyInvModalOpen.value = false
+}
+
+async function saveLabyInvModal() {
+  const uid = auth.profile?.id
+  if (!uid) {
+    labyInvModalOpen.value = false
+    return
+  }
+  labyInvSaving.value = true
+  try {
+    const order = labyHotbarDraft.value.map((x) => (typeof x === 'string' ? x.trim() : ''))
+    await updateUser(uid, { blockWorldHotbarOrder: order })
+    const mc = gameMc.value
+    if (mc?.player?.inventory) {
+      applyLabyHotbarFromShop(
+        mc,
+        auth.profile?.inventory || [],
+        auth.profile?.inventoryCounts,
+        userStore.items,
+        order,
+      )
+    }
+    labyInvModalOpen.value = false
+    labyInvPickSlot.value = null
+  } catch (e) {
+    console.warn('[labyminecraft] save hotbar order', e)
+  } finally {
+    labyInvSaving.value = false
+  }
+}
+
+function labyInvPickerSlotHasItemId(itemId) {
+  const i = labyInvPickSlot.value
+  if (i == null || i < 0) return false
+  const cur =
+    typeof labyHotbarDraft.value[i] === 'string' ? labyHotbarDraft.value[i].trim() : ''
+  return cur === itemId
+}
+
+function confirmLabyInvPick(rawId) {
+  const idx = labyInvPickSlot.value
+  if (idx == null || idx < 0) return
+  assignLabyDraftSlot(idx, rawId)
+  labyInvPickSlot.value = null
+}
+
+watch(
+  () => [
+    labyInvModalOpen.value,
+    auth.profile?.id,
+    JSON.stringify(auth.profile?.inventory || []),
+    JSON.stringify(auth.profile?.inventoryCounts || {}),
+    JSON.stringify(auth.profile?.blockWorldHotbarOrder || []),
+  ],
+  () => {
+    if (labyInvModalOpen.value) return
+    syncLabyHotbarDraftFromProfile()
+    if (gameMc.value?.player?.inventory) applyLabyHotbarToGame()
+  },
+)
+
+/** Left open zone — movement only from drag here (never shares state with build pad). */
+const moveJoy = ref({
   active: false,
   bx: 0,
   by: 0,
@@ -80,13 +249,36 @@ const joy = ref({
   ky: 0,
   pid: -1,
 })
+/** Build pad: hold = place-on-tap mode; WASD only after dragging past {@link BUILD_PAD_DRAG_PX}. */
+const buildPadJoy = ref({
+  active: false,
+  bx: 0,
+  by: 0,
+  kx: 0,
+  ky: 0,
+  pid: -1,
+  dragging: false,
+})
+const buildPadBtnRef = ref(null)
 const JOY_RING_PX = 56
 const JOY_KNOB_MAX = 36
+const STICK_DEAD = 4
+/** Finger travel from build-pad anchor before “movement drag” engages (keep high so hold-still = build-only). */
+const BUILD_PAD_DRAG_PX = 28
+/** After drag engages, ignore tiny stick deflection so jitter does not walk the player. */
+const BUILD_PAD_STICK_DEAD = 12
+/** Build-pad stick contributes at half strength vs main stick (slower strafe/walk while building). */
+const BUILD_PAD_MOVE_SCALE = 0.5
 
 /** @type {{ dispose: () => void } | null} */
 let bridge = null
-/** @type {{ dispose: () => void } | null} */
+/** @type {{ dispose: () => void; getMeleeRaycastRoots: () => object[] } | null} */
 let presence = null
+/** RTDB pickaxe PvP hits (same pipe as Block World). */
+let unsubPickaxeHits = () => {}
+/** First-person held tool / fist / block (FUS Laby). */
+let fpHeld = null
+let lastFpHudMs = 0
 /** Stops deferred {@link attachFusLabyPresence} if the view unmounts mid-wait. */
 let presenceAttachCancelled = false
 let coordsRaf = 0
@@ -112,11 +304,24 @@ function resolvePresenceSkinUrl(profile, items) {
 function buildPresencePayloadFromMc(mc) {
   const skinUrl = resolvePresenceSkinUrl(auth.profile, userStore.items)
   const photoUrl = normalizeSkinUrlForPresence(auth.profile?.avatar?.photoUrl ?? null)
-  return buildLabyPresenceDoc(mc.player, {
-    displayName: auth.profile?.displayName || 'Гравець',
-    skinUrl,
-    photoUrl,
-  })
+  const built = buildBlockWorldHotbarSlots(
+    auth.profile?.inventory || [],
+    auth.profile?.inventoryCounts,
+    userStore.items,
+    auth.profile?.blockWorldHotbarOrder || null,
+  )
+  const padded = Array.from({ length: 9 }, (_, i) => built[i])
+  const sel = mc.player?.inventory?.selectedSlotIndex ?? 0
+  const hand = fusLabyPresenceHandFromBwSlots(padded, sel)
+  return buildLabyPresenceDoc(
+    mc.player,
+    {
+      displayName: auth.profile?.displayName || 'Гравець',
+      skinUrl,
+      photoUrl,
+    },
+    hand,
+  )
 }
 
 function applySpawnPose(mc, pose) {
@@ -177,38 +382,32 @@ function closeLabyVueSettings() {
 function toggleLabyVueSettings() {
   if (worldBootstrapping.value || !gameMc.value?.settings) return
   const mc = gameMc.value
-  if (mc.currentScreen != null && !labyVueSettingsOpen.value) return
   if (labyVueSettingsOpen.value) {
     closeLabyVueSettings()
-  } else {
-    syncLabyPanelFromMc()
-    labyVueSettingsOpen.value = true
+    return
   }
+  if (mc.currentScreen != null) {
+    if (!mc.isInGame?.()) return
+    try {
+      mc.displayScreen(null)
+    } catch {
+      /* ignore */
+    }
+  }
+  syncLabyPanelFromMc()
+  labyVueSettingsOpen.value = true
 }
 
-function onSettingsPointerUp(ev) {
+/** Use `pointerdown` (not `pointerup`): some mobile stacks skip `pointerup` on chrome buttons. */
+function onSettingsPointerDown(ev) {
   ev.stopPropagation()
   if (!isPrimaryPointer(ev)) return
   toggleLabyVueSettings()
 }
 
-/** iOS/WebKit sometimes skips `pointerup` on small icon buttons; mirror with `touchend`. */
-function onSettingsTouchEnd(ev) {
-  ev.preventDefault()
-  ev.stopPropagation()
-  toggleLabyVueSettings()
-}
-
-function onHomePointerUp(ev) {
+function onHomePointerDown(ev) {
   ev.stopPropagation()
   if (!isPrimaryPointer(ev)) return
-  if (respawning.value) return
-  void respawnToSharedSpawn()
-}
-
-function onHomeTouchEnd(ev) {
-  ev.preventDefault()
-  ev.stopPropagation()
   if (respawning.value) return
   void respawnToSharedSpawn()
 }
@@ -218,6 +417,16 @@ function tickCoordsHud() {
   statsPanel?.begin()
   try {
     const mc = gameMc.value
+    const now = performance.now()
+    const dt = lastFpHudMs > 0 ? Math.min(0.05, (now - lastFpHudMs) / 1000) : 0
+    lastFpHudMs = now
+    if (fpHeld && mc) {
+      try {
+        fpHeld.update(dt)
+      } catch {
+        /* ignore */
+      }
+    }
     labyCanvasGuiOpen.value = Boolean(mc && mc.currentScreen != null)
     if (mc?.player && mc.world) {
       const p = mc.player
@@ -302,20 +511,49 @@ function clearMoveKeys() {
   ;['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space', sne].forEach((c) => Keyboard.setState(c, false))
 }
 
-function applyStickToKeyboard() {
-  const j = joy.value
-  const dx = j.kx
-  const dy = j.ky
+function isPointInsideBuildPad(clientX, clientY) {
+  const el = buildPadBtnRef.value
+  if (!el) return false
+  const r = el.getBoundingClientRect()
+  const pad = 12
+  return (
+    clientX >= r.left - pad &&
+    clientX <= r.right + pad &&
+    clientY >= r.top - pad &&
+    clientY <= r.bottom + pad
+  )
+}
+
+/** Merges move stick + build stick (build only contributes when `dragging`). */
+function applyWalkFromSticks() {
+  let dx = 0
+  let dy = 0
+  const m = moveJoy.value
+  if (m.active) {
+    const mag = Math.hypot(m.kx, m.ky)
+    if (mag >= STICK_DEAD) {
+      dx += m.kx
+      dy += m.ky
+    }
+  }
+  const b = buildPadJoy.value
+  if (b.active && b.dragging) {
+    const rawMag = Math.hypot(b.kx, b.ky)
+    if (rawMag >= BUILD_PAD_STICK_DEAD) {
+      dx += b.kx * BUILD_PAD_MOVE_SCALE
+      dy += b.ky * BUILD_PAD_MOVE_SCALE
+    }
+  }
   const mag = Math.hypot(dx, dy)
-  const dead = 4
-  if (!j.active || mag < dead) {
+  if (mag < STICK_DEAD) {
     clearStickKeys()
     return
   }
   const nx = dx / mag
   const ny = dy / mag
-  const f = (-ny * mag) / JOY_KNOB_MAX
-  const s = (nx * mag) / JOY_KNOB_MAX
+  const effMag = Math.min(mag, JOY_KNOB_MAX * 2)
+  const f = (-ny * effMag) / JOY_KNOB_MAX
+  const s = (nx * effMag) / JOY_KNOB_MAX
   Keyboard.setState('KeyW', f > 0.2)
   Keyboard.setState('KeyS', f < -0.2)
   // Match keyboard: A = +moveStrafe, D = −moveStrafe — stick right must press D.
@@ -329,7 +567,8 @@ function onLeftZoneDown(ev) {
   const h = window.innerHeight
   if (ev.clientX > w * 0.48) return
   if (ev.clientY > h - 64) return
-  joy.value = {
+  if (isPointInsideBuildPad(ev.clientX, ev.clientY)) return
+  moveJoy.value = {
     active: true,
     bx: ev.clientX,
     by: ev.clientY,
@@ -345,28 +584,29 @@ function onLeftZoneDown(ev) {
 }
 
 function onLeftZoneMove(ev) {
-  if (joy.value.pid !== ev.pointerId || !joy.value.active) return
-  const dx = ev.clientX - joy.value.bx
-  const dy = ev.clientY - joy.value.by
+  const j = moveJoy.value
+  if (j.pid !== ev.pointerId || !j.active) return
+  const dx = ev.clientX - j.bx
+  const dy = ev.clientY - j.by
   const m = Math.hypot(dx, dy)
   const cap = JOY_KNOB_MAX
   if (m <= cap) {
-    joy.value.kx = dx
-    joy.value.ky = dy
+    moveJoy.value.kx = dx
+    moveJoy.value.ky = dy
   } else {
-    joy.value.kx = (dx / m) * cap
-    joy.value.ky = (dy / m) * cap
+    moveJoy.value.kx = (dx / m) * cap
+    moveJoy.value.ky = (dy / m) * cap
   }
-  applyStickToKeyboard()
+  applyWalkFromSticks()
 }
 
 function onLeftZoneUp(ev) {
-  if (joy.value.pid !== ev.pointerId) return
-  joy.value.active = false
-  joy.value.pid = -1
-  joy.value.kx = 0
-  joy.value.ky = 0
-  clearStickKeys()
+  if (moveJoy.value.pid !== ev.pointerId) return
+  moveJoy.value.active = false
+  moveJoy.value.pid = -1
+  moveJoy.value.kx = 0
+  moveJoy.value.ky = 0
+  applyWalkFromSticks()
   if (ev.currentTarget instanceof HTMLElement) {
     try {
       ev.currentTarget.releasePointerCapture(ev.pointerId)
@@ -377,12 +617,81 @@ function onLeftZoneUp(ev) {
 }
 
 function onLeftZoneLostCapture(ev) {
-  if (joy.value.pid !== ev.pointerId) return
-  joy.value.active = false
-  joy.value.pid = -1
-  joy.value.kx = 0
-  joy.value.ky = 0
-  clearStickKeys()
+  if (moveJoy.value.pid !== ev.pointerId) return
+  moveJoy.value.active = false
+  moveJoy.value.pid = -1
+  moveJoy.value.kx = 0
+  moveJoy.value.ky = 0
+  applyWalkFromSticks()
+}
+
+function onBuildPadDown(ev) {
+  if (!(ev.currentTarget instanceof HTMLElement)) return
+  ev.stopPropagation()
+  buildPadJoy.value = {
+    active: true,
+    bx: ev.clientX,
+    by: ev.clientY,
+    kx: 0,
+    ky: 0,
+    pid: ev.pointerId,
+    dragging: false,
+  }
+  try {
+    ev.currentTarget.setPointerCapture(ev.pointerId)
+  } catch {
+    /* ignore */
+  }
+  applyWalkFromSticks()
+}
+
+function onBuildPadMove(ev) {
+  ev.stopPropagation()
+  const b = buildPadJoy.value
+  if (b.pid !== ev.pointerId || !b.active) return
+  const dx = ev.clientX - b.bx
+  const dy = ev.clientY - b.by
+  if (Math.hypot(dx, dy) >= BUILD_PAD_DRAG_PX) {
+    buildPadJoy.value.dragging = true
+  }
+  const m = Math.hypot(dx, dy)
+  const cap = JOY_KNOB_MAX
+  if (m <= cap) {
+    buildPadJoy.value.kx = dx
+    buildPadJoy.value.ky = dy
+  } else {
+    buildPadJoy.value.kx = (dx / m) * cap
+    buildPadJoy.value.ky = (dy / m) * cap
+  }
+  applyWalkFromSticks()
+}
+
+function onBuildPadUp(ev) {
+  ev.stopPropagation()
+  if (buildPadJoy.value.pid !== ev.pointerId) return
+  buildPadJoy.value.active = false
+  buildPadJoy.value.pid = -1
+  buildPadJoy.value.kx = 0
+  buildPadJoy.value.ky = 0
+  buildPadJoy.value.dragging = false
+  applyWalkFromSticks()
+  if (ev.currentTarget instanceof HTMLElement) {
+    try {
+      ev.currentTarget.releasePointerCapture(ev.pointerId)
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+function onBuildPadLostCapture(ev) {
+  if (buildPadJoy.value.pid !== ev.pointerId) return
+  buildPadJoy.value.active = false
+  buildPadJoy.value.pid = -1
+  buildPadJoy.value.kx = 0
+  buildPadJoy.value.ky = 0
+  buildPadJoy.value.dragging = false
+  applyWalkFromSticks()
 }
 
 function onRightLookDown(ev) {
@@ -427,7 +736,10 @@ function onRightLookEnd(ev) {
   }
   if (tapMine) {
     const mc = gameMc.value
-    if (mc && typeof mc.onMouseClicked === 'function') mc.onMouseClicked(0)
+    if (mc && typeof mc.onMouseClicked === 'function') {
+      const place = buildPadJoy.value.active
+      mc.onMouseClicked(place ? 2 : 0)
+    }
   }
   if (ev.currentTarget instanceof HTMLElement) {
     try {
@@ -443,7 +755,8 @@ function onRightLookLostCapture(ev) {
 }
 
 function resetTouchHudState() {
-  joy.value = { active: false, bx: 0, by: 0, kx: 0, ky: 0, pid: -1 }
+  moveJoy.value = { active: false, bx: 0, by: 0, kx: 0, ky: 0, pid: -1 }
+  buildPadJoy.value = { active: false, bx: 0, by: 0, kx: 0, ky: 0, pid: -1, dragging: false }
   clearStickKeys()
   const mc = gameMc.value
   const sne = mc?.settings?.keyCrouching || 'ShiftLeft'
@@ -452,17 +765,19 @@ function resetTouchHudState() {
   lookPan = null
 }
 
-/** Laby uses button 2 for place-on-adjacent-cell (see Minecraft.js). */
-function tapPlaceBlock() {
-  const mc = gameMc.value
-  if (mc && typeof mc.onMouseClicked === 'function') mc.onMouseClicked(2)
-}
-
 onMounted(async () => {
   window.addEventListener('keydown', onLabySettingsEscapeKey, true)
   error.value = ''
   bridge = null
   presence = null
+  unsubPickaxeHits = () => {}
+  lastFpHudMs = 0
+  try {
+    fpHeld?.dispose()
+  } catch {
+    /* ignore */
+  }
+  fpHeld = null
   presenceAttachCancelled = false
   gameMc.value = null
   worldBootstrapping.value = true
@@ -544,6 +859,15 @@ onMounted(async () => {
       return
     }
 
+    try {
+      if (mc.settings) {
+        mc.settings.ambientOcclusion = true
+      }
+      mc.worldRenderer?.rebuildAll?.()
+    } catch {
+      /* ignore */
+    }
+
     mc.world.spawn.x = labySpawnPose.x
     mc.world.spawn.y = labySpawnPose.y
     mc.world.spawn.z = labySpawnPose.z
@@ -555,12 +879,56 @@ onMounted(async () => {
     sharedSpawn.value = { x: spFinal.x, y: spFinal.y, z: spFinal.z }
 
     gameMc.value = mc
+    syncLabyPanelFromMc()
+    installFusLabyToolsSpriteHelpers(mc)
+    installFusLabyHeartsSprite(mc)
+    try {
+      fpHeld?.dispose()
+    } catch {
+      /* ignore */
+    }
+    fpHeld = new FusLabyFirstPersonHeld(mc)
+    void fpHeld.preloadToolsPack()
+    const presenceUid = auth.user?.uid || ''
+    const tryMelee = createFusLabyRemoteMeleeTry({
+      worldId: FUS_SHARED_WORLD_LABY_ID,
+      myUid: presenceUid,
+      getMeleeRoots: () => presence?.getMeleeRaycastRoots?.() ?? [],
+    })
+    mc.fusTryRemoteMelee = () => tryMelee(mc)
+    if (auth.profile?.role === 'student') {
+      window.__fusLabyOpenHotbarExtras = () => {
+        openLabyInvModal()
+      }
+    }
     attachFpsStats()
     try {
-      fillLabyPlayerHotbar(mc.player.inventory)
+      applyLabyHotbarToGame()
       mc.player.inventory.selectedSlotIndex = 0
     } catch (e) {
       console.warn('[labyminecraft] hotbar fill', e)
+    }
+    const pickaxeHitsIgnoreBefore = Date.now()
+    if (presenceUid && rtdb) {
+      unsubPickaxeHits = subscribePickaxeHitsForVictim(
+        FUS_SHARED_WORLD_LABY_ID,
+        presenceUid,
+        (dmg) => {
+          const g = gameMc.value
+          if (!g?.player) return
+          const cur = typeof g.player.health === 'number' ? g.player.health : 20
+          g.player.health = Math.max(0, cur - dmg)
+          if (g.player.health <= 0) {
+            g.player.health = 20
+            try {
+              g.player.respawn()
+            } catch {
+              /* ignore */
+            }
+          }
+        },
+        { ignoreHitsBeforeTs: pickaxeHitsIgnoreBefore },
+      )
     }
     coordsRaf = requestAnimationFrame(tickCoordsHud)
 
@@ -628,6 +996,20 @@ onBeforeUnmount(() => {
   detachFpsStats()
   if (coordsRaf) cancelAnimationFrame(coordsRaf)
   coordsRaf = 0
+  try {
+    const g = gameMc.value
+    if (g) {
+      g.fusTryRemoteMelee = null
+      g.fusHotbarSlotMeta = null
+      g.fusHideVanillaFpHand = null
+      g.fusSyncFpToolIntoFirstPerson = null
+      g.fusToolsSpriteSheet = null
+      g.fusGetToolSpriteSrcRect = null
+      g.fusHeartsSheet = null
+    }
+  } catch {
+    /* ignore */
+  }
   gameMc.value = null
   try {
     presence?.dispose()
@@ -635,6 +1017,12 @@ onBeforeUnmount(() => {
     /* ignore */
   }
   presence = null
+  try {
+    unsubPickaxeHits()
+  } catch {
+    /* ignore */
+  }
+  unsubPickaxeHits = () => {}
   try {
     bridge?.dispose()
   } catch {
@@ -659,8 +1047,14 @@ onBeforeUnmount(() => {
   } catch {
     window.__LABY_MC_FUS_EMBED__ = false
   }
+  try {
+    delete window.__fusLabyOpenHotbarExtras
+  } catch {
+    window.__fusLabyOpenHotbarExtras = undefined
+  }
   clearMoveKeys()
-  joy.value = { active: false, bx: 0, by: 0, kx: 0, ky: 0, pid: -1 }
+  moveJoy.value = { active: false, bx: 0, by: 0, kx: 0, ky: 0, pid: -1 }
+  buildPadJoy.value = { active: false, bx: 0, by: 0, kx: 0, ky: 0, pid: -1, dragging: false }
   lookPan = null
 })
 
@@ -669,7 +1063,14 @@ function goBack() {
 }
 
 function onLabySettingsEscapeKey(ev) {
-  if (ev.key !== 'Escape' || !labyVueSettingsOpen.value) return
+  if (ev.key !== 'Escape') return
+  if (labyInvModalOpen.value) {
+    ev.preventDefault()
+    ev.stopPropagation()
+    cancelLabyInvModal()
+    return
+  }
+  if (!labyVueSettingsOpen.value) return
   ev.preventDefault()
   ev.stopPropagation()
   closeLabyVueSettings()
@@ -695,6 +1096,9 @@ function onLabySettingsPanelPointerdown(ev) {
       не показуються.
     </p>
 
+    <!-- Canvas first; touch HUD after so controls sit above the WebGL surface (hit-testing). -->
+    <div :id="hostId" class="host" />
+
     <div v-if="showTouchHud" class="touch-layer" @pointercancel="resetTouchHudState">
       <!-- Left: invisible catch; joystick ring appears at press (minecraft-web-client style). -->
       <div
@@ -707,21 +1111,50 @@ function onLabySettingsPanelPointerdown(ev) {
         @lostpointercapture="onLeftZoneLostCapture"
       />
       <div
-        v-show="joy.active"
+        v-show="moveJoy.active"
         class="touch-joy-root"
         :style="{
-          left: joy.bx - JOY_RING_PX + 'px',
-          top: joy.by - JOY_RING_PX + 'px',
+          left: moveJoy.bx - JOY_RING_PX + 'px',
+          top: moveJoy.by - JOY_RING_PX + 'px',
         }"
         aria-hidden="true"
       >
         <div class="touch-joy-ring" />
         <div
           class="touch-joy-knob"
-          :style="{ transform: `translate(${joy.kx}px, ${joy.ky}px)` }"
+          :style="{ transform: `translate(${moveJoy.kx}px, ${moveJoy.ky}px)` }"
         />
       </div>
-      <!-- Right: camera (short tap = break block). -->
+      <div
+        v-show="buildPadJoy.active"
+        class="touch-joy-root touch-joy-root--build"
+        :style="{
+          left: buildPadJoy.bx - JOY_RING_PX + 'px',
+          top: buildPadJoy.by - JOY_RING_PX + 'px',
+        }"
+        aria-hidden="true"
+      >
+        <div class="touch-joy-ring touch-joy-ring--build" />
+        <div
+          class="touch-joy-knob"
+          :style="{ transform: `translate(${buildPadJoy.kx}px, ${buildPadJoy.ky}px)` }"
+        />
+      </div>
+      <button
+        ref="buildPadBtnRef"
+        type="button"
+        class="touch-left-build-btn"
+        :class="{ 'touch-left-build-btn--active': buildPadJoy.active }"
+        aria-label="Будувати: тримайте ліворуч — дотик справа ставить блок; водіть по кнопці для ходьби"
+        @pointerdown.prevent.stop="onBuildPadDown"
+        @pointermove.prevent.stop="onBuildPadMove"
+        @pointerup.prevent.stop="onBuildPadUp"
+        @pointercancel.stop="onBuildPadUp"
+        @lostpointercapture="onBuildPadLostCapture"
+      >
+        <span class="touch-left-build-icon" aria-hidden="true" />
+      </button>
+      <!-- Right: short tap breaks, or places while build pad is held (even without dragging). -->
       <div
         class="touch-look-zone"
         aria-label="Огляд"
@@ -745,16 +1178,6 @@ function onLabySettingsPanelPointerdown(ev) {
         </button>
         <button
           type="button"
-          class="touch-edge-btn touch-edge-btn--place"
-          aria-label="Поставити блок"
-          @pointerdown.prevent.stop
-          @pointerup.prevent.stop="tapPlaceBlock"
-          @pointercancel.stop
-        >
-          <span class="touch-edge-place" aria-hidden="true" />
-        </button>
-        <button
-          type="button"
           class="touch-edge-btn"
           aria-label="Присісти"
           @pointerdown.prevent="keyDown(sneakKeyCode)"
@@ -767,8 +1190,6 @@ function onLabySettingsPanelPointerdown(ev) {
       </div>
     </div>
 
-    <div :id="hostId" class="host" />
-
     <!-- Last in tree + high z-index so canvas/touch layers never steal taps from HUD chrome. -->
     <div class="laby-topbar">
       <button type="button" class="exit" @click="goBack">← Назад</button>
@@ -778,8 +1199,7 @@ function onLabySettingsPanelPointerdown(ev) {
           type="button"
           class="hud-icon-btn"
           aria-label="Налаштування гри"
-          @pointerup.stop="onSettingsPointerUp"
-          @touchend.stop="onSettingsTouchEnd"
+          @pointerdown.stop="onSettingsPointerDown"
         >
           <Settings :size="20" :stroke-width="2" />
         </button>
@@ -788,8 +1208,7 @@ function onLabySettingsPanelPointerdown(ev) {
           class="hud-icon-btn"
           :disabled="respawning"
           aria-label="На спільний спавн"
-          @pointerup.stop="onHomePointerUp"
-          @touchend.stop="onHomeTouchEnd"
+          @pointerdown.stop="onHomePointerDown"
         >
           <Home :size="20" :stroke-width="2" />
         </button>
@@ -851,6 +1270,74 @@ function onLabySettingsPanelPointerdown(ev) {
         <button type="button" class="laby-settings-done" @click="closeLabyVueSettings">Готово</button>
       </div>
     </div>
+
+    <AppModal v-model="labyInvModalOpen" title="Інвентар і гаряча панель" size="lg">
+      <div class="laby-inv-modal">
+        <p class="laby-inv-lead">
+          <Package :size="14" :stroke-width="2" class="laby-inv-lead-icon" aria-hidden="true" />
+          Натисніть слот (1–8), потім предмет. Порядок зберігається в профілі (як у світі блоків).
+        </p>
+        <div class="laby-inv-hotbar-wrap">
+          <div class="fus-bw-hotbar laby-inv-hotbar">
+            <div class="fus-bw-hotbar-item pointer-events-none opacity-95" aria-hidden="true" title="Кулак">
+              <BlockWorldHotbarIconInner :visual="labyFistCellVisual" />
+            </div>
+            <button
+              v-for="idx in labyHotbarEditorIndices"
+              :key="idx"
+              type="button"
+              class="fus-bw-hotbar-item"
+              :class="{
+                'fus-bw-hotbar-item--tool': labyEditorItemSlotForIndex(idx)?.meta?.kind === 'tool',
+                'fus-bw-hotbar-item--selected': labyInvPickSlot === idx,
+                'laby-inv-slot--empty': !labyEditorItemSlotForIndex(idx),
+              }"
+              :aria-label="`Слот гарячої панелі ${idx + 1}`"
+              @click="labyInvPickSlot = idx"
+            >
+              <BlockWorldHotbarIconInner :visual="labyEditorCellVisual(idx)" />
+            </button>
+          </div>
+        </div>
+        <p v-if="labyInvPickSlot != null" class="laby-inv-pick-hint">
+          Слот {{ labyInvPickSlot + 1 }} — оберіть предмет нижче або «Очистити».
+        </p>
+        <p v-else class="laby-inv-pick-hint laby-inv-pick-hint--muted">Спочатку оберіть слот зверху.</p>
+        <div class="laby-inv-grid" :class="{ 'laby-inv-grid--dim': labyInvPickSlot == null }">
+          <button
+            v-if="labyInvPickSlot != null"
+            type="button"
+            class="fus-bw-hotbar-item"
+            :class="{ 'fus-bw-hotbar-item--selected': labyInvPickerSlotHasItemId('') }"
+            aria-label="Очистити слот"
+            title="Очистити слот"
+            @click="confirmLabyInvPick('')"
+          >
+            <Trash2 :size="22" :stroke-width="2" class="laby-inv-trash-icon" />
+          </button>
+          <button
+            v-for="it in ownedLabyBlockWorldShopItems"
+            :key="it.id"
+            type="button"
+            class="fus-bw-hotbar-item"
+            :class="{
+              'fus-bw-hotbar-item--tool': parseBlockWorldItem(it)?.kind === 'tool',
+              'fus-bw-hotbar-item--selected': labyInvPickerSlotHasItemId(it.id),
+            }"
+            :aria-label="`Предмет: ${it.name || it.id}`"
+            @click="confirmLabyInvPick(it.id)"
+          >
+            <BlockWorldHotbarIconInner :visual="labyShopItemCellVisual(it)" />
+          </button>
+        </div>
+        <div class="laby-inv-actions">
+          <button type="button" class="laby-inv-btn laby-inv-btn--primary" :disabled="labyInvSaving" @click="saveLabyInvModal">
+            Зберегти
+          </button>
+          <button type="button" class="laby-inv-btn" :disabled="labyInvSaving" @click="cancelLabyInvModal">Скасувати</button>
+        </div>
+      </div>
+    </AppModal>
   </div>
 </template>
 
@@ -1094,7 +1581,8 @@ function onLabySettingsPanelPointerdown(ev) {
 .touch-layer {
   position: absolute;
   inset: 0;
-  z-index: 55;
+  /* Above .host canvas so buttons/zones receive pointers (see template order). */
+  z-index: 95;
   pointer-events: none;
   box-sizing: border-box;
   -webkit-user-select: none;
@@ -1112,6 +1600,42 @@ function onLabySettingsPanelPointerdown(ev) {
   pointer-events: auto;
   touch-action: none;
 }
+.touch-left-build-btn {
+  position: absolute;
+  left: max(10px, env(safe-area-inset-left, 0px));
+  bottom: max(72px, calc(env(safe-area-inset-bottom, 0px) + 56px));
+  z-index: 62;
+  width: 52px;
+  height: 52px;
+  padding: 0;
+  border-radius: 50%;
+  border: 2px solid rgba(130, 210, 150, 0.55);
+  background: rgba(8, 8, 12, 0.88);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+  touch-action: none;
+  cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+}
+.touch-left-build-btn--active {
+  background: rgba(24, 48, 32, 0.92);
+  border-color: rgba(160, 235, 180, 0.75);
+}
+.touch-left-build-icon {
+  display: block;
+  width: 14px;
+  height: 14px;
+  box-sizing: border-box;
+  border: 2px solid #e8f8ec;
+  border-radius: 2px;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.2);
+  pointer-events: none;
+}
 .touch-joy-root {
   position: absolute;
   z-index: 58;
@@ -1119,6 +1643,13 @@ function onLabySettingsPanelPointerdown(ev) {
   height: 112px;
   margin: 0;
   pointer-events: none;
+}
+.touch-joy-root--build {
+  z-index: 61;
+}
+.touch-joy-ring--build {
+  border-color: rgba(130, 210, 150, 0.45);
+  background: rgba(24, 40, 28, 0.55);
 }
 .touch-joy-ring {
   position: absolute;
@@ -1198,21 +1729,95 @@ function onLabySettingsPanelPointerdown(ev) {
   border-width: 10px 7px 0 7px;
   border-color: #f4f4f8 transparent transparent transparent;
 }
-.touch-edge-btn--place {
-  border-color: rgba(130, 210, 150, 0.45);
+.laby-inv-modal {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
 }
-.touch-edge-place {
+.laby-inv-lead {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: rgba(226, 220, 240, 0.88);
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.laby-inv-lead-icon {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: #a78bfa;
+}
+.laby-inv-hotbar-wrap {
+  overflow-x: auto;
+  padding-bottom: 4px;
+  margin: 0 -4px;
+}
+.laby-inv-hotbar {
+  margin: 0 auto;
+}
+.laby-inv-pick-hint {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(196, 181, 253, 0.95);
+}
+.laby-inv-pick-hint--muted {
+  color: rgba(255, 255, 255, 0.45);
+  font-weight: 500;
+}
+.laby-inv-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+  max-height: min(42vh, 320px);
+  overflow-y: auto;
+  padding: 4px 2px 8px;
+  -webkit-overflow-scrolling: touch;
+}
+.laby-inv-grid--dim {
+  opacity: 0.35;
+  pointer-events: none;
+}
+.laby-inv-trash-icon {
+  color: rgba(248, 250, 252, 0.75);
+  margin: 0 auto;
   display: block;
-  width: 14px;
-  height: 14px;
-  box-sizing: border-box;
-  border: 2px solid #f4f4f8;
-  border-radius: 2px;
-  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.2);
+}
+.laby-inv-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+  padding-top: 4px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  margin-top: 4px;
+}
+.laby-inv-btn {
+  padding: 10px 16px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.laby-inv-btn:disabled {
+  opacity: 0.45;
+  cursor: wait;
+}
+.laby-inv-btn--primary {
+  background: linear-gradient(180deg, rgba(155, 126, 216, 0.45), rgba(120, 90, 180, 0.35));
+  border-color: rgba(196, 181, 253, 0.45);
 }
 .host {
   position: absolute;
   inset: 0;
+  z-index: 0;
 }
 .host :deep(canvas) {
   position: absolute;

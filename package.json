@@ -8,7 +8,7 @@
     "dev": "vite",
     "dev:https": "cross-env DEV_HTTPS=1 vite",
     "preview:https": "cross-env DEV_HTTPS=1 vite preview",
-    "build": "vite build",
+    "build": "node scripts/assert-fus-laby-engine.cjs && vite build",
     "start": "node scripts/serve-dist.mjs",
     "preview": "vite preview",
     "generate-icons": "node scripts/generate-icons.js",
@@ -26,6 +26,7 @@
     "pinia": "^3.0.4",
     "serve": "^14.2.6",
     "skinview-utils": "^0.7.1",
+    "stats.js": "^0.17.0",
     "three": "0.183.2",
     "vue": "^3.5.30",
     "vue-router": "^4.6.4"

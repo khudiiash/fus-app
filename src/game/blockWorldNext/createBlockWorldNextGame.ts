@@ -1,78 +1,61 @@
 import * as THREE from 'three'
+import Stats from 'three/addons/libs/stats.module.js'
 import { PointerLockControls } from 'three/examples/jsm/controls/PointerLockControls.js'
 import {
   BLOCK_WORLD_MAX_REACH,
   FIST_MINE_DAMAGE_PER_SWING,
   PLAYER_EYE_HEIGHT,
 } from '@/game/playerConstants'
-import type { SerializedBlock } from '@/game/sharedWorldFirestore'
+import type {
+  SerializedBlock,
+  SharedWorldInitialState,
+  SharedWorldSeeds,
+} from '@/game/sharedWorldFirestore'
 import {
   applyStoredPoseToCamera,
   type StoredCameraPose,
 } from '@/game/blockWorldLocalPersist'
-import { blockTypeHex } from './blockTypeColor'
-import { BlockType } from '@/game/minebase/terrain'
+import Terrain, { BlockType } from '@/game/minebase/terrain'
+import Block from '@/game/minebase/terrain/mesh/block'
+import { TERRAIN_Y_BASE, terrainSurfaceYOffset } from '@/game/minebase/terrain/surfaceHeight'
 import { blockTypeBreakHp } from '@/game/blockWorldBlockStats'
+import { blockWorldNextLowGpu } from '@/game/minebase/utils'
 
-const CHUNK_SIDE = 16
-const MAX_SHARED_CUSTOM_BLOCKS = 20_000
 const PLACE_COOLDOWN_MS = 220
 const MINE_REPEAT_MS = 230
 
-/** Procedural column height for the prototype chunk (original math; not copied from upstream). */
-function columnHeight(ix: number, iz: number): number {
-  const x = ix - CHUNK_SIDE / 2
-  const z = iz - CHUNK_SIDE / 2
-  const h = 1.5 + Math.sin(x * 0.35) * Math.cos(z * 0.31) * 2.1
-  return Math.max(1, Math.min(6, Math.floor(h)))
-}
-
-function isDemoVoxelAt(wx: number, wy: number, wz: number): boolean {
-  for (let iz = 0; iz < CHUNK_SIDE; iz++) {
-    for (let ix = 0; ix < CHUNK_SIDE; ix++) {
-      const h = columnHeight(ix, iz)
-      const cx = ix + 0.5
-      const cz = iz + 0.5
-      if (Math.abs(wx - cx) > 0.501 || Math.abs(wz - cz) > 0.501) continue
-      for (let k = 0; k < h; k++) {
-        const cy = k + 0.5
-        if (Math.abs(wy - cy) < 0.501) return true
-      }
-    }
-  }
-  return false
-}
-
-function voxelCellFromPointOnSurface(
-  point: THREE.Vector3,
-  normalWorld: THREE.Vector3,
-  outward: boolean,
-): { x: number; y: number; z: number } {
-  const p = point.clone().addScaledVector(normalWorld, outward ? 0.05 : -0.05)
-  return {
-    x: Math.floor(p.x) + 0.5,
-    y: Math.floor(p.y) + 0.5,
-    z: Math.floor(p.z) + 0.5,
-  }
-}
-
 function blocksPlacedAt(blocks: SerializedBlock[], x: number, y: number, z: number): SerializedBlock | null {
+  const rx = Math.round(x)
+  const ry = Math.round(y)
+  const rz = Math.round(z)
   for (const b of blocks) {
     if (!b.placed) continue
-    if (Math.abs(b.x - x) < 1e-4 && Math.abs(b.y - y) < 1e-4 && Math.abs(b.z - z) < 1e-4) return b
+    if (Math.round(b.x) === rx && Math.round(b.y) === ry && Math.round(b.z) === rz) return b
+  }
+  return null
+}
+
+function customEntryAt(blocks: SerializedBlock[], rx: number, ry: number, rz: number): SerializedBlock | null {
+  for (const b of blocks) {
+    if (Math.round(b.x) === rx && Math.round(b.y) === ry && Math.round(b.z) === rz) return b
   }
   return null
 }
 
 function upsertBlock(blocks: SerializedBlock[], edit: SerializedBlock): SerializedBlock[] {
   const m = new Map<string, SerializedBlock>()
-  const key = (b: Pick<SerializedBlock, 'x' | 'y' | 'z'>) => `${b.x},${b.y},${b.z}`
+  const key = (b: Pick<SerializedBlock, 'x' | 'y' | 'z'>) =>
+    `${Math.round(b.x)},${Math.round(b.y)},${Math.round(b.z)}`
   for (const b of blocks) m.set(key(b), { ...b })
   m.set(key(edit), { ...edit })
   return [...m.values()].sort(
     (a, b) =>
       a.x - b.x || a.y - b.y || a.z - b.z || a.type - b.type || Number(a.placed) - Number(b.placed),
   )
+}
+
+function workingBlocksToTerrainBlocks(blocks: SerializedBlock[]): Block[] {
+  return blocks.map((b) => new Block(b.x, b.y, b.z, b.type as BlockType, b.placed))
 }
 
 /** Keys `Digit1`…`Digit9` while pointer-locked (same order as classic-ish palette). */
@@ -121,12 +104,42 @@ export type BlockWorldNextGame = {
   isPointerLocked: () => boolean
   /** Block type used for the next RMB place (hotkeys 1–9). */
   getSelectedPlaceType: () => BlockType
+  /** Resolves after the terrain worker’s first mesh post (safe to rely on `terrain.idMap`). */
+  waitTerrainReady: () => Promise<void>
+  /**
+   * Same data path as classic {@link initSharedWorldFromFirestore}: noise seeds + custom blocks
+   * from one {@link loadSharedWorldInitialState} result. Call before {@link start}.
+   */
+  configureFromSharedInitialState: (initial: SharedWorldInitialState) => void
   readonly domElement: HTMLCanvasElement
 }
 
+function disposeTerrainVisuals(scene: THREE.Scene, terrain: Terrain) {
+  try {
+    terrain.generateWorker.terminate()
+  } catch {
+    /* ignore */
+  }
+  const hl = terrain.highlight as unknown as {
+    pickMesh: THREE.Mesh
+    instanceMesh: THREE.InstancedMesh
+  }
+  scene.remove(hl.pickMesh)
+  hl.pickMesh.geometry.dispose()
+  ;(hl.pickMesh.material as THREE.Material).dispose()
+  hl.instanceMesh.dispose()
+  scene.remove(terrain.cloud)
+  terrain.cloud.dispose()
+  for (const mesh of terrain.blocks) {
+    scene.remove(mesh)
+  }
+  terrain.blocks = []
+  terrain.blocksCount = []
+}
+
 /**
- * First-person slice: demo chunk, live shared blocks, progressive mine (LMB hold),
- * place with RMB (type via keys 1–9), WASD + gravity.
+ * Shared-world slice: minebase {@link Terrain} (worker + noise), live `customBlocks`,
+ * progressive fist mine, RMB place, WASD + simple ground collision.
  */
 export function createBlockWorldNextGame(
   mountEl: HTMLElement,
@@ -134,106 +147,80 @@ export function createBlockWorldNextGame(
 ): BlockWorldNextGame {
   const scene = new THREE.Scene()
   scene.background = new THREE.Color(0x87b8e8)
-  scene.fog = new THREE.Fog(0x87b8e8, 48, 280)
+  const lowGpu = blockWorldNextLowGpu()
+  scene.fog = new THREE.Fog(0x87b8e8, 48, lowGpu ? 200 : 280)
 
-  const camera = new THREE.PerspectiveCamera(70, 1, 0.08, 512)
-  camera.position.set(CHUNK_SIDE / 2, PLAYER_EYE_HEIGHT + 5, CHUNK_SIDE + 6)
+  const camera = new THREE.PerspectiveCamera(70, 1, 0.08, lowGpu ? 240 : 512)
+  /** Match {@link Core.initCamera} defaults so the first terrain chunk matches classic `/student/world`. */
+  camera.position.set(8, 50, 8)
+  camera.lookAt(100, 30, 100)
 
-  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false })
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2))
-  renderer.outputColorSpace = THREE.SRGBColorSpace
-  renderer.shadowMap.enabled = true
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap
+  let appliedSeeds: SharedWorldSeeds | undefined
 
-  const hemi = new THREE.HemisphereLight(0xbfd4ff, 0x6b5344, 0.55)
-  scene.add(hemi)
-  const sun = new THREE.DirectionalLight(0xfff2dc, 0.95)
-  sun.position.set(30, 48, 20)
-  sun.castShadow = true
-  sun.shadow.mapSize.setScalar(1024)
-  sun.shadow.camera.near = 0.5
-  sun.shadow.camera.far = 220
-  sun.shadow.camera.left = -96
-  sun.shadow.camera.right = 96
-  sun.shadow.camera.top = 96
-  sun.shadow.camera.bottom = -96
-  scene.add(sun)
-
-  const groundMat = new THREE.MeshStandardMaterial({ color: 0x3d6e3d, roughness: 1, metalness: 0 })
-  const ground = new THREE.Mesh(new THREE.PlaneGeometry(400, 400), groundMat)
-  ground.rotation.x = -Math.PI / 2
-  ground.receiveShadow = true
-  scene.add(ground)
-
-  const demoBoxGeo = new THREE.BoxGeometry(1, 1, 1)
-  const topMat = new THREE.MeshStandardMaterial({ color: 0x6ab06a, roughness: 0.92, metalness: 0 })
-  const inst = new THREE.InstancedMesh(demoBoxGeo, topMat, CHUNK_SIDE * CHUNK_SIDE)
-  inst.castShadow = true
-  inst.receiveShadow = true
-  const m = new THREE.Matrix4()
-  let i = 0
-  for (let iz = 0; iz < CHUNK_SIDE; iz++) {
-    for (let ix = 0; ix < CHUNK_SIDE; ix++) {
-      const h = columnHeight(ix, iz)
-      m.compose(
-        new THREE.Vector3(ix + 0.5, h - 0.5, iz + 0.5),
-        new THREE.Quaternion(),
-        new THREE.Vector3(1, 1, 1),
-      )
-      inst.setMatrixAt(i++, m)
-    }
-  }
-  inst.instanceMatrix.needsUpdate = true
-  scene.add(inst)
-
-  const customBoxGeo = new THREE.BoxGeometry(1, 1, 1)
-  const customMat = new THREE.MeshStandardMaterial({
-    roughness: 0.88,
-    metalness: 0.02,
-    vertexColors: false,
+  const renderer = new THREE.WebGLRenderer({
+    antialias: !lowGpu,
+    alpha: false,
+    powerPreference: 'high-performance',
+    stencil: false,
   })
-  const customMesh = new THREE.InstancedMesh(customBoxGeo, customMat, MAX_SHARED_CUSTOM_BLOCKS)
-  customMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
-  customMesh.instanceColor = new THREE.InstancedBufferAttribute(
-    new Float32Array(MAX_SHARED_CUSTOM_BLOCKS * 3),
-    3,
+  renderer.setPixelRatio(
+    lowGpu ? Math.min(window.devicePixelRatio || 1, 1) : Math.min(window.devicePixelRatio || 1, 2),
   )
-  customMesh.castShadow = true
-  customMesh.receiveShadow = true
-  customMesh.count = 0
-  scene.add(customMesh)
+  renderer.outputColorSpace = THREE.SRGBColorSpace
+  if (lowGpu) {
+    renderer.toneMapping = THREE.NoToneMapping
+    renderer.toneMappingExposure = 1
+  } else {
+    renderer.toneMapping = THREE.ACESFilmicToneMapping
+    renderer.toneMappingExposure = 1.05
+  }
+  renderer.shadowMap.enabled = !lowGpu
+  if (!lowGpu) {
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap
+  }
 
-  const customMeta: (SerializedBlock | null)[] = new Array(MAX_SHARED_CUSTOM_BLOCKS).fill(null)
+  const hemi = new THREE.HemisphereLight(0xbfd4ff, 0x6b5344, lowGpu ? 0.62 : 0.55)
+  scene.add(hemi)
+  const sun = new THREE.DirectionalLight(0xfff2dc, lowGpu ? 0.88 : 0.95)
+  sun.position.set(30, 48, 20)
+  sun.castShadow = !lowGpu
+  if (!lowGpu) {
+    sun.shadow.mapSize.setScalar(1024)
+    sun.shadow.camera.near = 0.5
+    sun.shadow.camera.far = 220
+    sun.shadow.camera.left = -96
+    sun.shadow.camera.right = 96
+    sun.shadow.camera.top = 96
+    sun.shadow.camera.bottom = -96
+  }
+  scene.add(sun)
+  if (lowGpu) {
+    scene.add(new THREE.AmbientLight(0xe8f0ff, 0.38))
+  }
+
+  const terrain = new Terrain(scene, camera)
+
   let workingBlocks: SerializedBlock[] = []
   const damageByCell = new Map<string, number>()
   let selectedPlaceType: BlockType = BlockType.grass
+  let lastMineCellKey = ''
 
-  const colorTmp = new THREE.Color()
+  const m = new THREE.Matrix4()
+  const zeroMatrix = new THREE.Matrix4().set(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
   const posTmp = new THREE.Vector3()
-  const quatId = new THREE.Quaternion()
-  const scaleOne = new THREE.Vector3(1, 1, 1)
 
-  const rebuildCustomInstancedFromWorking = () => {
-    customMeta.fill(null)
-    let idx = 0
-    for (const b of workingBlocks) {
-      if (!b.placed) continue
-      if (idx >= MAX_SHARED_CUSTOM_BLOCKS) break
-      posTmp.set(b.x, b.y, b.z)
-      m.compose(posTmp, quatId, scaleOne)
-      customMesh.setMatrixAt(idx, m)
-      colorTmp.setHex(blockTypeHex(b.type))
-      customMesh.setColorAt(idx, colorTmp)
-      customMeta[idx] = { ...b }
-      idx++
-    }
-    customMesh.count = idx
-    customMesh.instanceMatrix.needsUpdate = true
-    if (customMesh.instanceColor) customMesh.instanceColor.needsUpdate = true
+  const pushWorkingBlocksToTerrain = () => {
+    terrain.customBlocks = workingBlocksToTerrainBlocks(workingBlocks)
+  }
+
+  const regenerateFromRemote = () => {
+    damageByCell.clear()
+    lastMineCellKey = ''
+    pushWorkingBlocksToTerrain()
+    terrain.generate()
   }
 
   const applyCustomBlocks = (blocks: SerializedBlock[]) => {
-    damageByCell.clear()
     workingBlocks = blocks.map((b) => ({
       x: b.x,
       y: b.y,
@@ -241,7 +228,9 @@ export function createBlockWorldNextGame(
       type: b.type,
       placed: b.placed,
     }))
-    rebuildCustomInstancedFromWorking()
+    if (running) {
+      regenerateFromRemote()
+    }
   }
 
   const controls = new PointerLockControls(camera, renderer.domElement)
@@ -269,43 +258,70 @@ export function createBlockWorldNextGame(
   const raycaster = new THREE.Raycaster()
   const ndcCenter = new THREE.Vector2(0, 0)
   const hitNormalScratch = new THREE.Vector3()
+  const groundRay = new THREE.Raycaster()
+  const groundRayOrigin = new THREE.Vector3()
+  const down = new THREE.Vector3(0, -1, 0)
   let lastPlaceAt = 0
   let mineHoldTimer: ReturnType<typeof setInterval> | null = null
 
-  const cellKeyStr = (x: number, y: number, z: number) => `${x},${y},${z}`
+  const cellKeyStr = (x: number, y: number, z: number) =>
+    `${Math.round(x)},${Math.round(y)},${Math.round(z)}`
+
+  const isCellSolid = (rx: number, ry: number, rz: number) => {
+    const c = customEntryAt(workingBlocks, rx, ry, rz)
+    if (c) return c.placed === true
+    return terrain.idMap.has(`${rx}_${ry}_${rz}`)
+  }
 
   const trySwingMineOnce = () => {
     if (!controls.isLocked) return
     raycaster.near = 0.06
     raycaster.far = BLOCK_WORLD_MAX_REACH
     raycaster.setFromCamera(ndcCenter, camera)
-    const hits = raycaster.intersectObject(customMesh, false)
-    if (hits.length === 0) return
-    const hit = hits[0]
-    if (hit.instanceId == null) return
-    const id = hit.instanceId
-    if (id < 0 || id >= customMesh.count) return
-    const meta = customMeta[id]
-    if (!meta || !meta.placed) return
-    const bt = meta.type as BlockType
-    const maxHp = blockTypeBreakHp(bt)
-    if (maxHp === Number.POSITIVE_INFINITY) return
-    const k = cellKeyStr(meta.x, meta.y, meta.z)
-    const acc = (damageByCell.get(k) ?? 0) + FIST_MINE_DAMAGE_PER_SWING
-    if (acc >= maxHp) {
-      damageByCell.delete(k)
-      workingBlocks = upsertBlock(workingBlocks, {
-        x: meta.x,
-        y: meta.y,
-        z: meta.z,
-        type: meta.type,
-        placed: false,
-      })
-      rebuildCustomInstancedFromWorking()
-      options?.onBlocksEdited?.()
-    } else {
-      damageByCell.set(k, acc)
+    const hit = raycaster.intersectObjects(terrain.blocks, false)[0]
+    if (!hit || !(hit.object instanceof THREE.InstancedMesh)) return
+    const mesh = hit.object
+    const blockTypeEnum = BlockType[mesh.name as keyof typeof BlockType] as unknown as BlockType
+    if (blockTypeEnum === BlockType.bedrock || blockTypeEnum === BlockType.water) {
+      mesh.getMatrixAt(hit.instanceId!, m)
+      const p = posTmp.setFromMatrixPosition(m)
+      terrain.generateAdjacentBlocks(p)
+      return
     }
+    mesh.getMatrixAt(hit.instanceId!, m)
+    const position = posTmp.setFromMatrixPosition(m)
+    const cellKey = cellKeyStr(position.x, position.y, position.z)
+    if (lastMineCellKey !== cellKey) {
+      damageByCell.clear()
+      lastMineCellKey = cellKey
+    }
+    const hpMax = blockTypeBreakHp(blockTypeEnum)
+    if (Number.isFinite(hpMax)) {
+      const acc = (damageByCell.get(cellKey) ?? 0) + FIST_MINE_DAMAGE_PER_SWING
+      if (acc < hpMax) {
+        damageByCell.set(cellKey, acc)
+        return
+      }
+      damageByCell.delete(cellKey)
+    }
+
+    mesh.setMatrixAt(hit.instanceId!, zeroMatrix)
+    mesh.instanceMatrix.needsUpdate = true
+    mesh.boundingSphere = null
+    mesh.boundingBox = null
+
+    workingBlocks = upsertBlock(workingBlocks, {
+      x: position.x,
+      y: position.y,
+      z: position.z,
+      type: blockTypeEnum,
+      placed: false,
+    })
+    pushWorkingBlocksToTerrain()
+
+    terrain.generateAdjacentBlocks(position)
+    terrain.touchCustomBlocks()
+    options?.onBlocksEdited?.()
   }
 
   const tryPlaceOnce = () => {
@@ -315,32 +331,62 @@ export function createBlockWorldNextGame(
     raycaster.near = 0.06
     raycaster.far = BLOCK_WORLD_MAX_REACH
     raycaster.setFromCamera(ndcCenter, camera)
-    const hits = raycaster.intersectObjects([customMesh, inst, ground], false)
-    if (hits.length === 0) return
-    const hit = hits[0]
-    hitNormalScratch.copy(hit.face?.normal ?? new THREE.Vector3(0, 1, 0))
+    const hit = raycaster.intersectObjects(terrain.blocks, false)[0]
+    if (!hit || !(hit.object instanceof THREE.InstancedMesh) || !hit.face) return
+
+    hitNormalScratch.copy(hit.face.normal)
     hitNormalScratch.transformDirection(hit.object.matrixWorld)
-    const cell = voxelCellFromPointOnSurface(hit.point, hitNormalScratch, true)
-    if (blocksPlacedAt(workingBlocks, cell.x, cell.y, cell.z)) return
-    if (isDemoVoxelAt(cell.x, cell.y, cell.z)) return
-    const cam = camera.position
+
+    hit.object.getMatrixAt(hit.instanceId!, m)
+    const base = posTmp.setFromMatrixPosition(m)
+    const px = base.x + hitNormalScratch.x
+    const py = base.y + hitNormalScratch.y
+    const pz = base.z + hitNormalScratch.z
+
     if (
-      Math.abs(cam.x - cell.x) < 0.55 &&
-      Math.abs(cam.z - cell.z) < 0.55 &&
-      cam.y < cell.y + 1.2 &&
-      cam.y > cell.y - 0.2
+      Math.round(px) === Math.round(camera.position.x) &&
+      Math.round(pz) === Math.round(camera.position.z) &&
+      (Math.round(py) === Math.round(camera.position.y) ||
+        Math.round(py) === Math.round(camera.position.y - PLAYER_EYE_HEIGHT))
     ) {
       return
     }
+
+    const rx = Math.round(px)
+    const ry = Math.round(py)
+    const rz = Math.round(pz)
+    if (blocksPlacedAt(workingBlocks, px, py, pz)) return
+    if (isCellSolid(rx, ry, rz)) return
+
+    const cam = camera.position
+    if (
+      Math.abs(cam.x - px) < 0.55 &&
+      Math.abs(cam.z - pz) < 0.55 &&
+      cam.y < py + 1.2 &&
+      cam.y > py - 0.2
+    ) {
+      return
+    }
+
     workingBlocks = upsertBlock(workingBlocks, {
-      x: cell.x,
-      y: cell.y,
-      z: cell.z,
+      x: px,
+      y: py,
+      z: pz,
       type: selectedPlaceType,
       placed: true,
     })
-    rebuildCustomInstancedFromWorking()
+    pushWorkingBlocksToTerrain()
+
+    m.setPosition(px, py, pz)
+    const placeMesh = terrain.blocks[selectedPlaceType]
+    placeMesh.setMatrixAt(terrain.getCount(selectedPlaceType), m)
+    terrain.setCount(selectedPlaceType)
+    placeMesh.instanceMatrix.needsUpdate = true
+    placeMesh.boundingSphere = null
+    placeMesh.boundingBox = null
+
     lastPlaceAt = now
+    terrain.touchCustomBlocks()
     options?.onBlocksEdited?.()
   }
 
@@ -372,12 +418,21 @@ export function createBlockWorldNextGame(
   const clock = new THREE.Clock()
   let raf = 0
   let running = false
+  let stats: InstanceType<typeof Stats> | null = null
   const velocityY = { v: 0 }
   const moveSpeed = 19
   const gravity = 34
+  let onGround = false
 
   const scratchDir = new THREE.Vector3()
   const scratchRight = new THREE.Vector3()
+
+  /** Match `terrain/worker/generate.ts` (via `surfaceHeight.ts`). */
+  const analyticTerrainSurfaceTop = (wx: number, wz: number) => {
+    const x = Math.round(wx)
+    const z = Math.round(wz)
+    return TERRAIN_Y_BASE + terrainSurfaceYOffset(terrain.noise, x, z) + 0.5
+  }
 
   const tick = () => {
     if (!running) return
@@ -403,18 +458,63 @@ export function createBlockWorldNextGame(
         camera.position.addScaledVector(scratchDir, -mz * speed)
         camera.position.addScaledVector(scratchRight, mx * speed)
       }
-      if (keys.has('Space')) {
-        if (camera.position.y <= PLAYER_EYE_HEIGHT + 0.06) velocityY.v = 9.2
+      if (keys.has('Space') && onGround) {
+        velocityY.v = 9.2
       }
     }
     velocityY.v -= gravity * dt
     camera.position.y += velocityY.v * dt
-    const floorY = PLAYER_EYE_HEIGHT
-    if (camera.position.y < floorY) {
-      camera.position.y = floorY
+
+    terrain.update()
+
+    const feetY = camera.position.y - PLAYER_EYE_HEIGHT
+    const rayStartY = Math.max(feetY + 12, camera.position.y + 1.5, 44)
+    groundRayOrigin.set(camera.position.x, rayStartY, camera.position.z)
+    groundRay.set(groundRayOrigin, down)
+    groundRay.far = rayStartY + 200
+
+    let hits = groundRay.intersectObjects(terrain.blocks, false)
+    if (hits.length === 0) {
+      for (const mesh of terrain.blocks) {
+        if (mesh.count > 0) mesh.computeBoundingSphere()
+      }
+      hits = groundRay.intersectObjects(terrain.blocks, false)
+    }
+
+    let bestFloorY = -Infinity
+    for (const h of hits) {
+      if (!h.face) continue
+      hitNormalScratch.copy(h.face.normal).transformDirection(h.object.matrixWorld)
+      if (hitNormalScratch.y < 0.28) continue
+      if (h.point.y > feetY + 0.55) continue
+      if (h.point.y > bestFloorY) bestFloorY = h.point.y
+    }
+    if (!Number.isFinite(bestFloorY)) {
+      for (const h of hits) {
+        if (h.point.y <= feetY + 2.2 && h.point.y > bestFloorY) bestFloorY = h.point.y
+      }
+    }
+    if (!Number.isFinite(bestFloorY)) {
+      bestFloorY = analyticTerrainSurfaceTop(camera.position.x, camera.position.z)
+    }
+
+    const minCamY = bestFloorY + 0.06 + PLAYER_EYE_HEIGHT
+    onGround = feetY <= bestFloorY + 0.2
+    if (camera.position.y < minCamY) {
+      camera.position.y = minCamY
+      velocityY.v = Math.min(0, velocityY.v)
+    }
+    if (camera.position.y < PLAYER_EYE_HEIGHT - 120) {
+      const rescueY =
+        analyticTerrainSurfaceTop(camera.position.x, camera.position.z) +
+        PLAYER_EYE_HEIGHT +
+        0.12
+      camera.position.y = rescueY
       velocityY.v = 0
     }
+    stats?.begin()
     renderer.render(scene, camera)
+    stats?.end()
   }
 
   const syncRendererSize = () => {
@@ -423,6 +523,29 @@ export function createBlockWorldNextGame(
     camera.aspect = w / h
     camera.updateProjectionMatrix()
     renderer.setSize(w, h, false)
+  }
+
+  const applySeeds = () => {
+    const seeds = appliedSeeds
+    if (!seeds) return
+    const n = terrain.noise
+    n.seed = seeds.noise
+    n.stoneSeed = seeds.stone
+    n.treeSeed = seeds.tree
+    n.coalSeed = seeds.coal
+    n.leafSeed = seeds.leaf
+  }
+
+  /**
+   * Classic applies spawn after the first generate while the camera is still near the Core default,
+   * so chunk (0,0) is correct. World-next applies spawn before start — align worker chunk with the
+   * camera so the first `generate()` covers the column the player will stand in.
+   */
+  const syncTerrainChunkFromCamera = () => {
+    const cx = Math.floor(camera.position.x / terrain.chunkSize)
+    const cz = Math.floor(camera.position.z / terrain.chunkSize)
+    terrain.chunk.set(cx, cz)
+    terrain.previousChunk.copy(terrain.chunk)
   }
 
   const applyCameraSpawnFromRtdbOrLocal = (
@@ -454,14 +577,21 @@ export function createBlockWorldNextGame(
     return Math.abs(velocityY.v) > 0.45
   }
 
+  const configureFromSharedInitialState = (initial: SharedWorldInitialState) => {
+    appliedSeeds = initial.seeds
+    applyCustomBlocks(initial.blocks)
+  }
+
   return {
     domElement: renderer.domElement,
+    configureFromSharedInitialState,
     applyCustomBlocks,
     getWorkingBlocksSnapshot: () => workingBlocks.map((b) => ({ ...b })),
     getCamera: () => camera,
     getScene: () => scene,
     isMovingForPresence,
     applyCameraSpawnFromRtdbOrLocal,
+    waitTerrainReady: () => terrain.waitForFirstGenerate(),
 
     start() {
       if (running) return
@@ -473,8 +603,24 @@ export function createBlockWorldNextGame(
       renderer.domElement.addEventListener('contextmenu', onContextMenu)
       syncRendererSize()
       clock.getDelta()
+      applySeeds()
+      syncTerrainChunkFromCamera()
+      terrain.initBlocks()
+      pushWorkingBlocksToTerrain()
+      terrain.generate()
       running = true
       options?.onPlaceTypeChange?.(selectedPlaceType)
+      if (import.meta.env.DEV) {
+        stats = new Stats()
+        stats.showPanel(0)
+        const st = stats.dom
+        st.style.position = 'absolute'
+        st.style.left = '0'
+        st.style.bottom = '0'
+        st.style.top = 'auto'
+        st.style.zIndex = '130'
+        mountEl.appendChild(st)
+      }
       tick()
     },
 
@@ -482,6 +628,11 @@ export function createBlockWorldNextGame(
       running = false
       clearMineHold()
       cancelAnimationFrame(raf)
+      if (stats) {
+        const el = stats.dom
+        if (el.parentNode) el.parentNode.removeChild(el)
+        stats = null
+      }
       window.removeEventListener('keydown', onKeyDown)
       window.removeEventListener('keyup', onKeyUp)
       window.removeEventListener('mouseup', onWindowMouseUp)
@@ -492,10 +643,11 @@ export function createBlockWorldNextGame(
       controls.disconnect()
       if (renderer.domElement.parentElement === mountEl) mountEl.removeChild(renderer.domElement)
       renderer.dispose()
-      inst.dispose()
-      customMesh.dispose()
-      ground.geometry.dispose()
-      groundMat.dispose()
+      disposeTerrainVisuals(scene, terrain)
+      scene.remove(hemi)
+      scene.remove(sun)
+      hemi.dispose()
+      sun.dispose()
     },
 
     syncRendererSize,

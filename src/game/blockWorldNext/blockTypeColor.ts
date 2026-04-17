@@ -27,6 +27,8 @@ export function blockTypeHex(type: number): number {
       return 0xa8d8ff
     case BlockType.bedrock:
       return 0x2a2a2a
+    case BlockType.water:
+      return 0x2a6eaa
     default:
       return 0x888888
   }

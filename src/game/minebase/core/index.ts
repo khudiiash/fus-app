@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import type { WebGPURenderer } from 'three/webgpu'
+import { isLowPowerTouchDevice } from '../utils'
 
 export type BlockWorldCanvasRenderer = THREE.WebGLRenderer | WebGPURenderer
 
@@ -19,6 +20,8 @@ export default class Core {
       antialias: !this.touchLikeDevice,
       alpha: false,
       powerPreference: 'high-performance',
+      stencil: false,
+      precision: 'highp',
     })
     this.scene = new THREE.Scene()
     this.initScene()
@@ -43,9 +46,9 @@ export default class Core {
   private targetPixelRatio(aspect: number): number {
     const dpr = window.devicePixelRatio || 1
     if (!this.touchLikeDevice) return Math.min(dpr, 1.65)
-    // Landscape renders many more visible voxels; cap harder to avoid mobile GPU stalls.
-    if (aspect >= 1.2) return Math.min(dpr, 1.1)
-    return Math.min(dpr, 1.35)
+    const low = isLowPowerTouchDevice()
+    if (aspect >= 1.2) return Math.min(dpr, low ? 1 : 1.05)
+    return Math.min(dpr, low ? 1 : 1.15)
   }
 
   private sizeFromMount = () => {
@@ -81,7 +84,11 @@ export default class Core {
     this.camera.aspect = aspect
     this.camera.near = 0.01
     // Smaller far plane on touch devices reduces overdraw and fragment load.
-    this.camera.far = this.touchLikeDevice ? 220 : 500
+    this.camera.far = this.touchLikeDevice
+      ? isLowPowerTouchDevice()
+        ? 190
+        : 220
+      : 500
     this.camera.updateProjectionMatrix()
     this.camera.position.set(8, 50, 8)
 

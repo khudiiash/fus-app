@@ -1117,6 +1117,12 @@ export async function fineStudent({ fromUid, toUid, amount, reason = '' }) {
       : Math.min(amt, remainingCap)
     const deduction = Math.min(requested, coins, remainingCap)
 
+    if (isLump && deduction < requested) {
+      throw new Error(
+        `У учня недостатньо монет для цього разового штрафу (потрібно ${requested} 🪙, на балансі ${coins}). Оберіть меншу суму (10/20) або зніміть решту по −5 у списку класу.`,
+      )
+    }
+
     if (deduction <= 0) {
       throw new Error('Неможливо зняти монети (нульовий баланс або ліміт)')
     }
@@ -1159,6 +1165,8 @@ export async function fineStudent({ fromUid, toUid, amount, reason = '' }) {
     amount: -fineDeduction,
     note: String(fineLogNote || reasonTrim).slice(0, 200),
   })
+
+  return { deducted: fineDeduction }
 }
 
 /** Unequip room/pet/accessory/skin that are no longer owned after a trade. */

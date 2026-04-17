@@ -209,15 +209,17 @@ export function createFusBlockWorld(
       void fpItems.loadToolModel().catch((err) => {
         console.warn('[fusBlockWorld] pickaxe model', err)
       })
-      stats = new Stats()
-      stats.showPanel(0)
-      const st = stats.dom
-      st.style.position = 'absolute'
-      st.style.left = '0'
-      st.style.bottom = '0'
-      st.style.top = 'auto'
-      st.style.zIndex = '130'
-      mountEl.appendChild(st)
+      if (import.meta.env.DEV) {
+        stats = new Stats()
+        stats.showPanel(0)
+        const st = stats.dom
+        st.style.position = 'absolute'
+        st.style.left = '0'
+        st.style.bottom = '0'
+        st.style.top = 'auto'
+        st.style.zIndex = '130'
+        mountEl.appendChild(st)
+      }
 
       hud = mountBlockWorldHud({
         mountEl,

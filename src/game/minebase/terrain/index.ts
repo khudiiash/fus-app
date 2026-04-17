@@ -5,14 +5,18 @@ import Highlight from './highlight'
 import Noise from './noise'
 
 import Generate from './worker/generate?worker'
+import { TERRAIN_Y_BASE, terrainSurfaceYOffset } from './surfaceHeight'
+import {
+  blockWorldAggressiveMobile,
+  isLowPowerTouchDevice,
+  terrainReducedViewRange,
+} from '../utils'
 
-/** Fewer generated chunks on phones / coarse pointer (big CPU+GPU win). */
-function terrainReducedViewRange(): boolean {
-  if (typeof window === 'undefined') return false
-  return (
-    (navigator.maxTouchPoints || 0) > 0 ||
-    (window.matchMedia?.('(pointer: coarse)').matches ?? false)
-  )
+function terrainChunkDistance(): number {
+  if (typeof window === 'undefined') return 3
+  if (isLowPowerTouchDevice()) return 1
+  if (terrainReducedViewRange()) return 2
+  return 3
 }
 
 export enum BlockType {
@@ -27,7 +31,9 @@ export enum BlockType {
   diamond = 8,
   quartz = 9,
   glass = 10,
-  bedrock = 11
+  bedrock = 11,
+  /** Ocean / lakes (transparent). */
+  water = 12,
 }
 export default class Terrain {
   constructor(scene: THREE.Scene, camera: THREE.PerspectiveCamera) {
@@ -87,7 +93,7 @@ export default class Terrain {
   }
   scene: THREE.Scene
   camera: THREE.PerspectiveCamera
-  distance = terrainReducedViewRange() ? 2 : 3
+  distance = terrainChunkDistance()
   chunkSize = 24
 
   maxCount: number
@@ -108,12 +114,14 @@ export default class Terrain {
     MaterialType.diamond,
     MaterialType.quartz,
     MaterialType.glass,
-    MaterialType.bedrock
+    MaterialType.bedrock,
+    MaterialType.water,
   ]
 
   blocks: THREE.InstancedMesh[] = []
   blocksCount: number[] = []
-  blocksFactor = [1, 0.2, 0.1, 0.7, 0.1, 0.2, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1]
+  /** Per-type instance buffer scale (dirt/stone/water raised for subsurface + seas). */
+  blocksFactor = [1, 0.22, 0.12, 0.85, 5.2, 2.6, 0.12, 0.1, 0.1, 0.1, 0.1, 0.08, 1.6]
 
   customBlocks: Block[] = []
   private customBlockListeners: Array<() => void> = []
@@ -220,7 +228,8 @@ export default class Terrain {
       chunkSize: this.chunkSize,
     })
 
-    if (this.cloudGap++ > 5) {
+    const cloudRebuildEvery = isLowPowerTouchDevice() ? 9 : 5
+    if (this.cloudGap++ > cloudRebuildEvery) {
       this.cloudGap = 0
       this.cloud.instanceMatrix = new THREE.InstancedBufferAttribute(
         new Float32Array(1000 * 16),
@@ -262,11 +271,10 @@ export default class Terrain {
   generateAdjacentBlocks = (position: THREE.Vector3) => {
     const { x, y, z } = position
     const noise = this.noise
-    const yOffset = Math.floor(
-      noise.get(x / noise.gap, z / noise.gap, noise.seed) * noise.amp
-    )
+    const yOffset = terrainSurfaceYOffset(noise, x, z)
+    const surfaceTop = TERRAIN_Y_BASE + yOffset
 
-    if (y > 30 + yOffset) {
+    if (y > surfaceTop) {
       return
     }
 
@@ -298,11 +306,9 @@ export default class Terrain {
 
   buildBlock = (position: THREE.Vector3, type: BlockType) => {
     const noise = this.noise
-    const yOffset = Math.floor(
-      noise.get(position.x / noise.gap, position.z / noise.gap, noise.seed) *
-        noise.amp
-    )
-    if (position.y >= 30 + yOffset || position.y < 0) {
+    const yOffset = terrainSurfaceYOffset(noise, position.x, position.z)
+    const surfaceTop = TERRAIN_Y_BASE + yOffset
+    if (position.y >= surfaceTop || position.y < 0) {
       return
     }
 
@@ -349,7 +355,13 @@ export default class Terrain {
     this.previousChunk.copy(this.chunk)
 
     const t = performance.now()
-    const interval = terrainReducedViewRange() ? 140 : 110
+    const interval = blockWorldAggressiveMobile()
+      ? 240
+      : isLowPowerTouchDevice()
+        ? 200
+        : terrainReducedViewRange()
+          ? 160
+          : 110
     if (t - this.lastHighlightUpdateMs >= interval) {
       this.lastHighlightUpdateMs = t
       this.highlight.update()

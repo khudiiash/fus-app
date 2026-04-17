@@ -80,6 +80,11 @@ const router = createRouter({
           name: 'student-world-next',
           component: () => import('@/views/student/BlockWorldNextView.vue'),
         },
+        {
+          path: 'world-laby',
+          name: 'student-world-laby',
+          component: () => import('@/views/student/LabyJsMinecraftView.vue'),
+        },
         { path: 'room',        name: 'student-room',         component: () => import('@/views/student/RoomView.vue') },
         { path: 'room/:uid',   name: 'student-room-other',   component: () => import('@/views/student/RoomView.vue') },
       ],

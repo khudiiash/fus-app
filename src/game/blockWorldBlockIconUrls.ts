@@ -14,6 +14,7 @@ import oakPlanks from '@/game/minebase/static/textures/block/oak_planks.png'
 import diamondBlock from '@/game/minebase/static/textures/block/diamond_block.png'
 import quartzSide from '@/game/minebase/static/textures/block/quartz_block_side.png'
 import glassTex from '@/game/minebase/static/textures/block/glass.png'
+import waterTex from '@/game/minebase/static/textures/block/water.png'
 
 const BY_TYPE: Partial<Record<BlockType, string>> = {
   [BlockType.grass]: grassTop,
@@ -27,6 +28,7 @@ const BY_TYPE: Partial<Record<BlockType, string>> = {
   [BlockType.diamond]: diamondBlock,
   [BlockType.quartz]: quartzSide,
   [BlockType.glass]: glassTex,
+  [BlockType.water]: waterTex,
 }
 
 /** Fallback if a new {@link BlockType} is missing from the map. */

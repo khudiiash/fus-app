@@ -1,7 +1,8 @@
 <script setup>
 /**
  * Experimental voxel playground (new engine path). Production world remains `/student/world`.
- * Same shared `customBlocks`, spawn / last pose, and RTDB presence as the classic world.
+ * Uses its own Firestore/RTDB world id so terrain seeds and `customBlocks` are not the same
+ * document as classic `school` — otherwise the procedural world would always match `/student/world`.
  */
 import { ref, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
@@ -34,7 +35,11 @@ import {
 import { BlockType } from '@/game/minebase/terrain'
 import '@/game/minebase/style.css'
 
-const WORLD_ID = 'school'
+/**
+ * Firestore/RTDB `sharedWorlds/{id}`. Change this string to start from a new empty world doc.
+ * Must not be `school` (that is the classic «Світ» map).
+ */
+const WORLD_ID = 'fus-world-beta'
 
 const PLACE_LABEL_UK = {
   [BlockType.grass]: 'Трава',
@@ -90,6 +95,7 @@ function buildPresencePayload() {
     y: cam.position.y,
     z: cam.position.z,
     ry: cameraYawFromQuaternion(cam.quaternion),
+    hr: 0,
     moving,
     skinUrl,
     photoUrl,
@@ -246,9 +252,10 @@ async function beginPlay() {
         placeLabelUk.value = PLACE_LABEL_UK[t] ?? `блок ${t}`
       },
     })
-    g.applyCustomBlocks(initial.blocks)
+    g.configureFromSharedInitialState(initial)
     g.applyCameraSpawnFromRtdbOrLocal(rtdbFlag, storedPose)
     g.start()
+    await g.waitTerrainReady()
     game = g
 
     unsubBlocks = subscribeSharedWorldCustomBlocks(
@@ -360,8 +367,9 @@ onUnmounted(async () => {
       class="absolute inset-0 z-20 flex flex-col items-center justify-center bg-gradient-to-b from-slate-900 via-slate-950 to-black px-6 text-center text-white"
     >
       <p class="mb-2 max-w-sm text-xs font-semibold leading-snug text-slate-400">
-        Експериментальний рушій. ЛКМ утримувати — копати (як кулаком у класичному світі), ПКМ — поставити блок, 1–9 —
-        тип блоку. Той самий світ у RTDB/Firestore. Класичний режим — «Світ».
+        Експериментальний рушій. ЛКМ утримувати — копати (як кулаком у класичному світі), ПКМ — поставити блок, 1–9 — тип блоку.
+        Окремий світ у Firebase (<span class="font-mono text-slate-200">{{ WORLD_ID }}</span>), не «Світ» (school).
+        Якщо після оновлення коду карта не змінилась — примусове оновлення сторінки (Ctrl+Shift+R), бо PWA може тримати старий JS.
       </p>
       <p
         v-if="errorMsg"
@@ -409,7 +417,7 @@ onUnmounted(async () => {
       v-if="playing && !booting"
       class="pointer-events-none absolute bottom-[max(1rem,env(safe-area-inset-bottom,0px))] left-1/2 z-[210] max-w-[min(22rem,calc(100%-2rem))] -translate-x-1/2 rounded-xl border border-white/15 bg-black/50 px-3 py-2 text-center text-[11px] font-bold leading-snug text-white/90 backdrop-blur-sm"
     >
-      Поставити: {{ placeLabelUk }} · 1–9
+      Поставити: {{ placeLabelUk }} · 1–9 · {{ WORLD_ID }}
     </div>
   </div>
 </template>

@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, onUnmounted, computed, reactive } from 'vue'
+import { ref, onMounted, onUnmounted, computed, reactive, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useUserStore } from '@/stores/user'
@@ -39,6 +39,26 @@ const { success, error } = useToast()
 const { coin: hapticCoin } = useHaptic()
 
 const POINT_STEP = 5
+
+const CLASS_LAST_SUBJECT_LS = 'fus.classView.lastAwardSubject'
+
+function lastAwardSubjectStorageKey(teacherId) {
+  return `${CLASS_LAST_SUBJECT_LS}:${teacherId}`
+}
+
+function applyStoredDefaultSubject() {
+  const tid = auth.profile?.id
+  if (!tid || !teacherSubjects.value.length) return
+  try {
+    const saved = localStorage.getItem(lastAwardSubjectStorageKey(tid))
+    if (!saved) return
+    if (teacherSubjects.value.some((s) => s.name === saved)) {
+      defaultAwardSubject.value = saved
+    }
+  } catch {
+    /* private mode / quota */
+  }
+}
 
 /** Extra scroll space above in-layout sticky submit (see template). */
 const CLASS_VIEW_SCROLL_PAD = 'calc(6rem + env(safe-area-inset-bottom, 0px))'
@@ -80,9 +100,20 @@ onMounted(async () => {
     const all = await getAllSubjects()
     teacherSubjects.value = all.filter((s) => subjectIds.includes(s.id))
     defaultAwardSubject.value = teacherSubjects.value[0]?.name || ''
+    applyStoredDefaultSubject()
   }
 
   await loadFineTotals()
+})
+
+watch(defaultAwardSubject, (name) => {
+  const tid = auth.profile?.id
+  if (!tid || !name) return
+  try {
+    localStorage.setItem(lastAwardSubjectStorageKey(tid), String(name))
+  } catch {
+    /* ignore */
+  }
 })
 
 onUnmounted(() => {

@@ -1,5 +1,18 @@
 import * as THREE from 'three'
 import { BlockType } from '@/game/minebase/terrain'
+import { isLowPowerTouchDevice, useTouchGameControls } from '@/game/minebase/utils'
+
+/** 1 = desktop, <1 fewer instanced cubes (GPU + RAF work in burst animator). */
+function particleCountScale(): number {
+  if (typeof window === 'undefined') return 1
+  if (isLowPowerTouchDevice()) return 0.48
+  if (useTouchGameControls()) return 0.72
+  return 1
+}
+
+function scaledParticleCount(n: number) {
+  return Math.max(4, Math.round(n * particleCountScale()))
+}
 
 /**
  * Approximate “dust” tint per block type (Minecraft-like colored hit / break particles).
@@ -26,6 +39,8 @@ export function blockTypeParticleColor(t: BlockType): THREE.Color {
       return new THREE.Color(0xe8e0e8)
     case BlockType.glass:
       return new THREE.Color(0xb8d8e8)
+    case BlockType.water:
+      return new THREE.Color(0x4a8ec8)
     default:
       return new THREE.Color(0x888888)
   }
@@ -158,7 +173,7 @@ export function spawnBlockMiningHitParticles(
 ) {
   const c = blockTypeParticleColor(blockType)
   spawnVoxelParticleBurst(scene, center.clone(), c, {
-    count: 22,
+    count: scaledParticleCount(22),
     spread: 0.42,
     speed: 0.55,
     lifetimeMs: 340,
@@ -175,7 +190,7 @@ export function spawnBlockDestroyParticles(
 ) {
   const c = blockTypeParticleColor(blockType)
   spawnVoxelParticleBurst(scene, center.clone(), c, {
-    count: 64,
+    count: scaledParticleCount(64),
     spread: 0.72,
     speed: 0.95,
     lifetimeMs: 580,
@@ -188,7 +203,7 @@ export function spawnBlockDestroyParticles(
 export function spawnPickaxePlayerHitParticles(scene: THREE.Scene, hitPoint: THREE.Vector3) {
   const c = new THREE.Color(0xffdede)
   spawnVoxelParticleBurst(scene, hitPoint.clone(), c, {
-    count: 36,
+    count: scaledParticleCount(36),
     spread: 0.55,
     speed: 1.05,
     lifetimeMs: 400,
@@ -201,7 +216,7 @@ export function spawnPickaxePlayerHitParticles(scene: THREE.Scene, hitPoint: THR
 export function spawnMobDeathPoofParticles(scene: THREE.Scene, center: THREE.Vector3) {
   const c = new THREE.Color(0x6e6e6e)
   spawnVoxelParticleBurst(scene, center.clone(), c, {
-    count: 58,
+    count: scaledParticleCount(58),
     spread: 0.68,
     speed: 0.38,
     lifetimeMs: 720,
@@ -215,7 +230,7 @@ export function spawnMobDeathPoofParticles(scene: THREE.Scene, center: THREE.Vec
 export function spawnPlayerPvpDeathPoofParticles(scene: THREE.Scene, center: THREE.Vector3) {
   const c = new THREE.Color(0x8a5a5a)
   spawnVoxelParticleBurst(scene, center.clone(), c, {
-    count: 48,
+    count: scaledParticleCount(48),
     spread: 0.62,
     speed: 0.42,
     lifetimeMs: 680,

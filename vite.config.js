@@ -8,6 +8,7 @@ import { fileURLToPath, URL } from 'node:url'
 import { dirname, resolve } from 'node:path'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
+const labymcRoot = fileURLToPath(new URL('./third-party/js-minecraft', import.meta.url))
 
 /** Self-signed TLS for `npm run dev:https` / `preview:https` (WebGPU needs a secure context on LAN). */
 const useDevHttps =
@@ -112,19 +113,23 @@ export default defineConfig(({ mode }) => ({
     rollupOptions: {
       output: {
         manualChunks(id) {
+          // Resolve `node_modules` first so Laby’s `libraries/three.module.js` shim does not pull
+          // npm `three` into `vendor-labyminecraft`.
+          if (id.includes('node_modules')) {
+            if (id.includes('three') || id.includes('skinview-utils')) return 'vendor-three'
+            if (id.includes('firebase') || id.includes('@firebase')) return 'vendor-firebase'
+            if (
+              id.includes('/vue/') ||
+              id.includes('/@vue/') ||
+              id.includes('vue-router') ||
+              id.includes('pinia')
+            ) {
+              return 'vendor-vue'
+            }
+            return
+          }
           if (id.includes('third-party/js-minecraft') || id.includes('third-party\\js-minecraft')) {
             return 'vendor-labyminecraft'
-          }
-          if (!id.includes('node_modules')) return
-          if (id.includes('three') || id.includes('skinview-utils')) return 'vendor-three'
-          if (id.includes('firebase') || id.includes('@firebase')) return 'vendor-firebase'
-          if (
-            id.includes('/vue/') ||
-            id.includes('/@vue/') ||
-            id.includes('vue-router') ||
-            id.includes('pinia')
-          ) {
-            return 'vendor-vue'
           }
         },
       },
@@ -170,10 +175,11 @@ export default defineConfig(({ mode }) => ({
             urlPattern: ({ url }) =>
               url.origin === self.location.origin &&
               /\/assets\/vendor-labyminecraft-[^/]+\.js$/i.test(url.pathname),
-            handler: 'CacheFirst',
+            // CacheFirst made “nothing changed” after deploy: SW kept an old hashed chunk forever.
+            handler: 'StaleWhileRevalidate',
             options: {
-              cacheName: 'fus-labyminecraft',
-              expiration: { maxEntries: 3, maxAgeSeconds: 60 * 60 * 24 * 365 },
+              cacheName: 'fus-labyminecraft-swr-v1',
+              expiration: { maxEntries: 6, maxAgeSeconds: 60 * 60 * 24 * 30 },
               cacheableResponse: { statuses: [200] },
             },
           },
@@ -219,7 +225,7 @@ export default defineConfig(({ mode }) => ({
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
       /** FUS fork: git submodule `third-party/js-minecraft` → github.com/khudiiash/js-minecraft */
-      '@labymc': fileURLToPath(new URL('./third-party/js-minecraft', import.meta.url)),
+      '@labymc': labymcRoot,
     },
     // Force a single three.js instance so post-processing and the skin host scene
     // share the same class constructors.

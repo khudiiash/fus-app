@@ -57,8 +57,9 @@ export function parseBlockWorldItem(
   if (kind === 'block') {
     if (
       blockType < BlockType.grass ||
-      blockType > BlockType.bedrock ||
-      blockType === BlockType.bedrock
+      blockType > BlockType.water ||
+      blockType === BlockType.bedrock ||
+      blockType === BlockType.water
     ) {
       return null
     }

@@ -9,7 +9,7 @@ import oak_log from '../../static/textures/block/oak_log.png'
 import oak_log_top from '../../static/textures/block/oak_log_top.png'
 import oak_leaves from '../../static/textures/block/oak_leaves.png'
 import sand from '../../static/textures/block/sand.png'
-// import water from '../../static/textures/block/water.png'
+import water from '../../static/textures/block/water.png'
 import oak_wood from '../../static/textures/block/oak_planks.png'
 import diamond from '../../static/textures/block/diamond_block.png'
 import quartz from '../../static/textures/block/quartz_block_side.png'
@@ -22,7 +22,7 @@ export enum MaterialType {
   tree = 'tree',
   leaf = 'leaf',
   sand = 'sand',
-  // water = 'water',
+  water = 'water',
   stone = 'stone',
   coal = 'coal',
   wood = 'wood',
@@ -44,7 +44,7 @@ const coalMaterial = loader.load(coal_ore)
 const ironMaterial = loader.load(iron_ore)
 const leafMaterial = loader.load(oak_leaves)
 const sandMaterial = loader.load(sand)
-// const waterMaterial = loader.load(water)
+const waterMaterial = loader.load(water)
 const woodMaterial = loader.load(oak_wood)
 const diamondMaterial = loader.load(diamond)
 const quartzMaterial = loader.load(quartz)
@@ -62,7 +62,7 @@ coalMaterial.magFilter = THREE.NearestFilter
 ironMaterial.magFilter = THREE.NearestFilter
 leafMaterial.magFilter = THREE.NearestFilter
 sandMaterial.magFilter = THREE.NearestFilter
-// waterMaterial.magFilter = THREE.NearestFilter
+waterMaterial.magFilter = THREE.NearestFilter
 woodMaterial.magFilter = THREE.NearestFilter
 diamondMaterial.magFilter = THREE.NearestFilter
 quartzMaterial.magFilter = THREE.NearestFilter
@@ -81,6 +81,7 @@ const _colorMaps = [
   ironMaterial,
   leafMaterial,
   sandMaterial,
+  waterMaterial,
   woodMaterial,
   diamondMaterial,
   quartzMaterial,
@@ -111,6 +112,21 @@ export default class Materials {
     ],
     dirt: new THREE.MeshStandardMaterial({ map: dirtMaterial }),
     sand: new THREE.MeshStandardMaterial({ map: sandMaterial }),
+    water: _coarseTex
+      ? new THREE.MeshBasicMaterial({
+          map: waterMaterial,
+          transparent: true,
+          opacity: 0.55,
+          depthWrite: false,
+        })
+      : new THREE.MeshStandardMaterial({
+          map: waterMaterial,
+          transparent: true,
+          opacity: 0.58,
+          depthWrite: false,
+          metalness: 0.05,
+          roughness: 0.12,
+        }),
     tree: [
       new THREE.MeshStandardMaterial({ map: treeMaterial }),
       new THREE.MeshStandardMaterial({ map: treeMaterial }),
@@ -131,11 +147,6 @@ export default class Materials {
       depthWrite: true,
       depthTest: true,
     }),
-    // water: new THREE.MeshStandardMaterial({
-    //   map: waterMaterial,
-    //   transparent: true,
-    //   opacity: 0.7
-    // }),
     stone: new THREE.MeshStandardMaterial({ map: stoneMaterial }),
     coal: new THREE.MeshStandardMaterial({ map: coalMaterial }),
     wood: new THREE.MeshStandardMaterial({ map: woodMaterial }),
@@ -149,8 +160,8 @@ export default class Materials {
   }
 
   get = (
-    type: MaterialType
-  ): THREE.MeshStandardMaterial | THREE.MeshStandardMaterial[] => {
+    type: MaterialType,
+  ): THREE.Material | THREE.MeshStandardMaterial[] => {
     return this.materials[type]
   }
 }

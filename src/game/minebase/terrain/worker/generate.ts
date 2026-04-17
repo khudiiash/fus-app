@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import Noise from '../noise'
+import { TERRAIN_SEA_LEVEL, TERRAIN_Y_BASE, terrainSurfaceYOffset } from '../surfaceHeight'
 
 type CustomBlockMsg = {
   x: number
@@ -21,7 +22,8 @@ enum BlockType {
   diamond = 8,
   quartz = 9,
   glass = 10,
-  bedrock = 11
+  bedrock = 11,
+  water = 12,
 }
 
 const matrix = new THREE.Matrix4()
@@ -31,6 +33,9 @@ const blocks: THREE.InstancedMesh[] = []
 const geometry = new THREE.BoxGeometry()
 
 let isFirstRun = true
+
+/** Global cap (same on all clients) — balances mine depth vs fill rate / GPU. */
+const SUBSURFACE_DEPTH = 4
 
 onmessage = (
   msg: MessageEvent<{
@@ -48,7 +53,6 @@ onmessage = (
     chunkSize: number
   }>,
 ) => {
-  // let p1 = performance.now()
   const {
     distance,
     chunk,
@@ -61,17 +65,17 @@ onmessage = (
     leafSeed,
     customBlocks,
     blocksCount,
-    chunkSize
+    chunkSize,
   } = msg.data
 
   const maxCount = (distance * chunkSize * 2 + chunkSize) ** 2 + 500
 
   if (isFirstRun) {
     for (let i = 0; i < blocksCount.length; i++) {
-      let block = new THREE.InstancedMesh(
+      const block = new THREE.InstancedMesh(
         geometry,
         new THREE.MeshBasicMaterial(),
-        maxCount * blocksFactor[i]
+        maxCount * blocksFactor[i],
       )
       blocks.push(block)
     }
@@ -90,8 +94,18 @@ onmessage = (
   for (let i = 0; i < blocks.length; i++) {
     blocks[i].instanceMatrix = new THREE.InstancedBufferAttribute(
       new Float32Array(maxCount * blocksFactor[i] * 16),
-      16
+      16,
     )
+  }
+
+  const addBlock = (cx: number, cy: number, cz: number, bt: BlockType) => {
+    const key = `${cx}_${cy}_${cz}`
+    if (idMap.has(key)) return
+    matrix.setPosition(cx, cy, cz)
+    const id = blocksCount[bt]
+    idMap.set(key, id)
+    blocks[bt].setMatrixAt(id, matrix)
+    blocksCount[bt]++
   }
 
   for (
@@ -104,80 +118,75 @@ onmessage = (
       z < chunkSize * distance + chunkSize + chunkSize * chunk.y;
       z++
     ) {
-      const y = 30
-      const yOffset = Math.floor(
-        noise.get(x / noise.gap, z / noise.gap, noise.seed) * noise.amp
-      )
-
-      matrix.setPosition(x, y + yOffset, z)
+      const yOffset = terrainSurfaceYOffset(noise, x, z)
+      const surfY = TERRAIN_Y_BASE + yOffset
 
       const stoneOffset =
-        noise.get(x / noise.stoneGap, z / noise.stoneGap, noise.stoneSeed) *
-        noise.stoneAmp
+        noise.get(x / noise.stoneGap, z / noise.stoneGap, stoneSeed) * noise.stoneAmp
 
       const coalOffset =
-        noise.get(x / noise.coalGap, z / noise.coalGap, noise.coalSeed) *
-        noise.coalAmp
+        noise.get(x / noise.coalGap, z / noise.coalGap, coalSeed) * noise.coalAmp
+
+      for (let dy = 1; dy <= SUBSURFACE_DEPTH; dy++) {
+        const cy = surfY - dy
+        if (cy < 1) break
+        let bt = BlockType.dirt
+        if (dy >= 3) {
+          const sn =
+            noise.get(x * 0.08 + cy * 0.11, z * 0.08 - cy * 0.07, stoneSeed) * noise.stoneAmp
+          bt = sn > noise.stoneThreshold * 0.52 ? BlockType.stone : BlockType.dirt
+          const cn =
+            noise.get(x / noise.coalGap + cy * 0.02, z / noise.coalGap - cy * 0.02, coalSeed) *
+            noise.coalAmp
+          if (bt === BlockType.stone && cn > noise.coalThreshold) bt = BlockType.coal
+        }
+        addBlock(x, cy, z, bt)
+      }
+
+      if (!idMap.has(`${x}_0_${z}`)) {
+        addBlock(x, 0, z, BlockType.bedrock)
+      }
+
+      matrix.setPosition(x, surfY, z)
 
       if (stoneOffset > noise.stoneThreshold) {
         if (coalOffset > noise.coalThreshold) {
-          // coal
-          idMap.set(`${x}_${y + yOffset}_${z}`, blocksCount[BlockType.coal])
-          blocks[BlockType.coal].setMatrixAt(
-            blocksCount[BlockType.coal]++,
-            matrix
-          )
+          idMap.set(`${x}_${surfY}_${z}`, blocksCount[BlockType.coal])
+          blocks[BlockType.coal].setMatrixAt(blocksCount[BlockType.coal]++, matrix)
         } else {
-          // stone
-          idMap.set(`${x}_${y + yOffset}_${z}`, blocksCount[BlockType.stone])
-          blocks[BlockType.stone].setMatrixAt(
-            blocksCount[BlockType.stone]++,
-            matrix
-          )
+          idMap.set(`${x}_${surfY}_${z}`, blocksCount[BlockType.stone])
+          blocks[BlockType.stone].setMatrixAt(blocksCount[BlockType.stone]++, matrix)
         }
       } else {
         if (yOffset < -3) {
-          // sand
-          idMap.set(`${x}_${y + yOffset}_${z}`, blocksCount[BlockType.sand])
-          blocks[BlockType.sand].setMatrixAt(
-            blocksCount[BlockType.sand]++,
-            matrix
-          )
+          idMap.set(`${x}_${surfY}_${z}`, blocksCount[BlockType.sand])
+          blocks[BlockType.sand].setMatrixAt(blocksCount[BlockType.sand]++, matrix)
         } else {
-          // grass
-          idMap.set(`${x}_${y + yOffset}_${z}`, blocksCount[BlockType.grass])
-          blocks[BlockType.grass].setMatrixAt(
-            blocksCount[BlockType.grass]++,
-            matrix
-          )
+          idMap.set(`${x}_${surfY}_${z}`, blocksCount[BlockType.grass])
+          blocks[BlockType.grass].setMatrixAt(blocksCount[BlockType.grass]++, matrix)
         }
       }
 
-      // tree
       const treeOffset =
-        noise.get(x / noise.treeGap, z / noise.treeGap, noise.treeSeed) *
-        noise.treeAmp
+        noise.get(x / noise.treeGap, z / noise.treeGap, treeSeed) * noise.treeAmp
 
       if (
         treeOffset > noise.treeThreshold &&
         yOffset >= -3 &&
-        stoneOffset < noise.stoneThreshold
+        stoneOffset < noise.stoneThreshold &&
+        surfY >= TERRAIN_SEA_LEVEL - 1
       ) {
         for (let i = 1; i <= noise.treeHeight; i++) {
-          idMap.set(`${x}_${y + yOffset + i}_${z}`, blocksCount[BlockType.tree])
+          idMap.set(`${x}_${surfY + i}_${z}`, blocksCount[BlockType.tree])
 
-          matrix.setPosition(x, y + yOffset + i, z)
+          matrix.setPosition(x, surfY + i, z)
 
-          blocks[BlockType.tree].setMatrixAt(
-            blocksCount[BlockType.tree]++,
-            matrix
-          )
+          blocks[BlockType.tree].setMatrixAt(blocksCount[BlockType.tree]++, matrix)
         }
 
-        // leaf
-        for (let i = -3; i < 3; i++) {
-          for (let j = -3; j < 3; j++) {
-            for (let k = -3; k < 3; k++) {
+        for (let i = -2; i <= 2; i++) {
+          for (let j = -2; j <= 2; j++) {
+            for (let k = -2; k <= 2; k++) {
               if (i === 0 && k === 0) {
                 continue
               }
@@ -185,25 +194,26 @@ onmessage = (
                 noise.get(
                   (x + i + j) / noise.leafGap,
                   (z + k) / noise.leafGap,
-                  noise.leafSeed
+                  leafSeed,
                 ) * noise.leafAmp
               if (leafOffset > noise.leafThreshold) {
                 idMap.set(
-                  `${x + i}_${y + yOffset + noise.treeHeight + j}_${z + k}`,
-                  blocksCount[BlockType.leaf]
+                  `${x + i}_${surfY + noise.treeHeight + j}_${z + k}`,
+                  blocksCount[BlockType.leaf],
                 )
-                matrix.setPosition(
-                  x + i,
-                  y + yOffset + noise.treeHeight + j,
-                  z + k
-                )
-                blocks[BlockType.leaf].setMatrixAt(
-                  blocksCount[BlockType.leaf]++,
-                  matrix
-                )
+                matrix.setPosition(x + i, surfY + noise.treeHeight + j, z + k)
+                blocks[BlockType.leaf].setMatrixAt(blocksCount[BlockType.leaf]++, matrix)
               }
             }
           }
+        }
+      }
+
+      if (surfY < TERRAIN_SEA_LEVEL) {
+        for (let wy = surfY + 1; wy <= TERRAIN_SEA_LEVEL; wy++) {
+          const wkey = `${x}_${wy}_${z}`
+          if (idMap.has(wkey)) continue
+          addBlock(x, wy, z, BlockType.water)
         }
       }
     }
@@ -217,11 +227,9 @@ onmessage = (
       block.z < chunkSize * distance + chunkSize + chunkSize * chunk.y
     ) {
       if (block.placed) {
-        // placed blocks
         matrix.setPosition(block.x, block.y, block.z)
         blocks[block.type].setMatrixAt(blocksCount[block.type]++, matrix)
       } else {
-        // removed blocks
         const id = idMap.get(`${block.x}_${block.y}_${block.z}`)
         if (id === undefined || id === null) {
           continue
@@ -245,14 +253,14 @@ onmessage = (
             0,
             0,
             0,
-            0
-          )
+            0,
+            0,
+          ),
         )
       }
     }
   }
 
-  const arrays = blocks.map(block => block.instanceMatrix.array)
+  const arrays = blocks.map((block) => block.instanceMatrix.array)
   postMessage({ idMap, arrays, blocksCount })
-  // console.log(performance.now() - p1)
 }

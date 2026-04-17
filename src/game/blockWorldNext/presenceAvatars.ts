@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import type { PresenceDoc } from '@/game/sharedWorldFirestore'
 import { PLAYER_EYE_HEIGHT } from '@/game/playerConstants'
+import { blockWorldNextLowGpu } from '@/game/minebase/utils'
 
 function colorFromUid(uid: string): number {
   let h = 0
@@ -26,10 +27,12 @@ export class BlockWorldNextPresenceAvatars {
   private readonly scene: THREE.Scene
   private readonly selfUid: string
   private readonly roots = new Map<string, THREE.Group>()
+  private readonly avatarsCastShadow: boolean
 
   constructor(scene: THREE.Scene, selfUid: string) {
     this.scene = scene
     this.selfUid = selfUid
+    this.avatarsCastShadow = !blockWorldNextLowGpu()
   }
 
   sync(map: Map<string, PresenceDoc>) {
@@ -49,8 +52,8 @@ export class BlockWorldNextPresenceAvatars {
           }),
         )
         body.position.y = 0.825
-        body.castShadow = true
-        body.receiveShadow = true
+        body.castShadow = this.avatarsCastShadow
+        body.receiveShadow = this.avatarsCastShadow
         g.add(body)
         this.scene.add(g)
         this.roots.set(uid, g)

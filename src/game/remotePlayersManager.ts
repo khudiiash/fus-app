@@ -62,7 +62,7 @@ function drawHeartsRowFromSheet(
 }
 
 function clampBlockType(n: number): BlockType {
-  if (!Number.isFinite(n) || n < 0 || n > 11) return BlockType.grass
+  if (!Number.isFinite(n) || n < 0 || n > 12) return BlockType.grass
   return n as BlockType
 }
 

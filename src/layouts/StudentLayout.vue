@@ -12,7 +12,16 @@ import { useToast } from '@/composables/useToast'
 import AvatarDisplay from '@/components/avatar/AvatarDisplay.vue'
 import PushOptInBanner from '@/components/notifications/PushOptInBanner.vue'
 import {
-  Home, ShoppingBag, ArrowLeftRight, Trophy, LayoutDashboard, User, Coins, Boxes, Sparkles,
+  Home,
+  ShoppingBag,
+  ArrowLeftRight,
+  Trophy,
+  LayoutDashboard,
+  User,
+  Coins,
+  Boxes,
+  Sparkles,
+  Gamepad2,
 } from 'lucide-vue-next'
 
 const auth        = useAuthStore()
@@ -34,6 +43,7 @@ const navItems = [
   { to: '/student/leaderboard', Icon: Trophy,           label: 'Рейтинг'              },
   { to: '/student/world',       Icon: Boxes,            label: 'Світ'                 },
   { to: '/student/world-next',  Icon: Sparkles,         label: 'Світ β'               },
+  { to: '/student/world-laby',  Icon: Gamepad2,         label: 'Світ Laby'            },
   { to: '/student/room',        Icon: LayoutDashboard,  label: 'Кімната'              },
   { to: '/student/profile',     Icon: User,             label: 'Профіль'              },
 ]
@@ -77,6 +87,7 @@ watch(
 const isActive = (item) => {
   if (item.exact) return route.path === item.to
   if (item.to === '/student/world') return route.path === '/student/world'
+  if (item.to === '/student/world-laby') return route.path === '/student/world-laby'
   return route.path.startsWith(item.to)
 }
 
@@ -102,6 +113,8 @@ watch(
 onMounted(() => {
   userStore.fetchItems()
   userStore.fetchQuests()
+  // Warm the heavy Laby chunk so first open of «Світ Laby» skips one network round-trip.
+  void import('@labymc/src/js/Start.js').catch(() => {})
 })
 
 onUnmounted(() => {
