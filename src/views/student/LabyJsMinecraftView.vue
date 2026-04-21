@@ -34,6 +34,7 @@ import { applyFusPlayerLevelToMinecraft } from '@labymc/src/js/net/minecraft/cli
 import { restoreFusLabySessionOnce } from '@/lib/fusLabySessionPersist'
 import { effectiveUserLevelFromProfile } from '@/lib/fusLabyUserLevel.js'
 import { FUS_LABY_FLAG_CHANNEL_MS } from '@labymc/src/js/net/minecraft/client/fus/FusLabyFlagChannel.js'
+import { installFusLabySpawnFlag } from '@/lib/fusLabySpawnFlagInstall'
 
 const router = useRouter()
 const auth = useAuthStore()
@@ -464,6 +465,7 @@ onMounted(async () => {
     mc.fusFrozen = true
 
     installFusLabyFpToolHooks(mc)
+    installFusLabySpawnFlag(mc, { worldId: FUS_SHARED_WORLD_LABY_ID, uid, rtdb })
 
     const ua = typeof navigator !== 'undefined' ? navigator.userAgent : ''
     const isIosSafari =
