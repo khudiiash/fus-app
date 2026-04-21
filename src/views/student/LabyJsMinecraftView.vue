@@ -36,6 +36,7 @@ import { effectiveUserLevelFromProfile } from '@/lib/fusLabyUserLevel.js'
 import { FUS_LABY_FLAG_CHANNEL_MS } from '@labymc/src/js/net/minecraft/client/fus/FusLabyFlagChannel.js'
 import { installFusLabySpawnFlag } from '@/lib/fusLabySpawnFlagInstall'
 import { installFusSkinLoader } from '@/lib/fusSkinLoaderInstall'
+import { installFusSimpleMobs } from '@/lib/fusSimpleMobsInstall'
 
 const router = useRouter()
 const auth = useAuthStore()
@@ -600,6 +601,17 @@ onMounted(async () => {
      * that chunk uploads desperately need. Unfreezing even a couple frames early is visible.
      */
     await waitForWorldRenderReady(mc, 5000)
+
+    /**
+     * Local-only simple mob system (spawns/AI/attack hook). Drop-in replacement for the
+     * deleted FusMobSync — see {@code fusSimpleMobsInstall.js}. Runs after render-ready
+     * so the first spawn snaps to terrain that actually exists.
+     */
+    installFusSimpleMobs(mc, {
+      count: mc.fusLowTierMobile ? 4 : 8,
+      spawnRadius: 28,
+      level: Math.max(1, Math.floor(labyLevel) || 1),
+    })
   } catch (e) {
     console.warn('[LabyJsMinecraftView]', e)
     error.value = e?.message || 'Помилка запуску'
@@ -663,6 +675,11 @@ onBeforeUnmount(() => {
   const mc = gameMc.value
   gameMc.value = null
   if (!mc) return
+  try {
+    mc.fusDisposeSimpleMobs?.()
+  } catch (e) {
+    console.warn('[LabyJsMinecraftView] dispose mobs', e)
+  }
   try {
     mc.loadWorld(null)
   } catch (e) {
