@@ -11,7 +11,7 @@ import {
   buildEligibleLootPool,
   rollMysteryBox,
   canGrantShopItemFromBox,
-} from '@/game/mysteryBoxRng'
+} from '@/lib/mysteryBoxRng'
 
 // ─── Collection refs ──────────────────────────────────────────────────────────
 export const usersCol    = () => collection(db, 'users')
@@ -590,8 +590,14 @@ export async function aggregateStudentAwardCoinsBySubject(studentUid, cap = 400)
     const n = Number(t.amount) || 0
     if (n <= 0) continue
     const key = (t.subjectName && String(t.subjectName).trim()) || ''
-    const label = key || 'Без предмета'
-    sums.set(label, (sums.get(label) || 0) + n)
+    /**
+     * Journal displays **only subject-tagged coins** — awards without {@code subjectName}
+     * (direct admin top-ups, old records) used to fall into a synthetic "Без предмета"
+     * bucket that cluttered the view and confused the subject-badge purchase rule
+     * (badges must be bought with that subject's earned coins).
+     */
+    if (!key) continue
+    sums.set(key, (sums.get(key) || 0) + n)
   }
   return [...sums.entries()]
     .map(([subjectName, coins]) => ({ subjectName, coins }))
@@ -774,8 +780,216 @@ export async function grantStudentCoinsFromGame(uid, amount, note = 'Блок-с
   })
 }
 
+/**
+ * XP-only grant from Laby combat (mob kills). No coins; journal via logTransaction with amount 0 skipped if needed.
+ */
+export async function grantLabyGameplayXp(uid, xpDelta, note = 'Лабі-світ — бій') {
+  const amt = Math.max(0, Math.min(200, Math.round(Number(xpDelta) || 0)))
+  if (amt === 0 || !uid) return
+  await runTransaction(db, async (tx) => {
+    const uRef = doc(db, 'users', uid)
+    const snap = await tx.get(uRef)
+    if (!snap.exists()) throw new Error('User not found')
+    const u = snap.data()
+    const newXp = (u.xp || 0) + amt
+    tx.update(uRef, {
+      xp: newXp,
+      level: calcLevel(newXp),
+    })
+  })
+}
+
+/** Max coins per calendar day (UTC) from Laby mob pickups — economy guard. */
+export const LABY_MOB_COINS_DAILY_CAP = 50
+
+/**
+ * Grant coins from Laby mob drops with a daily cap (UTC day, field {@code labyMobCoinDay} / {@code labyMobCoinsToday}).
+ * @returns {Promise<{ granted: number, skipped: number }>}
+ */
+export async function grantLabyMobCoinsCapped(uid, amount, note = 'Лабі-світ — здобич') {
+  const want = Math.max(0, Math.min(5, Math.round(Number(amount) || 0)))
+  if (want === 0 || !uid) return { granted: 0, skipped: want }
+  const dayKey = new Date().toISOString().slice(0, 10)
+  let granted = 0
+  await runTransaction(db, async (tx) => {
+    const uRef = doc(db, 'users', uid)
+    const snap = await tx.get(uRef)
+    if (!snap.exists()) throw new Error('User not found')
+    const u = snap.data()
+    const prevDay = typeof u.labyMobCoinDay === 'string' ? u.labyMobCoinDay : ''
+    let used = Number(u.labyMobCoinsToday) || 0
+    if (prevDay !== dayKey) {
+      used = 0
+    }
+    const room = Math.max(0, LABY_MOB_COINS_DAILY_CAP - used)
+    granted = Math.min(want, room)
+    if (granted <= 0) {
+      return
+    }
+    const newCoins = (u.coins || 0) + granted
+    const newXp = (u.xp || 0) + Math.ceil(granted * 1.5)
+    tx.update(uRef, {
+      coins: newCoins,
+      xp: newXp,
+      level: calcLevel(newXp),
+      labyMobCoinDay: dayKey,
+      labyMobCoinsToday: used + granted,
+    })
+  })
+  if (granted > 0) {
+    await logTransaction({
+      type: 'award',
+      fromUid: uid,
+      toUid: uid,
+      amount: granted,
+      note: String(note || '').slice(0, 200),
+    })
+  }
+  return { granted, skipped: want - granted }
+}
+
+/**
+ * Grant one shop row by {@code bwSeedKey} (block_world items). No-op if unknown.
+ */
+export async function grantShopItemByBwSeedKey(uid, bwSeedKey) {
+  const key = String(bwSeedKey || '').trim()
+  if (!uid || !key) return false
+  const q = query(itemsCol(), where('bwSeedKey', '==', key), limit(1))
+  const snaps = await getDocs(q)
+  if (snaps.empty) return false
+  const itemId = snaps.docs[0].id
+  await runTransaction(db, async (tx) => {
+    const uRef = doc(db, 'users', uid)
+    const iRef = doc(db, 'items', itemId)
+    const [uSnap, iSnap] = await Promise.all([tx.get(uRef), tx.get(iRef)])
+    if (!uSnap.exists() || !iSnap.exists()) throw new Error('Not found')
+    const user = uSnap.data()
+    const item = iSnap.data()
+    if (item.active === false) throw new Error('Inactive')
+    const inv = user.inventory || []
+    const counts = { ...(user.inventoryCounts || {}) }
+    const next = grantOneToInventory(inv, counts, itemId)
+    if (!next) return
+    const newXp = (user.xp || 0) + 8
+    tx.update(uRef, {
+      inventory: next.inventory,
+      inventoryCounts: next.inventoryCounts,
+      xp: newXp,
+      level: calcLevel(newXp),
+    })
+  })
+  return true
+}
+
+/** Grant one shop skin by {@code skinId} (PK / special drops). */
+export async function grantShopSkinBySkinId(uid, skinId) {
+  const sid = String(skinId || '').trim()
+  if (!uid || !sid) return false
+  const q = query(itemsCol(), where('category', '==', 'skin'), where('skinId', '==', sid), limit(1))
+  const snaps = await getDocs(q)
+  if (snaps.empty) return false
+  const itemId = snaps.docs[0].id
+  await runTransaction(db, async (tx) => {
+    const uRef = doc(db, 'users', uid)
+    const iRef = doc(db, 'items', itemId)
+    const [uSnap, iSnap] = await Promise.all([tx.get(uRef), tx.get(iRef)])
+    if (!uSnap.exists() || !iSnap.exists()) throw new Error('Not found')
+    const user = uSnap.data()
+    const item = iSnap.data()
+    if (item.active === false) throw new Error('Inactive')
+    const inv = user.inventory || []
+    const counts = { ...(user.inventoryCounts || {}) }
+    const next = grantOneToInventory(inv, counts, itemId)
+    if (!next) return
+    const newXp = (user.xp || 0) + 12
+    tx.update(uRef, {
+      inventory: next.inventory,
+      inventoryCounts: next.inventoryCounts,
+      xp: newXp,
+      level: calcLevel(newXp),
+    })
+  })
+  return true
+}
+
+/**
+ * Admin-only: grant {@code qty} copies of any shop item to a student. Handles both
+ * regular inventory items and mystery boxes (which live in {@code mysteryBoxCounts}).
+ * Adds a transaction log entry so the action is visible in activity history.
+ *
+ * @param {{ adminUid: string, studentUid: string, itemId: string, qty?: number, note?: string }} args
+ * @returns {Promise<{ category: string, name: string }>} item metadata for toast / confirmation
+ */
+export async function adminGrantItemToStudent({ adminUid, studentUid, itemId, qty = 1, note = '' }) {
+  const amount = Math.max(1, Math.min(999, Math.floor(Number(qty) || 1)))
+  if (!adminUid) throw new Error('Not signed in')
+  if (!studentUid) throw new Error('Потрібен учень')
+  if (!itemId) throw new Error('Потрібен предмет')
+
+  let itemMeta = { category: 'unknown', name: '' }
+  await runTransaction(db, async (tx) => {
+    const aRef = doc(db, 'users', adminUid)
+    const sRef = doc(db, 'users', studentUid)
+    const iRef = doc(db, 'items', itemId)
+    const [aSnap, sSnap, iSnap] = await Promise.all([tx.get(aRef), tx.get(sRef), tx.get(iRef)])
+    if (!aSnap.exists()) throw new Error('Адміна не знайдено')
+    if (aSnap.data().role !== 'admin') throw new Error('Тільки для адміністратора')
+    if (!sSnap.exists()) throw new Error('Учня не знайдено')
+    if (!iSnap.exists()) throw new Error('Предмет не знайдено')
+
+    const student = sSnap.data()
+    const item = { id: iSnap.id, ...iSnap.data() }
+    itemMeta = { category: item.category, name: item.name || '' }
+    if (item.active === false) {
+      throw new Error('Цей предмет архівний (active: false)')
+    }
+
+    if (item.category === 'mystery_box') {
+      const counts = { ...(student.mysteryBoxCounts || {}) }
+      counts[itemId] = (counts[itemId] || 0) + amount
+      tx.update(sRef, { mysteryBoxCounts: counts })
+      return
+    }
+
+    /** Stack-friendly path — same logic as {@link grantOneToInventory} but batched. */
+    let inv = [...(student.inventory || [])]
+    let cMap = { ...(student.inventoryCounts || {}) }
+    for (let i = 0; i < amount; i++) {
+      const next = grantOneToInventory(inv, cMap, itemId)
+      inv = next.inventory
+      cMap = next.inventoryCounts
+    }
+    tx.update(sRef, { inventory: inv, inventoryCounts: cMap })
+  })
+
+  await logTransaction({
+    type: 'admin_grant',
+    fromUid: adminUid,
+    toUid: studentUid,
+    amount: 0,
+    itemIds: Array.from({ length: amount }, () => itemId),
+    note: typeof note === 'string' ? note.trim() : '',
+  })
+  return itemMeta
+}
+
 // ─── Purchase item (transactional) ───────────────────────────────────────────
-export async function purchaseItem({ uid, itemId, price }) {
+/**
+ * Purchase a shop item.
+ *
+ * Subject badges ({@code item.coinKind === 'subject_earned'}) are billed against
+ * **coins earned from that specific subject** rather than the generic wallet. The
+ * running ledger is:
+ *   earned  = Σ `award` tx where `subjectName === item.subjectName`
+ *   spent   = user.subjectCoinsSpent[subjectName] ?? 0
+ *   budget  = earned - spent
+ * The global {@code user.coins} wallet is **not** touched for subject-billed items.
+ *
+ * @param {{ uid: string, itemId: string, price: number, subjectEarnedCoins?: number }} args
+ *   {@code subjectEarnedCoins} — pre-computed earned total for the item's subject (lets callers
+ *   avoid re-aggregating in the transaction; see {@link aggregateStudentAwardCoinsBySubject}).
+ */
+export async function purchaseItem({ uid, itemId, price, subjectEarnedCoins }) {
   await runTransaction(db, async tx => {
     const uRef = doc(db, 'users', uid)
     const iRef = doc(db, 'items', itemId)
@@ -787,7 +1001,24 @@ export async function purchaseItem({ uid, itemId, price }) {
     const item = iSnap.data()
 
     if (item.active === false) throw new Error('Item is no longer available')
-    if ((user.coins || 0) < price) throw new Error('Not enough coins')
+
+    /**
+     * Subject-badge payment path: bills against per-subject earned coins, not {@code user.coins}.
+     * The 'subject_earned' kind is set at seed time — see {@link ../firebase/seedData.js `seedSubjectBadges`}.
+     */
+    const isSubjectBilled = item.coinKind === 'subject_earned' && typeof item.subjectName === 'string'
+    if (isSubjectBilled) {
+      const subject = item.subjectName
+      const spentMap = { ...(user.subjectCoinsSpent || {}) }
+      const alreadySpent = Number(spentMap[subject]) || 0
+      const earned = Number.isFinite(Number(subjectEarnedCoins)) ? Math.max(0, Number(subjectEarnedCoins)) : 0
+      const available = Math.max(0, earned - alreadySpent)
+      if (available < price) {
+        throw new Error(`Недостатньо монет з «${subject}». Потрібно ${price}, доступно ${available}.`)
+      }
+    } else if ((user.coins || 0) < price) {
+      throw new Error('Not enough coins')
+    }
 
     // Магічна коробка: стек у mysteryBoxCounts, не в inventory
     if (item.category === 'mystery_box') {
@@ -820,17 +1051,31 @@ export async function purchaseItem({ uid, itemId, price }) {
     const hasStock = item.stock !== null && item.stock !== undefined
     if (hasStock && item.stock <= 0) throw new Error('Sold out')
 
+    /**
+     * Build the coin-deduction patch: normal items touch {@code coins}; subject-badge
+     * purchases bump {@code subjectCoinsSpent[subjectName]} and leave the wallet alone.
+     */
+    let coinPatch
+    if (isSubjectBilled) {
+      const subj = item.subjectName
+      const spentMap = { ...(user.subjectCoinsSpent || {}) }
+      spentMap[subj] = (Number(spentMap[subj]) || 0) + price
+      coinPatch = { subjectCoinsSpent: spentMap }
+    } else {
+      coinPatch = { coins: increment(-price) }
+    }
+
     if (inv.includes(itemId)) {
       counts[itemId] = (counts[itemId] || 1) + 1
       tx.update(uRef, {
-        coins: increment(-price),
+        ...coinPatch,
         inventoryCounts: counts,
         xp: newXp,
         level: lvl,
       })
     } else {
       tx.update(uRef, {
-        coins: increment(-price),
+        ...coinPatch,
         inventory: arrayUnion(itemId),
         inventoryCounts: { ...counts, [itemId]: 1 },
         xp: newXp,
@@ -1117,6 +1362,12 @@ export async function fineStudent({ fromUid, toUid, amount, reason = '' }) {
       : Math.min(amt, remainingCap)
     const deduction = Math.min(requested, coins, remainingCap)
 
+    if (isLump && deduction < requested) {
+      throw new Error(
+        `У учня недостатньо монет для цього разового штрафу (потрібно ${requested} 🪙, на балансі ${coins}). Оберіть меншу суму (10/20) або зніміть решту по −5 у списку класу.`,
+      )
+    }
+
     if (deduction <= 0) {
       throw new Error('Неможливо зняти монети (нульовий баланс або ліміт)')
     }
@@ -1159,6 +1410,8 @@ export async function fineStudent({ fromUid, toUid, amount, reason = '' }) {
     amount: -fineDeduction,
     note: String(fineLogNote || reasonTrim).slice(0, 200),
   })
+
+  return { deducted: fineDeduction }
 }
 
 /** Unequip room/pet/accessory/skin that are no longer owned after a trade. */

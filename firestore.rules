@@ -154,11 +154,15 @@ service cloud.firestore {
               .hasOnly(['coins', 'inventory', 'inventoryCounts', 'xp', 'level', 'avatar', 'tradesCompleted']));
       allow delete: if isAdmin();
 
-      /** Один штраф на учня від цього вчителя за календарний день (док. id = {studentUid}_{yyyy-mm-dd}). */
+      /**
+       * Денний ліміт штрафів учня цим вчителем (id = {studentUid}_{yyyy-mm-dd}).
+       * create — перший запис; update — накопичення totalFined (merge); лише власник підшляху (вчитель).
+       */
       match /finesAppliedToday/{strikeId} {
         allow read: if isOwner(uid) || isAdmin();
         allow create: if isOwner(uid) || isAdmin();
-        allow update, delete: if isAdmin();
+        allow update: if isOwner(uid) || isAdmin();
+        allow delete: if isAdmin();
       }
     }
 

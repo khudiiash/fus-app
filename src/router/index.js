@@ -27,6 +27,7 @@ const router = createRouter({
         { path: 'devtools', name: 'admin-devtools', component: () => import('@/views/admin/DevToolsView.vue') },
         { path: 'rooms',    name: 'admin-rooms',    component: () => import('@/views/admin/RoomTesterView.vue') },
         { path: 'activity', name: 'admin-activity', component: () => import('@/views/admin/AdminActivityView.vue') },
+        { path: 'grant',    name: 'admin-grant',    component: () => import('@/views/admin/AdminGrantItemsView.vue') },
       ],
     },
 
@@ -74,7 +75,19 @@ const router = createRouter({
         { path: 'achievements', name: 'student-achievements', component: () => import('@/views/student/AchievementsView.vue') },
         { path: 'history',     name: 'student-history',      component: () => import('@/views/student/HistoryView.vue') },
         { path: 'quests',      name: 'student-quests',       component: () => import('@/views/student/TeacherQuestsView.vue') },
-        { path: 'world',       name: 'student-world',        component: () => import('@/views/student/BlockWorldView.vue') },
+        {
+          path: 'world',
+          name: 'student-world',
+          component: () => import('@/views/student/LabyJsMinecraftView.vue'),
+        },
+        {
+          path: 'world-next',
+          redirect: { name: 'student-world' },
+        },
+        {
+          path: 'world-laby',
+          redirect: { name: 'student-world' },
+        },
         { path: 'room',        name: 'student-room',         component: () => import('@/views/student/RoomView.vue') },
         { path: 'room/:uid',   name: 'student-room-other',   component: () => import('@/views/student/RoomView.vue') },
       ],

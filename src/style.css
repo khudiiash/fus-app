@@ -79,6 +79,28 @@ html.fus-block-world-play body {
   overscroll-behavior: none;
 }
 
+/* Laby JS Minecraft (WebGL): override global `html { touch-action: manipulation }` so pinch doesn’t zoom the page. */
+html.fus-laby-play {
+  touch-action: none;
+  overscroll-behavior: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+html.fus-laby-play body {
+  touch-action: none;
+  overscroll-behavior: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+html.fus-laby-play canvas {
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
 /* ── Scrollbar ────────────────────────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 3px; }
 ::-webkit-scrollbar-track { background: transparent; }

@@ -168,6 +168,17 @@ const statCards = [
   { key: 'classes',  label: 'Класи',   icon: '🏫', color: 'text-emerald-400', to: '/admin/classes' },
   { key: 'items',    label: 'Товари',  icon: '🛍️', color: 'text-amber-400', to: '/admin/shop' },
 ]
+
+/**
+ * Extra quick-action tiles — separate from {@link statCards} because they don't carry a count.
+ * Keeps the "stats" strip clean while making the grant flow discoverable from the dashboard.
+ */
+const actionCards = [
+  { key: 'grant', label: 'Видати предмет', icon: '🎁', to: '/admin/grant' },
+  { key: 'activity', label: 'Активність', icon: '📋', to: '/admin/activity' },
+  { key: 'devtools', label: 'Інструменти', icon: '🛠️', to: '/admin/devtools' },
+  { key: 'rooms', label: 'Кімнати', icon: '🛏️', to: '/admin/rooms' },
+]
 </script>
 
 <template>
@@ -188,6 +199,19 @@ const statCards = [
         <div class="text-3xl mb-2">{{ s.icon }}</div>
         <div class="text-3xl font-extrabold" :class="s.color">{{ stats[s.key] }}</div>
         <div class="text-sm text-slate-400 font-semibold">{{ s.label }}</div>
+      </AppCard>
+    </div>
+
+    <!-- Quick actions -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <AppCard
+        v-for="a in actionCards"
+        :key="a.key"
+        class="cursor-pointer hover:border-amber-500/50 transition-colors"
+        @click="router.push(a.to)"
+      >
+        <div class="text-3xl mb-2">{{ a.icon }}</div>
+        <div class="text-sm text-slate-200 font-extrabold">{{ a.label }}</div>
       </AppCard>
     </div>
 
