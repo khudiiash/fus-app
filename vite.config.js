@@ -107,7 +107,7 @@ function createLabymcDevModuleQueryPlugin() {
   return {
     name: 'labymc-dev-module-query',
     enforce: 'pre',
-    resolveId(id) {
+    resolveId(id, importer) {
       if (id.includes('?fusdev=')) {
         return id
       }
@@ -122,6 +122,19 @@ function createLabymcDevModuleQueryPlugin() {
           return null
         }
         return `${abs.replace(/\\/g, '/')}?fusdev=${boot}`
+      }
+      // Relative imports FROM inside the engine tree must collapse onto the same `?fusdev=` URL as
+      // `@labymc/...` imports, otherwise we end up with two module instances for e.g. `libraries/long.js`
+      // (one from `@labymc/libraries/long.js`, one from the engine's `../../../libraries/long.js`),
+      // which breaks `instanceof` across the two graphs.
+      if (id.startsWith('.') && importer) {
+        const importerAbs = importer.split('?')[0].replace(/\\/g, '/')
+        if (importerAbs.includes('src/js-minecraft/')) {
+          const abs = resolve(dirname(importerAbs), id)
+          if (existsSync(abs) && isLabymcDevModuleCacheBustPath(abs)) {
+            return `${abs.replace(/\\/g, '/')}?fusdev=${boot}`
+          }
+        }
       }
       const base = id.split('?')[0]
       const norm = base.replace(/\\/g, '/')
