@@ -12,7 +12,14 @@ import { useToast } from '@/composables/useToast'
 import AvatarDisplay from '@/components/avatar/AvatarDisplay.vue'
 import PushOptInBanner from '@/components/notifications/PushOptInBanner.vue'
 import {
-  Home, ShoppingBag, ArrowLeftRight, Trophy, LayoutDashboard, User, Coins, Boxes,
+  Home,
+  ShoppingBag,
+  ArrowLeftRight,
+  Trophy,
+  LayoutDashboard,
+  User,
+  Coins,
+  Gamepad2,
 } from 'lucide-vue-next'
 
 const auth        = useAuthStore()
@@ -32,7 +39,7 @@ const navItems = [
   { to: '/student/shop',        Icon: ShoppingBag,      label: 'Магазин'              },
   { to: '/student/trade',       Icon: ArrowLeftRight,   label: 'Обмін',    badge: true },
   { to: '/student/leaderboard', Icon: Trophy,           label: 'Рейтинг'              },
-  { to: '/student/world',       Icon: Boxes,            label: 'Світ'                 },
+  { to: '/student/world',       Icon: Gamepad2,         label: 'Світ'                 },
   { to: '/student/room',        Icon: LayoutDashboard,  label: 'Кімната'              },
   { to: '/student/profile',     Icon: User,             label: 'Профіль'              },
 ]
@@ -73,7 +80,11 @@ watch(
   { deep: false }   // profile ref is replaced on each snapshot, no deep needed
 )
 
-const isActive = (item) => item.exact ? route.path === item.to : route.path.startsWith(item.to)
+const isActive = (item) => {
+  if (item.exact) return route.path === item.to
+  if (item.to === '/student/world') return route.path === '/student/world'
+  return route.path.startsWith(item.to)
+}
 
 /** Кімната: без pt/px у main — інакше залишаються смуги; flex-1 заповнює область під хедером і над таббаром */
 const isStudentRoom = computed(() => route.path.startsWith('/student/room'))
@@ -97,6 +108,8 @@ watch(
 onMounted(() => {
   userStore.fetchItems()
   userStore.fetchQuests()
+  // Warm the heavy Laby chunk so first open of «Світ Laby» skips one network round-trip.
+  void import('@labymc/src/js/Start.js').catch(() => {})
 })
 
 onUnmounted(() => {

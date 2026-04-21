@@ -1,0 +1,3 @@
+[submodule "third-party/js-minecraft"]
+	path = third-party/js-minecraft
+	url = https://github.com/khudiiash/js-minecraft.git

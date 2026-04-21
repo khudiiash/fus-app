@@ -1,17 +1,16 @@
 <script setup lang="ts">
 /**
- * 2D preview for `category: block_world` shop rows — tool sprite from tools.png or block icon.
+ * 2D preview for `category: block_world` shop rows — tool sprite from tools.png or block emoji.
  */
 import { computed } from 'vue'
-import { parseBlockWorldItem } from '@/game/blockWorldItems'
 import {
   TOOL_SPRITE_COLS,
   TOOL_SPRITE_ROWS,
   TOOLS_SPRITE_SHEET_URL,
+  hotbarCellVisualForBwSlot,
+  parseBlockWorldItem,
   toolSpriteCellFromMeshName,
-} from '@/game/blockWorldToolsRegistry'
-import { BlockType } from '@/game/minebase/terrain'
-import { blockWorldBlockIconUrl } from '@/game/blockWorldBlockIconUrls'
+} from '@/lib/blockWorldShopVisuals'
 
 const props = withDefaults(
   defineProps<{
@@ -47,10 +46,35 @@ const toolStyle = computed(() => {
   }
 })
 
-const blockIconSrc = computed(() => {
+const blockTerrainStyle = computed(() => {
   const m = meta.value
   if (!m || m.kind !== 'block') return null
-  return blockWorldBlockIconUrl(m.blockType as BlockType)
+  const v = hotbarCellVisualForBwSlot({ kind: 'item', itemId: '', meta: m, count: 1 })
+  if (!v || v.type !== 'blockIcon' || !v.sheetSrc) return null
+  const t = (v.textureSlot | 0) & 255
+  const col = t % 16
+  const row = Math.floor(t / 16)
+  const cols = 16
+  const rows = 16
+  const posX = (col / (cols - 1)) * 100
+  const posY = (row / (rows - 1)) * 100
+  const s = Math.max(16, props.size)
+  return {
+    width: `${s}px`,
+    height: `${s}px`,
+    backgroundImage: `url(${String(v.sheetSrc)})`,
+    backgroundSize: `${cols * 100}% ${rows * 100}%`,
+    backgroundPosition: `${posX}% ${posY}%`,
+    backgroundRepeat: 'no-repeat',
+    imageRendering: 'pixelated' as const,
+  }
+})
+
+const blockEmoji = computed(() => {
+  const m = meta.value
+  if (!m || m.kind !== 'block') return null
+  const v = hotbarCellVisualForBwSlot({ kind: 'item', itemId: '', meta: m, count: 1 })
+  return v?.type === 'emoji' ? v.text : null
 })
 </script>
 
@@ -66,15 +90,21 @@ const blockIconSrc = computed(() => {
       role="img"
       :aria-label="item?.name?.toString?.() || 'Інструмент'"
     />
-    <img
-      v-else-if="meta?.kind === 'block' && blockIconSrc"
-      :src="blockIconSrc"
-      :width="Math.round(size * 0.92)"
-      :height="Math.round(size * 0.92)"
-      alt=""
-      class="rounded-lg object-contain image-pixelated ring-1 ring-white/15 shadow-md shadow-black/30"
-      draggable="false"
+    <div
+      v-else-if="meta?.kind === 'block' && blockTerrainStyle"
+      class="rounded-xl ring-1 ring-white/15 shadow-md shadow-black/30 bg-black/35"
+      :style="blockTerrainStyle"
+      role="img"
+      aria-hidden="true"
     />
+    <div
+      v-else-if="meta?.kind === 'block' && blockEmoji"
+      class="rounded-xl bg-slate-800/80 flex items-center justify-center ring-1 ring-white/15 shadow-md shadow-black/30 select-none leading-none"
+      :style="{ fontSize: Math.round(size * 0.55) + 'px', width: size + 'px', height: size + 'px' }"
+      aria-hidden="true"
+    >
+      {{ blockEmoji }}
+    </div>
     <div
       v-else
       class="rounded-xl bg-slate-800/80 text-slate-500 text-[10px] font-bold flex items-center justify-center ring-1 ring-white/10"

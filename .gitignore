@@ -28,5 +28,14 @@ dev-dist
 
 .env
 
+# Firebase Admin SDK key for local one-off scripts (reverse:mob-coins, etc.)
+scripts/firebase-admin.local.json
+
 # Upstream clone used only for refreshing vendored minebase (not committed)
 _upstream_minecraft_threejs
+
+# LabyStudio/js-minecraft — legacy path; engine is `third-party/js-minecraft` (git submodule)
+vendor/js-minecraft/
+
+# Scratch clone when refreshing the fork (not committed)
+.tmp-js-minecraft/
