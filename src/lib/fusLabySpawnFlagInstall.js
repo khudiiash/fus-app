@@ -1,25 +1,28 @@
+import * as THREE from '@labymc/libraries/three.module.js'
 import { ref as dbRef, set as dbSet } from 'firebase/database'
 import { FUS_LABY_FLAG_CHANNEL_MS } from '@labymc/src/js/net/minecraft/client/fus/FusLabyFlagChannel.js'
 
 /**
- * Install `mc.fusPlaceSpawnFlag()` and `mc.fusLabyStartFlagTeleportChannel()` on the running
- * engine instance, plus the `mc.fusSpawnFlagPos` / `mc.fusLabyFlagChannelEndAt` state fields
- * the view reads each 220 ms tick to drive the channel-progress bar.
+ * Spawn-flag + channelled teleport.
  *
- * The previous installer file was lost in the submodule-deinit incident. This replacement keeps
- * the shape the view already expects (see `LabyJsMinecraftView.vue`'s `onLabyInventoryKeydown`
- * + coord-tick watcher) so no view-side rewiring is needed beyond calling this once at boot.
+ * Installs two public methods on the engine instance:
+ *   • {@code mc.fusPlaceSpawnFlag()} — snapshot the player's current integer block position
+ *     to RTDB under `worldSpawnFlags/{worldId}/{uid}` and mirror on `mc.fusSpawnFlagPos`
+ *     (no round-trip required for teleport).
+ *   • {@code mc.fusLabyStartFlagTeleportChannel()` — begin a {@link FUS_LABY_FLAG_CHANNEL_MS}
+ *     channelled teleport. While channelling:
+ *       – The player cannot move or jump: we zero their WASD input and vertical motion
+ *         each frame. Falls through gravity if they were airborne (correct; no levitation).
+ *       – A helix of {@link HELIX_PARTICLES} small blue cubes spins around the player from
+ *         ankle to head. Glow is achieved with additive blending on a base-colour emissive
+ *         material; no postprocess bloom required.
+ *       – The channel cancels on: opening a GUI, taking ≥ 1 damage (compared to initial
+ *         health, so the PvP flash-heal window doesn't false-cancel), or the player dying.
  *
- * Semantics (mirrors what the view calls "прапор" / "телепорт до прапора"):
- *  - `fusPlaceSpawnFlag()`: snapshot player's current integer block pos to
- *    `worldSpawnFlags/{worldId}/{uid}` in RTDB, and mirror locally on `mc.fusSpawnFlagPos` so
- *    subsequent teleports don't need a round-trip.
- *  - `fusLabyStartFlagTeleportChannel()`: arm a `FUS_LABY_FLAG_CHANNEL_MS` channel, expose its
- *    end time on `mc.fusLabyFlagChannelEndAt` (view polls it for the progress bar), then
- *    teleport the player on completion. Interrupted by taking ≥ 1 damage, moving beyond a small
- *    radius, or opening an ingame screen — matches the "channelled ability" UX the buttons imply.
+ *  The view polls {@code mc.fusLabyFlagChannelEndAt} every 220 ms to drive the progress bar
+ *  (see LabyJsMinecraftView.vue); not changed by this rewrite so no UI wiring to touch.
  *
- * @param {any} mc - js-minecraft Minecraft instance
+ * @param {any} mc
  * @param {{ worldId: string, uid: string, rtdb: any }} opts
  */
 export function installFusLabySpawnFlag(mc, { worldId, uid, rtdb }) {
@@ -46,22 +49,91 @@ export function installFusLabySpawnFlag(mc, { worldId, uid, rtdb }) {
     }
   }
 
+  /** @type {THREE.Group | null} */
+  let helixGroup = null
+  /** @type {{ mesh: THREE.Mesh, phase: number, heightFactor: number }[]} */
+  let helixNodes = []
   /** Channel-cancel sentinels so the countdown tick can bail out safely. */
-  let channelStartPos = null
-  let channelInitialHealth = 0
+  let channelStartHealth = 0
   let channelRafId = 0
+  let channelEndAt = 0
+
+  const HELIX_PARTICLES = 18
+  /** Two full rotations around the player during the 15 s channel = deliberate, not frantic. */
+  const HELIX_REVOLUTIONS = 2
+
+  const buildHelix = () => {
+    const scene = mc.worldRenderer?.scene
+    if (!scene) return
+    helixGroup = new THREE.Group()
+    helixNodes = []
+    const geom = new THREE.BoxGeometry(0.12, 0.12, 0.12)
+    /** Additive blending + saturated blue → lo-fi "mana glow" look that reads well in both
+     *  day and night worlds. No `emissive` because MeshBasicMaterial ignores it. */
+    const mat = new THREE.MeshBasicMaterial({
+      color: 0x3aaaff,
+      transparent: true,
+      opacity: 0.85,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    })
+    for (let i = 0; i < HELIX_PARTICLES; i++) {
+      const mesh = new THREE.Mesh(geom, mat)
+      const heightFactor = i / (HELIX_PARTICLES - 1)
+      const phase = (i / HELIX_PARTICLES) * Math.PI * 2
+      helixNodes.push({ mesh, phase, heightFactor })
+      helixGroup.add(mesh)
+    }
+    scene.add(helixGroup)
+  }
+
+  const clearHelix = () => {
+    if (!helixGroup) return
+    const scene = mc.worldRenderer?.scene
+    scene?.remove(helixGroup)
+    for (const { mesh } of helixNodes) {
+      try {
+        mesh.geometry.dispose()
+      } catch {
+        /* shared geometry; ignore double-dispose */
+      }
+    }
+    /** Dispose the shared material once, using the first node as the anchor. */
+    if (helixNodes[0]) {
+      try {
+        helixNodes[0].mesh.material.dispose()
+      } catch {
+        /* ignore */
+      }
+    }
+    helixGroup = null
+    helixNodes = []
+  }
+
+  const updateHelix = (pl, channelT) => {
+    if (!helixGroup) return
+    /** `channelT` ∈ [0,1] — progress. Radius pulses out with progress so the cast feels like
+     *  it's winding up: starts close, expands to ~1.2 blocks at completion. */
+    const radius = 0.75 + 0.45 * channelT
+    const baseAngle = channelT * Math.PI * 2 * HELIX_REVOLUTIONS
+    helixGroup.position.set(pl.x, pl.y, pl.z)
+    for (const node of helixNodes) {
+      const angle = baseAngle + node.phase
+      const y = node.heightFactor * 1.8 /** foot → crown height */
+      node.mesh.position.set(Math.cos(angle) * radius, y, Math.sin(angle) * radius)
+    }
+  }
 
   const cancelChannel = () => {
     if (channelRafId) {
       cancelAnimationFrame(channelRafId)
       channelRafId = 0
     }
-    channelStartPos = null
+    channelEndAt = 0
     mc.fusLabyFlagChannelEndAt = 0
+    mc.fusLabyChannelLockMove = false
+    clearHelix()
   }
-
-  /** Distance (blocks) the player may drift before the channel auto-cancels. Matches typical MMO channelled-TP feel. */
-  const CANCEL_MOVE_RADIUS = 1.5
 
   mc.fusLabyStartFlagTeleportChannel = function startFusLabyFlagTeleport() {
     const pos = mc.fusSpawnFlagPos
@@ -69,17 +141,18 @@ export function installFusLabySpawnFlag(mc, { worldId, uid, rtdb }) {
     const pl = mc.player
     if (!pl) return
     /** Already channelling — ignore re-trigger. */
-    if (mc.fusLabyFlagChannelEndAt && Date.now() < mc.fusLabyFlagChannelEndAt) return
+    if (channelEndAt && Date.now() < channelEndAt) return
 
-    channelStartPos = { x: pl.x, y: pl.y, z: pl.z }
-    channelInitialHealth = typeof pl.health === 'number' ? pl.health : 0
-    const endAt = Date.now() + FUS_LABY_FLAG_CHANNEL_MS
-    mc.fusLabyFlagChannelEndAt = endAt
+    channelStartHealth = typeof pl.health === 'number' ? pl.health : 0
+    channelEndAt = Date.now() + FUS_LABY_FLAG_CHANNEL_MS
+    mc.fusLabyFlagChannelEndAt = channelEndAt
+    mc.fusLabyChannelLockMove = true
+    buildHelix()
 
     const tick = () => {
       channelRafId = 0
-      const curEndAt = mc.fusLabyFlagChannelEndAt
-      if (!curEndAt || curEndAt !== endAt) return
+      const curEndAt = channelEndAt
+      if (!curEndAt) return
       const now = Date.now()
       const curPl = mc.player
       if (!curPl) {
@@ -90,22 +163,30 @@ export function installFusLabySpawnFlag(mc, { worldId, uid, rtdb }) {
         cancelChannel()
         return
       }
-      if (typeof curPl.health === 'number' && curPl.health + 0.001 < channelInitialHealth) {
+      if (typeof curPl.health === 'number' && (curPl.health <= 0 || curPl.health + 0.001 < channelStartHealth)) {
         cancelChannel()
         return
       }
-      if (channelStartPos) {
-        const dx = curPl.x - channelStartPos.x
-        const dy = curPl.y - channelStartPos.y
-        const dz = curPl.z - channelStartPos.z
-        if (Math.hypot(dx, dy, dz) > CANCEL_MOVE_RADIUS) {
-          cancelChannel()
-          return
-        }
-      }
+
+      /**
+       * Hard-freeze horizontal input each frame. We zero the engine's input fields rather
+       * than yanking the keyboard state so desktop users can still mash WASD — it simply
+       * does nothing. Saves a re-sync dance when the channel ends.
+       */
+      curPl.moveForward = 0
+      curPl.moveStrafing = 0
+      curPl.jumping = false
+      if (typeof curPl.motionX === 'number') curPl.motionX *= 0.5
+      if (typeof curPl.motionZ === 'number') curPl.motionZ *= 0.5
+
+      const t = 1 - (curEndAt - now) / FUS_LABY_FLAG_CHANNEL_MS
+      updateHelix(curPl, Math.max(0, Math.min(1, t)))
+
       if (now >= curEndAt) {
+        channelEndAt = 0
         mc.fusLabyFlagChannelEndAt = 0
-        channelStartPos = null
+        mc.fusLabyChannelLockMove = false
+        clearHelix()
         try {
           curPl.setPosition?.(pos.x + 0.5, pos.y + 0.2, pos.z + 0.5)
           if (typeof curPl.motionX === 'number') curPl.motionX = 0
@@ -120,4 +201,7 @@ export function installFusLabySpawnFlag(mc, { worldId, uid, rtdb }) {
     }
     channelRafId = requestAnimationFrame(tick)
   }
+
+  /** Disposer — safe to call on view unmount even when no channel is active. */
+  mc.fusDisposeLabySpawnFlag = cancelChannel
 }

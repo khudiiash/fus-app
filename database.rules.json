@@ -35,6 +35,15 @@
         }
       }
     },
+    "worldPlayerPvp": {
+      "$worldId": {
+        ".read": "auth != null",
+        "$uid": {
+          ".write": "auth != null && auth.uid == $uid",
+          ".validate": "newData.hasChildren(['mode','karma','purpleExpiresAt','lastUpdateAt']) && newData.child('mode').isString() && (newData.child('mode').val() == 'white' || newData.child('mode').val() == 'purple' || newData.child('mode').val() == 'red') && newData.child('karma').isNumber() && newData.child('karma').val() >= 0 && newData.child('karma').val() <= 50 && newData.child('purpleExpiresAt').isNumber() && newData.child('lastUpdateAt').isNumber()"
+        }
+      }
+    },
     "worldLootDrops": {
       "$worldId": {
         ".read": "auth != null",

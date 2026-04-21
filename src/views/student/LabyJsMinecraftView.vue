@@ -37,6 +37,11 @@ import { FUS_LABY_FLAG_CHANNEL_MS } from '@labymc/src/js/net/minecraft/client/fu
 import { installFusLabySpawnFlag } from '@/lib/fusLabySpawnFlagInstall'
 import { installFusSkinLoader } from '@/lib/fusSkinLoaderInstall'
 import { installFusSimpleMobs } from '@/lib/fusSimpleMobsInstall'
+import { installFusAutoJump } from '@/lib/fusAutoJumpInstall'
+import { installFusBlockHardness } from '@/lib/fusBlockHardnessInstall'
+import { installFusDamageFlash } from '@/lib/fusDamageFlashInstall'
+import { installFusPvpKarma } from '@/lib/fusPvpKarmaInstall'
+import { installFusWorldEditsRtdb } from '@/lib/fusWorldEditsRtdbInstall'
 
 const router = useRouter()
 const auth = useAuthStore()
@@ -469,6 +474,10 @@ onMounted(async () => {
     installFusLabyFpToolHooks(mc)
     installFusLabySpawnFlag(mc, { worldId: FUS_SHARED_WORLD_LABY_ID, uid, rtdb })
     installFusSkinLoader(mc)
+    installFusAutoJump(mc)
+    installFusBlockHardness(mc)
+    installFusDamageFlash(mc)
+    installFusPvpKarma(mc, { worldId: FUS_SHARED_WORLD_LABY_ID, uid, rtdb })
 
     const ua = typeof navigator !== 'undefined' ? navigator.userAgent : ''
     const isIosSafari =
@@ -551,6 +560,13 @@ onMounted(async () => {
     /** First ~10s: defer distant RTDB cell applies on embed (nearest-first still streams; see FusRtdbBlocks). */
     if (typeof performance !== 'undefined') {
       mc._fusTerrainBootUntil = performance.now() + 10000
+    }
+
+    /** Mount world-edits streaming now that `mc.world` exists. Install order is important:
+     *  chunks primed before this call still apply because the cell `get(...)` prime runs on
+     *  every subscribed cell the first time it enters the window. */
+    if (rtdb) {
+      installFusWorldEditsRtdb(mc, { worldId: FUS_SHARED_WORLD_LABY_ID, uid, rtdb })
     }
 
     syncHotbarToEngine()
@@ -679,6 +695,36 @@ onBeforeUnmount(() => {
     mc.fusDisposeSimpleMobs?.()
   } catch (e) {
     console.warn('[LabyJsMinecraftView] dispose mobs', e)
+  }
+  try {
+    mc.fusDisposeAutoJump?.()
+  } catch (e) {
+    console.warn('[LabyJsMinecraftView] dispose auto-jump', e)
+  }
+  try {
+    mc.fusDisposeBlockHardness?.()
+  } catch (e) {
+    console.warn('[LabyJsMinecraftView] dispose block hardness', e)
+  }
+  try {
+    mc.fusDisposeDamageFlash?.()
+  } catch (e) {
+    console.warn('[LabyJsMinecraftView] dispose damage flash', e)
+  }
+  try {
+    mc.fusDisposeLabySpawnFlag?.()
+  } catch (e) {
+    console.warn('[LabyJsMinecraftView] dispose spawn flag', e)
+  }
+  try {
+    mc.fusDisposePvpKarma?.()
+  } catch (e) {
+    console.warn('[LabyJsMinecraftView] dispose pvp karma', e)
+  }
+  try {
+    mc.fusDisposeWorldEditsRtdb?.()
+  } catch (e) {
+    console.warn('[LabyJsMinecraftView] dispose world edits rtdb', e)
   }
   try {
     mc.loadWorld(null)
