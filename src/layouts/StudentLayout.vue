@@ -19,8 +19,6 @@ import {
   LayoutDashboard,
   User,
   Coins,
-  Boxes,
-  Sparkles,
   Gamepad2,
 } from 'lucide-vue-next'
 
@@ -41,9 +39,7 @@ const navItems = [
   { to: '/student/shop',        Icon: ShoppingBag,      label: 'Магазин'              },
   { to: '/student/trade',       Icon: ArrowLeftRight,   label: 'Обмін',    badge: true },
   { to: '/student/leaderboard', Icon: Trophy,           label: 'Рейтинг'              },
-  { to: '/student/world',       Icon: Boxes,            label: 'Світ'                 },
-  { to: '/student/world-next',  Icon: Sparkles,         label: 'Світ β'               },
-  { to: '/student/world-laby',  Icon: Gamepad2,         label: 'Світ Laby'            },
+  { to: '/student/world',       Icon: Gamepad2,         label: 'Світ'                 },
   { to: '/student/room',        Icon: LayoutDashboard,  label: 'Кімната'              },
   { to: '/student/profile',     Icon: User,             label: 'Профіль'              },
 ]
@@ -87,7 +83,6 @@ watch(
 const isActive = (item) => {
   if (item.exact) return route.path === item.to
   if (item.to === '/student/world') return route.path === '/student/world'
-  if (item.to === '/student/world-laby') return route.path === '/student/world-laby'
   return route.path.startsWith(item.to)
 }
 

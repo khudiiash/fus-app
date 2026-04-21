@@ -11,7 +11,7 @@ import AppButton from '@/components/ui/AppButton.vue'
 import AppModal from '@/components/ui/AppModal.vue'
 import AppInput from '@/components/ui/AppInput.vue'
 import { useToast } from '@/composables/useToast'
-import { Archive, RotateCcw, Package, Layers, Infinity, Trash2, Pencil, Search, X, ShoppingBag, Download, Blocks } from 'lucide-vue-next'
+import { Archive, RotateCcw, Package, Layers, Infinity, Trash2, Pencil, Search, X, ShoppingBag, Download, Blocks, Gift } from 'lucide-vue-next'
 import SubjectBadgeArt from '@/components/shop/SubjectBadgeArt.vue'
 import BlockWorldShopThumb from '@/components/shop/BlockWorldShopThumb.vue'
 import GlbThumbnail from '@/components/character/GlbThumbnail.vue'
@@ -19,6 +19,7 @@ import {
   seedSkinsFromFiles,
   seedGlbShopItemsFromFiles,
   seedBlockWorldShopItems,
+  seedMysteryBoxes,
 } from '@/firebase/seedData'
 import { uploadShopGlb, uploadSkinTextureFile } from '@/firebase/shopAssetStorage'
 import { syncShopStorageClaim } from '@/firebase/syncShopStorageClaim'
@@ -52,6 +53,7 @@ const seedingRoomGlbs   = ref(false)
 const seedingAccGlbs    = ref(false)
 const seedingPetGlbs    = ref(false)
 const seedingBlockWorld = ref(false)
+const seedingMysteryBoxes = ref(false)
 const showPurgeModal    = ref(false)
 const purgeConfirmText  = ref('')
 const purgingAll        = ref(false)
@@ -346,6 +348,26 @@ async function onPetGlbFilesChange(e) {
   }
 }
 
+/**
+ * Upserts the 4 mystery-box items (common/rare/epic/legendary) via {@link seedMysteryBoxes}.
+ * Idempotent — matching rows are updated by `mbSeedKey`, missing rows are added.
+ * Safe to click repeatedly: no duplicate boxes will appear in the catalog.
+ */
+async function onSeedMysteryBoxes() {
+  seedingMysteryBoxes.value = true
+  try {
+    const { added, updated, total } = await seedMysteryBoxes()
+    success(
+      `Магічні коробки: додано ${added}, оновлено ${updated} (усього ${total} позицій).`,
+    )
+    await fetchItems()
+  } catch (err) {
+    error(shopFirebaseErrorMessage(err))
+  } finally {
+    seedingMysteryBoxes.value = false
+  }
+}
+
 /** Синхронізує каталог `block_world` з шаблоном (додає нові за bwSeedKey, оновлює наявні). */
 async function onSeedBlockWorldCatalog() {
   seedingBlockWorld.value = true
@@ -514,6 +536,17 @@ function onModelFileSelect(e) {
         >
           <Blocks :size="14" :stroke-width="2" />
           Блоки + інструменти → Firestore
+        </AppButton>
+        <AppButton
+          variant="secondary"
+          size="sm"
+          :loading="seedingMysteryBoxes"
+          :disabled="seedingMysteryBoxes"
+          class="inline-flex items-center gap-1.5"
+          @click="onSeedMysteryBoxes"
+        >
+          <Gift :size="14" :stroke-width="2" />
+          Магічні коробки → Firestore
         </AppButton>
         <AppButton variant="danger" size="sm" :disabled="items.length === 0" @click="openPurgeModal">
           <Trash2 :size="14" :stroke-width="2" />

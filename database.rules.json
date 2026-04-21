@@ -31,7 +31,15 @@
         ".read": "auth != null",
         "$uid": {
           ".write": "auth != null && auth.uid == $uid",
-          ".validate": "newData.hasChildren(['x','y','z','ry']) && newData.child('x').isNumber() && newData.child('y').isNumber() && newData.child('z').isNumber() && newData.child('ry').isNumber()"
+          ".validate": "newData.hasChildren(['x','y','z','ry']) && newData.child('x').isNumber() && newData.child('y').isNumber() && newData.child('z').isNumber() && newData.child('ry').isNumber() && (!newData.hasChild('displayName') || (newData.child('displayName').isString() && newData.child('displayName').val().length <= 48))"
+        }
+      }
+    },
+    "worldLootDrops": {
+      "$worldId": {
+        ".read": "auth != null",
+        "$dropId": {
+          ".write": "auth != null"
         }
       }
     },
@@ -40,6 +48,30 @@
         ".read": "auth != null",
         "$pushId": {
           ".write": "auth != null && ((!data.exists() && newData.child('fromUid').val() == auth.uid && newData.child('toUid').isString() && newData.child('dmg').isNumber() && newData.child('dmg').val() > 0 && newData.child('dmg').val() <= 20 && newData.child('ts').isNumber()) || (data.exists() && !newData.exists() && (data.child('toUid').val() == auth.uid || data.child('fromUid').val() == auth.uid)))"
+        }
+      }
+    },
+    "worldCombatHits": {
+      "$worldId": {
+        ".read": "auth != null",
+        "$pushId": {
+          ".write": "auth != null && !data.exists() && newData.child('fromUid').val() == auth.uid && newData.child('toUid').isString() && newData.child('dmgHalf').isNumber() && newData.child('dmgHalf').val() > 0 && newData.child('dmgHalf').val() <= 40 && newData.child('fromName').isString() && newData.child('clientTs').isNumber()"
+        }
+      }
+    },
+    "worldCombatDeaths": {
+      "$worldId": {
+        ".read": "auth != null",
+        "$pushId": {
+          ".write": "auth != null && !data.exists() && newData.child('victimUid').val() == auth.uid && newData.child('killerUid').isString() && newData.child('clientTs').isNumber() && newData.child('victimInnocent').isBoolean() && newData.child('victimPk').isBoolean() && newData.child('bothPvp').isBoolean() && newData.child('victimPkills').isNumber() && newData.child('victimPkills').val() >= 0 && newData.child('victimPkills').val() <= 100000 && newData.child('victimKarma').isNumber() && newData.child('victimKarma').val() >= 0 && newData.child('victimKarma').val() <= 100000"
+        }
+      }
+    },
+    "worldPkLootDrops": {
+      "$worldId": {
+        ".read": "auth != null",
+        "$pushId": {
+          ".write": "auth != null && ((!data.exists() && newData.child('x').isNumber() && newData.child('y').isNumber() && newData.child('z').isNumber() && newData.child('coins').isNumber() && newData.child('coins').val() > 0 && newData.child('coins').val() <= 500 && newData.child('victimUid').val() == auth.uid && newData.child('clientTs').isNumber()) || (data.exists() && !newData.exists()))"
         }
       }
     },
@@ -63,11 +95,33 @@
         ".write": "auth != null"
       }
     },
+    "worldMobs": {
+      "$worldId": {
+        ".read": "auth != null",
+        ".write": "auth != null",
+        "instances": {
+          ".read": "auth != null",
+          ".write": "auth != null",
+          "$mobKey": {
+            ".read": "auth != null",
+            ".write": "auth != null"
+          }
+        }
+      }
+    },
+    "worldMobPlayerHits": {
+      "$worldId": {
+        ".read": "auth != null",
+        "$pushId": {
+          ".write": "auth != null && ((!data.exists() && newData.child('mobKey').isString() && newData.child('mobKey').val() != '' && newData.child('fromUid').val() == auth.uid && newData.child('dmgHalf').isNumber() && newData.child('dmgHalf').val() > 0 && newData.child('dmgHalf').val() <= 120 && newData.child('clientTs').isNumber()) || (data.exists() && !newData.exists()))"
+        }
+      }
+    },
     "worldMobHits": {
       "$worldId": {
         ".read": "auth != null",
         "$pushId": {
-          ".write": "auth != null && ((!data.exists() && newData.child('fromMobId').isString() && newData.child('toUid').isString() && newData.child('dmg').isNumber() && newData.child('dmg').val() > 0 && newData.child('dmg').val() <= 20 && newData.child('ts').isNumber()) || (data.exists() && !newData.exists() && data.child('toUid').val() == auth.uid))"
+          ".write": "auth != null && ((!data.exists() && newData.child('fromMobId').isString() && newData.child('toUid').isString() && newData.child('dmg').isNumber() && newData.child('dmg').val() > 0 && newData.child('dmg').val() <= 20 && newData.child('ts').isNumber()) || (data.exists() && !newData.exists() && data.child('toUid').val() == auth.uid) || (!data.exists() && newData.child('mobKey').isString() && newData.child('toUid').isString() && newData.child('dmgHalf').isNumber() && newData.child('dmgHalf').val() > 0 && newData.child('dmgHalf').val() <= 40 && newData.child('clientTs').isNumber() && newData.child('mx').isNumber() && newData.child('my').isNumber() && newData.child('mz').isNumber()))"
         }
       }
     },

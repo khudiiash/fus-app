@@ -8,17 +8,20 @@
     "dev": "vite",
     "dev:https": "cross-env DEV_HTTPS=1 vite",
     "preview:https": "cross-env DEV_HTTPS=1 vite preview",
-    "build": "node scripts/assert-fus-laby-engine.cjs && vite build",
+    "build": "vite build",
     "start": "node scripts/serve-dist.mjs",
     "preview": "vite preview",
     "generate-icons": "node scripts/generate-icons.js",
     "firebase:deploy": "firebase deploy",
     "set-storage-claim": "node scripts/set-storage-admin-claim.mjs",
     "functions:install": "npm install --prefix functions",
-    "storage:cors": "node scripts/apply-storage-cors.mjs"
+    "storage:cors": "node scripts/apply-storage-cors.mjs",
+    "reverse:mob-coins": "node scripts/reverse-block-world-mob-coins.mjs",
+    "reverse:mob-coins:dry": "node scripts/reverse-block-world-mob-coins.mjs --dry-run"
   },
   "dependencies": {
     "@vueuse/core": "^14.2.1",
+    "dat.gui": "^0.7.9",
     "firebase": "^12.11.0",
     "gsap": "^3.14.2",
     "lucide-vue-next": "^1.0.0",
