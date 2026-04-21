@@ -23,6 +23,7 @@ import {
 import { createLabyWorldAndLoad } from '@/lib/labyEmbedWorld'
 import { resolveFusLabyHotbar } from '@/lib/fusLabyHotbarLayout'
 import BlockWorldLabyInventoryModal from '@/components/blockWorld/BlockWorldLabyInventoryModal.vue'
+import LabyMobileControls from '@/components/laby/LabyMobileControls.vue'
 import { installFusLabyFpToolHooks } from '@labymc/src/js/net/minecraft/client/fus/FusLabyFpToolHeld.js'
 import { normalizeSkinUrlForPresence } from '@/utils/presenceSkinUrl'
 import GameProfile from '@labymc/src/js/net/minecraft/util/GameProfile.js'
@@ -755,6 +756,8 @@ onBeforeUnmount(() => {
     </div>
 
     <div ref="statsHostRef" class="laby-stats" aria-hidden="true" />
+
+    <LabyMobileControls v-if="gameMc && !booting && !error" :mc="gameMc" />
 
     <BlockWorldLabyInventoryModal
       v-model="showHotbarInventory"
