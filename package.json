@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "postinstall": "node scripts/apply-patches.cjs",
+    "prebuild": "node scripts/ensure-submodules.cjs",
     "dev": "vite",
     "dev:https": "cross-env DEV_HTTPS=1 vite",
     "preview:https": "cross-env DEV_HTTPS=1 vite preview",
