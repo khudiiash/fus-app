@@ -51,11 +51,11 @@ const blockTerrainStyle = computed(() => {
   if (!m || m.kind !== 'block') return null
   const v = hotbarCellVisualForBwSlot({ kind: 'item', itemId: '', meta: m, count: 1 })
   if (!v || v.type !== 'blockIcon' || !v.sheetSrc) return null
-  const t = (v.textureSlot | 0) & 255
-  const col = t % 16
-  const row = Math.floor(t / 16)
-  const cols = 16
-  const rows = 16
+  const cols = v.cols <= 0 ? 32 : v.cols
+  const rows = v.rows <= 0 ? 16 : v.rows
+  const t = (v.textureSlot | 0) >>> 0
+  const col = t % cols
+  const row = Math.floor(t / cols)
   const posX = (col / (cols - 1)) * 100
   const posY = (row / (rows - 1)) * 100
   const s = Math.max(16, props.size)

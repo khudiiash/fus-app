@@ -19,12 +19,16 @@ class Start {
         return textures.reduce((currentPromise, texturePath) => {
             return currentPromise.then(() => {
                 return new Promise((resolve, reject) => {
-                    // Load texture
-                    let image = new Image();
-                    image.src = base + 'src/resources/' + texturePath;
-                    image.onload = () => resolve();
-                    resources[texturePath] = image;
-
+                    const image = new Image();
+                    const src = base + 'src/resources/' + texturePath;
+                    image.onload = () => {
+                        resources[texturePath] = image;
+                        resolve();
+                    };
+                    image.onerror = () => {
+                        reject(new Error(`[Laby] Texture failed to load: ${src}`));
+                    };
+                    image.src = src;
                     index++;
                 });
             });
@@ -44,13 +48,6 @@ class Start {
             "terrain/sun.png",
             "terrain/moon.png",
             "char.png",
-            "gui/title/minecraft.png",
-            "gui/title/background/panorama_0.png",
-            "gui/title/background/panorama_1.png",
-            "gui/title/background/panorama_2.png",
-            "gui/title/background/panorama_3.png",
-            "gui/title/background/panorama_4.png",
-            "gui/title/background/panorama_5.png",
             "gui/container/creative.png"
         ]).then((resources) => {
             // Launch actual game on canvas (host may keep reference on window.app for dispose)

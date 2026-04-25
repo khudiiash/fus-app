@@ -63,8 +63,9 @@
     "worldCombatHits": {
       "$worldId": {
         ".read": "auth != null",
+        ".indexOn": ["toUid"],
         "$pushId": {
-          ".write": "auth != null && !data.exists() && newData.child('fromUid').val() == auth.uid && newData.child('toUid').isString() && newData.child('dmgHalf').isNumber() && newData.child('dmgHalf').val() > 0 && newData.child('dmgHalf').val() <= 40 && newData.child('fromName').isString() && newData.child('clientTs').isNumber()"
+          ".write": "auth != null && ((!data.exists() && newData.child('fromUid').val() == auth.uid && newData.child('toUid').isString() && newData.child('dmgHalf').isNumber() && newData.child('dmgHalf').val() > 0 && newData.child('dmgHalf').val() <= 40 && newData.child('fromName').isString() && newData.child('clientTs').isNumber()) || (data.exists() && !newData.exists() && (data.child('toUid').val() == auth.uid || data.child('fromUid').val() == auth.uid)))"
         }
       }
     },

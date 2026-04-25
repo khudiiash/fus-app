@@ -3,7 +3,6 @@ import {
     onChildAdded,
     onChildChanged,
     onChildRemoved,
-    onValue,
     push,
     ref,
     remove,
@@ -12,6 +11,7 @@ import {
     serverTimestamp,
 } from "firebase/database";
 import { auth, rtdb } from "@/firebase/config";
+import { fusLabyIsWithinPlayerInterestXz } from "@/lib/fusLabyEntityTerrainWindow.js";
 import FusMobEntity from "./FusMobEntity.js";
 import {
     FUS_MOB_TYPES,
@@ -243,7 +243,13 @@ export default class FusMobSync {
         /** @type {import("firebase/database").Unsubscribe | null} */
         this._unsubMobRm = null;
         /** @type {import("firebase/database").Unsubscribe | null} */
-        this._unsubPresence = null;
+        this._unsubPresAdd = null;
+        /** @type {import("firebase/database").Unsubscribe | null} */
+        this._unsubPresChg = null;
+        /** @type {import("firebase/database").Unsubscribe | null} */
+        this._unsubPresRm = null;
+        /** rAF: coalesce many presence rows updating in the same event-loop tick. */
+        this._presenceRecomputeRaf = null;
         /** @type {import("firebase/database").Unsubscribe | null} */
         this._unsubHits = null;
         /** @type {ReturnType<typeof setTimeout> | null} */
@@ -300,11 +306,41 @@ export default class FusMobSync {
         this._lastFullSyncMs = 0;
 
         const presRef = ref(rtdb, `${PRESENCE_ROOT}/${this.worldId}`);
-        this._recomputeLeader(null);
-        this._unsubPresence = onValue(presRef, (snap) => {
-            const val = snap.exists() ? snap.val() : null;
-            this._presenceVal = val;
-            this._recomputeLeader(val);
+        /**
+         * `onValue` on the whole `worldPresence/{id}` re-downloads + JSON-decodes every child on
+         * every single peer write (10+ Hz each). The SDK runs that work inside `onmessage` and
+         * can pin the main thread to ~1 fps with many online players. Use per-child listeners +
+         * rAF the same as mob instances.
+         */
+        this._presenceVal = Object.create(null);
+        this._recomputeLeader(this._presenceVal);
+        this._unsubPresAdd = onChildAdded(presRef, (snap) => {
+            const k = snap.key;
+            if (!k) {
+                return;
+            }
+            this._presenceVal[k] = snap.val();
+            this._queuePresenceRecompute();
+        });
+        this._unsubPresChg = onChildChanged(presRef, (snap) => {
+            const k = snap.key;
+            if (!k) {
+                return;
+            }
+            this._presenceVal[k] = snap.val();
+            this._queuePresenceRecompute();
+        });
+        this._unsubPresRm = onChildRemoved(presRef, (snap) => {
+            const k = snap.key;
+            if (!k) {
+                return;
+            }
+            try {
+                delete this._presenceVal[k];
+            } catch {
+                /* ignore */
+            }
+            this._queuePresenceRecompute();
         });
 
         /**
@@ -322,7 +358,9 @@ export default class FusMobSync {
             }
             this._instances[k] = v;
             this._lastRowChangeMs.set(k, Date.now());
-            this._requestEntitySync();
+            if (this._fusMobRtdbChangeNeedsEntitySync(k, v)) {
+                this._requestEntitySync();
+            }
         });
         this._unsubMobChg = onChildChanged(instRef, (snap) => {
             const k = snap.key;
@@ -332,7 +370,9 @@ export default class FusMobSync {
             }
             this._instances[k] = v;
             this._lastRowChangeMs.set(k, Date.now());
-            this._requestEntitySync();
+            if (this._fusMobRtdbChangeNeedsEntitySync(k, v)) {
+                this._requestEntitySync();
+            }
         });
         this._unsubMobRm = onChildRemoved(instRef, (snap) => {
             const k = snap.key;
@@ -403,6 +443,47 @@ export default class FusMobSync {
             }
             this._scheduleNextAi();
         }, ms);
+    }
+
+    /** Coalesce leader recompute when many presence rows update in one frame. */
+    _queuePresenceRecompute() {
+        if (this._presenceRecomputeRaf != null) {
+            return;
+        }
+        if (typeof window === "undefined" || typeof window.requestAnimationFrame !== "function") {
+            this._recomputeLeader(this._presenceVal);
+            return;
+        }
+        this._presenceRecomputeRaf = window.requestAnimationFrame(() => {
+            this._presenceRecomputeRaf = null;
+            this._recomputeLeader(this._presenceVal);
+        });
+    }
+
+    /**
+     * Mob instance rows are still merged into {@link _instances} for every key so data exists when
+     * the local player walks into range, but we only schedule a full entity sync when the world
+     * client must react: leader, existing entity, or row near the local player.
+     * @param {string} mobKey
+     * @param {any} row
+     */
+    _fusMobRtdbChangeNeedsEntitySync(mobKey, row) {
+        if (this._isEffectiveLeader()) {
+            return true;
+        }
+        if (this._ents.has(mobKey)) {
+            return true;
+        }
+        const pl = this.minecraft.player;
+        if (!pl) {
+            return true;
+        }
+        const x = Number(row?.x);
+        const z = Number(row?.z);
+        if (!Number.isFinite(x) || !Number.isFinite(z)) {
+            return true;
+        }
+        return fusLabyIsWithinPlayerInterestXz(this.minecraft, x, z);
     }
 
     /** Coalesce entity LOD sync to at most once per ~80ms even if many rows change simultaneously. */
@@ -566,21 +647,32 @@ export default class FusMobSync {
         let levelMin;
         let levelMax;
         if (distFromHub < 40) {
-            pool = ["spider_mob", "scarad_mob"];
+            pool = ["spider_mob", "scarad_mob", "creeper_mob"];
             levelMin = 1;
             levelMax = 4;
         } else if (distFromHub < 90) {
-            pool = ["fenmaw_mob", "golem_mob", "wild_bore_mob"];
+            pool = ["fenmaw_mob", "golem_mob", "wild_bore_mob", "creeper_mob"];
             levelMin = 3;
-            levelMax = 8;
-        } else if (distFromHub < 160) {
-            pool = ["fenmaw_mob", "golem_mob", "stone_golem_mob", "wild_bore_mob", "mutant_iron_golem_mob"];
+            levelMax = 10;
+        } else if (distFromHub < 180) {
+            pool = ["fenmaw_mob", "golem_mob", "stone_golem_mob", "wild_bore_mob", "mutant_iron_golem_mob", "creeper_mob"];
             levelMin = 6;
-            levelMax = 12;
-        } else {
-            pool = ["stone_golem_mob", "mutant_iron_golem_mob", "gigant_warden_mob"];
-            levelMin = 10;
             levelMax = 16;
+        } else if (distFromHub < 360) {
+            pool = [
+                "stone_golem_mob",
+                "mutant_iron_golem_mob",
+                "gigant_warden_mob",
+                "creeper_mob",
+                "golem_mob",
+                "fenmaw_mob",
+            ];
+            levelMin = 12;
+            levelMax = 24;
+        } else {
+            pool = ["stone_golem_mob", "mutant_iron_golem_mob", "gigant_warden_mob", "creeper_mob", "golem_mob"];
+            levelMin = 20;
+            levelMax = 30;
         }
         /** Guard: at least one member of the pool must exist in the registry. */
         const valid = pool.filter((id) => FUS_MOB_TYPES.some((t) => t.id === id));
@@ -910,16 +1002,16 @@ export default class FusMobSync {
         const vd =
             wr && typeof wr.getEffectiveViewDistanceChunks === "function"
                 ? wr.getEffectiveViewDistanceChunks()
-                : Math.max(2, Math.min(12, Number(this.minecraft.settings?.viewDistance) || 3));
+                : Math.max(2, Math.min(10, Number(this.minecraft.settings?.viewDistance) || 5));
         const vdBlocks = vd * 16;
         /**
-         * Strained mobile tier: cap activation radius to the visible terrain; a mob sitting 40
-         * blocks past the fog wall still consumes a mixer + nametag canvas + skinned mesh. That
-         * was the main Android burn: 20–30 live mobs rotating in/out behind fog.
+         * All Laby touch clients set {@code fusLowTierMobile} (iOS + Android). Only the
+         * legacy {@code fusIosSafari} flag was used here, so *high-core Android* (strained
+         * override off) still got +38 block activation and looked like “mobs in the far fog”.
          */
-        const strained = !!this.minecraft.fusIosSafari;
-        const inExtra = strained ? 0 : MOB_ENTITY_LOD_ACTIVATE_EXTRA;
-        const outExtra = strained ? 18 : MOB_ENTITY_LOD_DEACTIVATE_EXTRA;
+        const useTightMobLod = !!this.minecraft.fusLowTierMobile;
+        const inExtra = useTightMobLod ? 0 : MOB_ENTITY_LOD_ACTIVATE_EXTRA;
+        const outExtra = useTightMobLod ? 18 : MOB_ENTITY_LOD_DEACTIVATE_EXTRA;
         const rIn = vdBlocks + inExtra;
         const rOut = vdBlocks + outExtra;
         const rIn2 = rIn * rIn;
@@ -970,7 +1062,13 @@ export default class FusMobSync {
          * fps, couldn't even open settings" — main thread was pinned by 8–10 live skinned mobs.
          */
         const strained = !!this.minecraft.fusIosSafari;
+        /**
+         * Budget for mobs *beyond* the near-radius (see `MOB_ACTIVE_NEAR_D2` below) only.
+         * A single global "nearest N" made the 6th mob at 2 blocks vanish on 5-wide mobile caps.
+         */
         const mobActiveCap = strained ? 5 : this.minecraft.fusLowTierMobile ? 8 : 20;
+        /** Squared world distance: inside this, every LOD-visible mob stays active; cap applies farther out. */
+        const MOB_ACTIVE_NEAR_D2 = 32 * 32;
         /**
          * @type {Array<{ key: string, row: any, x: number, y: number, z: number, d2: number }>}
          * Pending activations sorted by distance so the closest mobs pop in first.
@@ -978,9 +1076,9 @@ export default class FusMobSync {
         const toActivate = [];
         const pl = this.minecraft.player;
         /**
-         * First pass: collect every mob with its distance so we can apply a hard cap on the
-         * number of active ones (nearest wins). Without this pass, a cluster of 7 mobs that all
-         * sit inside LOD radius would all go active on strained mobile regardless of the cap.
+         * First pass: collect every mob with its distance, then:
+         *   • all that are "near" the local player stay active (combat/visibility);
+         *   • farther ones are limited by {@code mobActiveCap} (nearest first).
          */
         /** @type {Array<{ key: string, row: any, x: number, y: number, z: number, d2: number }>} */
         const visible = [];
@@ -1018,11 +1116,18 @@ export default class FusMobSync {
                 visible.push({ key, row, x, y, z, d2: dx * dx + dy * dy + dz * dz });
             }
         }
-        /** Apply the hard cap: nearest N active, everything else behaves as LOD-far. */
+        /** Near players: always on; past that: at most {@code mobActiveCap} (nearest), sorted. */
         visible.sort((a, b) => a.d2 - b.d2);
         const activeSet = new Set();
-        for (let i = 0; i < Math.min(mobActiveCap, visible.length); i++) {
-            activeSet.add(visible[i].key);
+        let farSlotted = 0;
+        for (let i = 0; i < visible.length; i++) {
+            const v = visible[i];
+            if (v.d2 <= MOB_ACTIVE_NEAR_D2) {
+                activeSet.add(v.key);
+            } else if (farSlotted < mobActiveCap) {
+                activeSet.add(v.key);
+                farSlotted++;
+            }
         }
         for (let i = 0; i < visible.length; i++) {
             const v = visible[i];
@@ -1617,14 +1722,27 @@ export default class FusMobSync {
         this._unsubMobAdd = null;
         this._unsubMobChg = null;
         this._unsubMobRm = null;
-        if (this._unsubPresence) {
+        if (this._presenceRecomputeRaf != null) {
             try {
-                this._unsubPresence();
-            } catch (_) {
+                if (typeof window !== "undefined" && typeof window.cancelAnimationFrame === "function") {
+                    window.cancelAnimationFrame(this._presenceRecomputeRaf);
+                }
+            } catch {
+                /* ignore */
+            }
+            this._presenceRecomputeRaf = null;
+        }
+        for (const uns of [this._unsubPresAdd, this._unsubPresChg, this._unsubPresRm]) {
+            if (!uns) continue;
+            try {
+                uns();
+            } catch {
                 /* ignore */
             }
         }
-        this._unsubPresence = null;
+        this._unsubPresAdd = null;
+        this._unsubPresChg = null;
+        this._unsubPresRm = null;
         if (this._unsubHits) {
             try {
                 this._unsubHits();

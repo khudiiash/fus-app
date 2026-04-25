@@ -3,6 +3,7 @@ import BlockRenderType from "../../util/BlockRenderType.js";
 import Tessellator from "./Tessellator.js";
 import MathHelper from "../../util/MathHelper.js";
 import Block from "../world/block/Block.js";
+import { readTerrainAtlasMetrics, tileUvsForLinearIndex, subTilePixelUvs } from "./TerrainAtlasUV.js";
 
 export default class BlockRenderer {
 
@@ -10,6 +11,20 @@ export default class BlockRenderer {
         this.worldRenderer = worldRenderer;
         this.tessellator = new Tessellator();
         this.tessellator.bindTexture(worldRenderer.textureTerrain);
+    }
+
+    /** @returns {{ w: number, h: number, tilesX: number, tilesY: number }} */
+    _terrainMetrics() {
+        return readTerrainAtlasMetrics(this.worldRenderer?.textureTerrain);
+    }
+
+    /**
+     * Full 16×16 macrotile UVs for {@code terrain.png}.
+     * @param {number} linearIndex
+     */
+    _faceUvsForTile(linearIndex) {
+        const m = this._terrainMetrics();
+        return tileUvsForLinearIndex(linearIndex, m.w, m.h, m.tilesX, m.tilesY);
     }
 
     renderBlock(world, block, ambientOcclusion, x, y, z) {
@@ -53,16 +68,17 @@ export default class BlockRenderer {
         let maxY = y + boundingBox.maxY;
         let maxZ = z + boundingBox.maxZ;
 
-        // UV Mapping
+        // UV Mapping — see {@link TerrainAtlasUV}
         let textureIndex = block.getTextureForFace(face);
-        let minU = (textureIndex % 16) / 16.0;
-        let maxU = minU + (16 / 256);
-        let minV = Math.floor(textureIndex / 16) / 16.0;
-        let maxV = minV + (16 / 256);
+        let { minU, maxU, minV, maxV } = this._faceUvsForTile(textureIndex);
 
-        // Flip V
-        minV = 1 - minV;
-        maxV = 1 - maxV;
+        /** Grass side macrotile: grass tuft is authored at the **top** of the tile; lateral face
+         *  corners map block-Y so the upper edge used minV (texture bottom). Swap V so grass meets the top face. */
+        if (block.getId() === 2 && face !== EnumBlockFace.TOP && face !== EnumBlockFace.BOTTOM) {
+            let tv = minV;
+            minV = maxV;
+            maxV = tv;
+        }
 
         // Get color multiplier
         let color = block.getColor(world, x, y, z, face);
@@ -225,22 +241,10 @@ export default class BlockRenderer {
         let maxY = y + 10 / 16;
         let maxZ = z + centerZ + size;
 
-        // UV Mapping
+        // UV Mapping — 2×10 px strip inside the macrotile (classic offset 7,6)
         let textureIndex = block.getTextureForFace(EnumBlockFace.NORTH);
-        let minU = (textureIndex % 16) / 16.0;
-        let minV = Math.floor(textureIndex / 16) / 16.0;
-
-        // Cut to torch texture at 7:6
-        minU += 7 / 256;
-        minV += 6 / 256;
-
-        // Size of torch texture (2x10)
-        let maxU = minU + 2 / 256;
-        let maxV = minV + 10 / 256;
-
-        // Flip V
-        minV = 1 - minV;
-        maxV = 1 - maxV;
+        const m = this._terrainMetrics();
+        let { minU, maxU, minV, maxV } = subTilePixelUvs(textureIndex, m.w, m.h, m.tilesX, 7, 6, 9, 16);
 
         // Set color with shading
         this.tessellator.setColor(1, 1, 1);
@@ -250,7 +254,7 @@ export default class BlockRenderer {
         this.addDistortFace(world, EnumBlockFace.EAST, false, chunkX, chunkY, chunkZ, minX, minY, minZ, maxX, maxY, maxZ, minU, minV, maxU, maxV, distortX, distortZ);
         this.addDistortFace(world, EnumBlockFace.SOUTH, false, chunkX, chunkY, chunkZ, minX, minY, minZ, maxX, maxY, maxZ, minU, minV, maxU, maxV, distortX, distortZ);
         this.addDistortFace(world, EnumBlockFace.WEST, false, chunkX, chunkY, chunkZ, minX, minY, minZ, maxX, maxY, maxZ, minU, minV, maxU, maxV, distortX, distortZ);
-        this.addFace(world, EnumBlockFace.TOP, false, chunkX, chunkY, chunkZ, minX, minY, minZ, maxX, maxY, maxZ, minU, minV, maxU, maxV + 8 / 256);
+        this.addFace(world, EnumBlockFace.TOP, false, chunkX, chunkY, chunkZ, minX, minY, minZ, maxX, maxY, maxZ, minU, minV, maxU, maxV + 8 / m.h);
     }
 
     addDistortFace(world, face, ambientOcclusion, chunkX, chunkY, chunkZ, minX, minY, minZ, maxX, maxY, maxZ, minU, minV, maxU, maxV, distortX, distortZ) {
@@ -383,23 +387,14 @@ export default class BlockRenderer {
         let maxY = 1;
         let maxZ = 1;
 
-        let offset = (1 / 256);
-
-        // UV Mapping
-        let textureIndex = block.getTextureForFace(EnumBlockFace.NORTH);
-        let minU = (textureIndex % 16) / 16.0;
-        let maxU = minU + (16 / 256);
-        let minV = Math.floor(textureIndex / 16) / 16.0;
-        let maxV = minV + (16 / 256);
-
-        // Flip V
-        minV = 1 - minV;
-        maxV = 1 - maxV;
-
+        const m = this._terrainMetrics();
+        let { minU, maxU, minV, maxV } = this._faceUvsForTile(block.getTextureForFace(EnumBlockFace.NORTH));
+        const offset = 1 / m.w;
+        const offv = 1 / m.h;
         minU += offset;
         maxU -= offset;
-        minV -= offset;
-        maxV += offset;
+        minV -= offv;
+        maxV += offv;
 
         // Render item
         this.addFace(null, EnumBlockFace.NORTH, false, 0, 0, 0, minX, minY, minZ, maxX, maxY, maxZ, minU, minV, maxU, maxV);

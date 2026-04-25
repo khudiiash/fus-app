@@ -117,13 +117,15 @@ export default class Gui {
     }
 
     renderBlockFace(stack, texture, block, triangles, face) {
-        // UV Mapping
         let textureIndex = block.getTextureForFace(face);
-        let minU = (textureIndex % 16) / 16.0;
-        let minV = Math.floor(textureIndex / 16) / 16.0;
+        const tw = texture?.width > 0 ? texture.width : 256;
+        const col = textureIndex % 16;
+        const row = (textureIndex / 16) | 0;
+        const spriteX = col * 16;
+        const spriteY = row * 16;
 
         stack.save();
-        IsometricRenderer.render(stack, triangles, _ => this.drawSprite(stack, texture, minU * 256, minV, 16, 16, 0, 0, 256, 256));
+        IsometricRenderer.render(stack, triangles, _ => this.drawSprite(stack, texture, spriteX, spriteY, 16, 16, 0, 0, tw, tw));
         stack.restore();
     }
 

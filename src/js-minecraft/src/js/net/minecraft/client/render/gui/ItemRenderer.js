@@ -25,20 +25,24 @@ export default class ItemRenderer {
         // Create web renderer
         this.webRenderer = new THREE.WebGLRenderer({
             canvas: this.window.canvasItems,
-            antialias: true
+            /** Hotbar uses nearest-filtered atlas tiles — MSAA only adds GPU cost (notably on Android). */
+            antialias: false
         });
 
         // Settings
         this.webRenderer.setSize(this.window.width, this.window.height);
-        this.webRenderer.shadowMap.enabled = true;
-        this.webRenderer.shadowMap.type = THREE.PCFSoftShadowMap; // default THREE.PCFShadowMap
+        /** No lights in this scene — shadow maps were legacy overhead on every hotbar draw. */
+        this.webRenderer.shadowMap.enabled = false;
         this.webRenderer.autoClear = false;
         this.webRenderer.sortObjects = false;
         this.webRenderer.setClearColor(0x000000, 0);
         this.webRenderer.clear();
 
-        this.webRenderer.outputColorSpace = THREE.SRGBColorSpace;
-        this.webRenderer.toneMapping = THREE.NoToneMapping;
+        // Match {@link WorldRenderer#initialize}: terrain {@link Minecraft#getThreeTexture} uses
+        // NoColorSpace; r152+ SRGB output + default tone curve wash out block / vertex colors on the
+        // hotbar item layer the same way it used to for the world.
+        this.webRenderer.outputColorSpace = THREE.LinearSRGBColorSpace;
+        this.webRenderer.toneMapping = THREE.NeutralToneMapping;
         this.webRenderer.toneMappingExposure = 1;
     }
 

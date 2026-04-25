@@ -1,5 +1,8 @@
 import { sharedWorldSeedsToLabyLong, normalizeSharedWorldSeeds } from '@/lib/labyWorldSeed'
 
+/** Hub / unstuck target when no `labySpawn` in shared-world config (matches {@link World} constructor). */
+export const FUS_LABY_DEFAULT_SPAWN = Object.freeze({ x: 0, y: 97, z: 0 })
+
 /**
  * @param {import('@labymc/src/js/net/minecraft/client/Minecraft.js').default} mc
  * @param {ReturnType<typeof normalizeSharedWorldSeeds>} seeds
@@ -26,8 +29,13 @@ export async function createLabyWorldAndLoad(mc, seeds, labySpawn) {
       world.setSpawn(ls.x, ls.z)
     }
   } else {
-    world.getChunkProvider().findSpawn()
+    world.spawn.x = FUS_LABY_DEFAULT_SPAWN.x
+    world.spawn.y = FUS_LABY_DEFAULT_SPAWN.y
+    world.spawn.z = FUS_LABY_DEFAULT_SPAWN.z
   }
+
+  /** Used by {@link mc.fusTeleportToDefaultSpawn} so “stuck” always returns to this hub, not height-adjusted spawn. */
+  mc.fusDefaultWorldSpawn = FUS_LABY_DEFAULT_SPAWN
 
   mc.loadWorld(world)
 }

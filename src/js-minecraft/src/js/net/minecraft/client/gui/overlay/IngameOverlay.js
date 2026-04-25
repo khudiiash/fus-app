@@ -90,54 +90,87 @@ export default class IngameOverlay extends Gui {
 
     /**
      * FUS Laby: hearts from bundled `hearts_sh.png` (same 3-frame strip as Block World HUD / remotes).
+     *
+     * Heart count scales with the player's current max HP so a level-50 player (69 HP /
+     * ~34 hearts) actually sees every heart they have. We cap the display at
+     * {@link FUS_EMBED_HEARTS_MAX_PER_ROW} hearts per row and stack extra rows upwards so
+     * tall bars don't bleed into the chat / hotbar. Beyond
+     * {@link FUS_EMBED_HEARTS_MAX_ROWS} we switch to a compact `+N` suffix on the last
+     * visible heart to keep the HUD predictable on phones.
      */
     renderFusEmbedHealthBar(stack) {
         const w = this.window.width;
         const h = this.window.height;
-        const rowY = h - 22 - 12;
-        const hp = Math.min(20, Math.max(0, Math.ceil(this.minecraft.player.health || 0)));
+        const pl = this.minecraft.player;
+        const maxHp = Math.max(2, Math.ceil((pl?.maxHealth ?? 20)));
+        const hp = Math.max(0, Math.min(maxHp, Math.ceil(pl?.health || 0)));
+        const totalHearts = Math.ceil(maxHp / 2);
+        const FUS_EMBED_HEARTS_MAX_PER_ROW = 10;
+        const FUS_EMBED_HEARTS_MAX_ROWS = 2;
+        const perRow = FUS_EMBED_HEARTS_MAX_PER_ROW;
+        const heartsShown = Math.min(totalHearts, perRow * FUS_EMBED_HEARTS_MAX_ROWS);
+        const rows = Math.ceil(heartsShown / perRow);
         const img = this.minecraft.fusHeartsSheet;
-        if (img && img.complete && img.naturalWidth > 0) {
-            const iw = img.naturalWidth;
-            const ih = img.naturalHeight;
-            const frameW = iw / 3;
-            const slotW = 11;
-            const slotH = Math.round((slotW * 16) / 18);
-            const gap = 2;
-            const rowW = 10 * (slotW + gap) - gap;
-            const cx = w / 2;
+
+        const extraHearts = totalHearts - heartsShown;
+        const img_loaded = img && img.complete && img.naturalWidth > 0;
+
+        const slotW = 11;
+        const slotH = Math.round((slotW * 16) / 18);
+        const gap = 2;
+        const rowGap = 2;
+        const cx = w / 2;
+
+        stack.imageSmoothingEnabled = false;
+        for (let r = 0; r < rows; r++) {
+            const rowHearts = r === rows - 1
+                ? heartsShown - r * perRow
+                : perRow;
+            const rowW = rowHearts * (slotW + gap) - gap;
+            /** Stack rows upwards — row 0 is the bottom (closest to hotbar). */
+            const rowY = h - 22 - 12 - (rows - 1 - r) * (slotH + rowGap);
             const xStart = cx - rowW / 2;
-            stack.imageSmoothingEnabled = false;
-            for (let i = 0; i < 10; i++) {
+            for (let i = 0; i < rowHearts; i++) {
+                const heartIndex = r * perRow + i;
                 const hx = xStart + i * (slotW + gap);
-                const left = hp > i * 2;
-                const right = hp > i * 2 + 1;
-                let sx = frameW * 2;
-                if (left && right) sx = 0;
-                else if (left) sx = frameW;
-                stack.drawImage(img, sx, 0, frameW, ih, hx, rowY, slotW, slotH);
+                const left = hp > heartIndex * 2;
+                const right = hp > heartIndex * 2 + 1;
+                if (img_loaded) {
+                    const iw = img.naturalWidth;
+                    const ih = img.naturalHeight;
+                    const frameW = iw / 3;
+                    let sx = frameW * 2;
+                    if (left && right) sx = 0;
+                    else if (left) sx = frameW;
+                    stack.drawImage(img, sx, 0, frameW, ih, hx, rowY, slotW, slotH);
+                } else {
+                    const tex = this.textureCrosshair;
+                    if (left && right) {
+                        this.drawSprite(stack, tex, 52, 0, 9, 9, hx, rowY, 9, 9, 1);
+                    } else if (left) {
+                        this.drawSprite(stack, tex, 61, 0, 9, 9, hx, rowY, 9, 9, 1);
+                    } else {
+                        this.drawSprite(stack, tex, 52, 9, 9, 9, hx, rowY, 9, 9, 1);
+                    }
+                }
             }
-            return;
         }
-        const padLeft = 10;
-        const hbX = w / 2 - 91 - padLeft;
-        const heartW = 9;
-        const heartH = 9;
-        const g = 1;
-        const tex = this.textureCrosshair;
-        const full = Math.floor(hp / 2);
-        const half = hp % 2;
-        for (let i = 0; i < 10; i++) {
-            const x = hbX + i * (heartW + g);
-            this.drawSprite(stack, tex, 52, 9, 9, 9, x, rowY, heartW, heartH, 1);
-        }
-        for (let i = 0; i < full; i++) {
-            const x = hbX + i * (heartW + g);
-            this.drawSprite(stack, tex, 52, 0, 9, 9, x, rowY, heartW, heartH, 1);
-        }
-        if (half === 1) {
-            const x = hbX + full * (heartW + g);
-            this.drawSprite(stack, tex, 61, 0, 9, 9, x, rowY, heartW, heartH, 1);
+
+        /** Overflow badge: `+N` next to the top row when the player has more hearts than
+         *  we could fit. Drawn with the overlay's canvas font so it matches HUD text.
+         *  We don't draw a remaining-HP aware variant (e.g. `+3/+5`) because the user-
+         *  facing message is "you still have more" — the cap is a UI decision, not a
+         *  stat. */
+        if (extraHearts > 0) {
+            const topRow = 0;
+            const rowHearts = rows === 1 ? heartsShown : perRow;
+            const rowW = rowHearts * (slotW + gap) - gap;
+            const rowY = h - 22 - 12 - (rows - 1 - topRow) * (slotH + rowGap);
+            const xEnd = cx + rowW / 2 + 4;
+            stack.font = "10px sans-serif";
+            stack.fillStyle = "#ffd24a";
+            stack.textBaseline = "top";
+            stack.fillText("+" + extraHearts, xEnd, rowY);
         }
     }
 
@@ -145,13 +178,9 @@ export default class IngameOverlay extends Gui {
         // Keep in sync with GameWindow.registerFusEmbedTouchInputBridge (fusHotbarSlotAt).
         const padLeft = 10;
         const hbX = x - padLeft;
-        const extraGap = 2;
-        const extraW = 20;
 
         // Render background (main strip)
         this.drawSprite(stack, this.textureHotbar, 0, 0, 200, 22, hbX, y, 200, 22);
-        // Extra slot: reuse left cap of strip so it matches vanilla style
-        this.drawSprite(stack, this.textureHotbar, 0, 0, extraW, 22, hbX + 200 + extraGap, y, extraW, 22);
 
         const sel = this.minecraft.player.inventory.selectedSlotIndex;
         if (sel >= 0 && sel < 9) {
@@ -201,10 +230,15 @@ export default class IngameOverlay extends Gui {
             }
         }
 
-        // Overflow “…” (FUS embed): same row as hotbar, opens Vue inventory when tapped (see GameWindow)
-        const dotsX = hbX + 200 + extraGap + extraW / 2;
-        const dotsY = y + 7;
-        this.drawCenteredString(stack, "\u2022\u2022\u2022", Math.floor(dotsX), Math.floor(dotsY), 0xffe8e8f0);
+        // Non-embed: optional overflow column + “⋯”. Laby embed uses HTML inventory instead.
+        if (typeof window === "undefined" || !window.__LABY_MC_FUS_EMBED__) {
+            const extraGap = 2;
+            const extraW = 20;
+            this.drawSprite(stack, this.textureHotbar, 0, 0, extraW, 22, hbX + 200 + extraGap, y, extraW, 22);
+            const dotsX = hbX + 200 + extraGap + extraW / 2;
+            const dotsY = y + 7;
+            this.drawCenteredString(stack, "\u2022\u2022\u2022", Math.floor(dotsX), Math.floor(dotsY), 0xffe8e8f0);
+        }
     }
 
     renderLeftDebugOverlay(stack, filters = []) {

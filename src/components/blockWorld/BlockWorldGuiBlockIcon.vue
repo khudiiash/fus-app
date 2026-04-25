@@ -20,8 +20,9 @@ function draw() {
     raf = 0
     const el = host.value
     const mc = props.minecraft
-    if (!el || !mc?.worldRenderer?.blockRenderer || !mc.itemRenderer?.webRenderer) {
-      el?.replaceChildren()
+    if (!el) return
+    if (!mc?.worldRenderer) {
+      el.replaceChildren()
       return
     }
     const c = renderFusGuiBlockIconToCanvas(mc, props.engineBlockId | 0, props.size | 0)
@@ -30,7 +31,9 @@ function draw() {
       c.className = 'bw-gui-block-canvas'
       c.style.width = '100%'
       c.style.height = '100%'
+      c.style.objectFit = 'contain'
       c.style.imageRendering = 'pixelated'
+      c.style.display = 'block'
       el.appendChild(c)
     }
   })

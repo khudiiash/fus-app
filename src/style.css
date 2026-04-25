@@ -79,19 +79,35 @@ html.fus-block-world-play body {
   overscroll-behavior: none;
 }
 
-/* Laby JS Minecraft (WebGL): override global `html { touch-action: manipulation }` so pinch doesn’t zoom the page. */
+/*
+ * Laby (WebGL): iOS Safari double-tap zoom often still fires if the document uses `touch-action: none`
+ * (it does not apply the same “disable double-tap zoom” path as `manipulation`).
+ * Use `manipulation` on the document shell; keep `none` only on the canvas so the game owns gestures.
+ * Viewport meta still has user-scalable=no + max-scale=1 as a backstop.
+ */
 html.fus-laby-play {
-  touch-action: none;
+  touch-action: manipulation;
   overscroll-behavior: none;
   user-select: none;
   -webkit-user-select: none;
+  height: 100%;
+  overflow: hidden;
 }
 
 html.fus-laby-play body {
-  touch-action: none;
+  touch-action: manipulation;
   overscroll-behavior: none;
   user-select: none;
   -webkit-user-select: none;
+  height: 100%;
+  overflow: hidden;
+}
+
+html.fus-laby-play #app {
+  touch-action: manipulation;
+  height: 100%;
+  min-height: 100%;
+  overflow: hidden;
 }
 
 html.fus-laby-play canvas {

@@ -10,11 +10,15 @@ export const FUS_LABY_MIN_LEVEL = 1;
 /** @type {number} */
 export const FUS_LABY_MAX_LEVEL = 50;
 
-/** Vanilla minecraft health cap (`maxHealth` is stored as HP, not half-hearts). */
-const BASE_MAX_HEALTH = 20;
-
-/** Each level above 1 grants +1 HP (half-heart). Level 50 ⇒ 20 + 49 = 69 HP (≈ 34.5 hearts). */
-const HP_PER_LEVEL = 1;
+/**
+ * HP curve (1 heart = 2 HP in the engine, whole hearts only):
+ *   • Level  1 ⇒ 3 hearts (6 HP)
+ *   • Level 50+ ⇒ 9 hearts (18 HP)
+ *   • In between: heart count = floor of linear lerp(3, 9) across levels 1…50, then HP = 2×hearts.
+ *   Produces only even max HP: 6, 8, 10, …, 18 — no “half a heart on the max row” at spawn.
+ */
+const HEARTS_L1 = 3;
+const HEARTS_L50 = 9;
 
 /**
  * @param {number} raw
@@ -32,7 +36,11 @@ function clampLevel(raw) {
  * @returns {number}
  */
 export function fusMaxHealthForLevel(level) {
-    return BASE_MAX_HEALTH + (clampLevel(level) - 1) * HP_PER_LEVEL;
+    const lv = clampLevel(level);
+    const t = (lv - FUS_LABY_MIN_LEVEL) / (FUS_LABY_MAX_LEVEL - FUS_LABY_MIN_LEVEL);
+    const heartsF = HEARTS_L1 + t * (HEARTS_L50 - HEARTS_L1);
+    const wholeHearts = Math.floor(heartsF + 1e-9);
+    return Math.max(2, 2 * wholeHearts);
 }
 
 /**
@@ -51,14 +59,33 @@ export function applyFusPlayerLevelToMinecraft(mc, level, showLevelUp = false) {
     const player = mc.player;
     if (player && typeof player === "object") {
         player.fusLevel = lv;
-        if (typeof player.maxHealth === "number") {
-            const prevMax = player.maxHealth;
-            player.maxHealth = mc.fusMaxHealth;
-            if (typeof player.health === "number" && prevMax > 0) {
-                // Preserve HP ratio so de-levelling doesn't instantly kill the player.
-                const ratio = Math.max(0, Math.min(1, player.health / prevMax));
-                player.health = Math.min(player.maxHealth, Math.round(player.maxHealth * ratio));
-            }
+        // EntityLiving constructor sets `health = 20.0` but never defines `maxHealth`, so the
+        // previous `typeof player.maxHealth === "number"` guard was permanently false on a
+        // freshly-spawned player and the level-scaled cap never took effect. Result: the HUD
+        // fell back to its default "10 hearts / 20 HP" and users saw empty hearts at every
+        // level. Force-assign `maxHealth` here regardless of prior type, then clamp live
+        // `health` into the new bound. `prevMax` defaults to the engine's hardcoded 20 so
+        // the ratio-preserving clamp behaves sensibly on first bind too.
+        const prevMax = typeof player.maxHealth === "number" && player.maxHealth > 0
+            ? player.maxHealth
+            : 20;
+        player.maxHealth = mc.fusMaxHealth;
+        if (typeof player.health === "number") {
+            const ratio = Math.max(0, Math.min(1, player.health / prevMax));
+            /** Whole hearts only: round HP to the nearest 2, clamped to the new cap. */
+            const scaled = 2 * Math.round((player.maxHealth * ratio) / 2);
+            player.health = Math.min(player.maxHealth, Math.max(0, scaled));
+        } else {
+            player.health = player.maxHealth;
+        }
+    }
+    /** Stops the damage red-flash (non-damage) when the engine was at 20/20 and we re-clamp
+     *  to the level-capped max — see {@code fusResyncHealthFlashBaseline}. */
+    if (typeof mc.fusResyncHealthFlashBaseline === "function") {
+        try {
+            mc.fusResyncHealthFlashBaseline();
+        } catch {
+            /* ignore */
         }
     }
     void showLevelUp;

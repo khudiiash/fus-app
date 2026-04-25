@@ -21,10 +21,12 @@ export default class WorldRenderer {
         this.minecraft = minecraft;
         this.window = window;
         this.chunkSectionUpdateQueue = [];
+        /** FUS: O(1) membership for the queue — `Array#includes` was O(n) per section per frame. */
+        this._fusChunkInUpdateQueue = new Set();
 
         this.tessellator = new Tessellator();
 
-        // Load terrain texture
+        // FUS: classic {@code terrain/terrain.png} macrotile sheet; {@link TerrainAtlasUV}
         this.textureTerrain = minecraft.getThreeTexture('terrain/terrain.png');
         this.textureTerrain.magFilter = THREE.NearestFilter;
         this.textureTerrain.minFilter = THREE.NearestFilter;
@@ -56,6 +58,26 @@ export default class WorldRenderer {
 
         this.lastHitResult = null;
 
+        /** FUS: see {@link #renderChunks} — increment each call; sort every other frame. */
+        this._fusRenderChunksCount = 0;
+        /**
+         * FUS: one reusable column AABB per chunk (world XZ footprint × full height) for
+         * {@link #renderChunks} so we can reject all 16 sections with a single frustum test.
+         */
+        this._fusChunkColumnBox = new THREE.Box3();
+
+        /**
+         * Full-viewport red tint (see {@link #queueFusDamageFlash}) — wall-clock hold + fade
+         * so high-refresh displays still show a visible flash (frame-stepped decay was ~3–7 ms on
+         * 144 Hz). Replaces a legacy HTML radial vignette.
+         */
+        this._fusDmgFlash = { active: 0, peak: 0, holdEndMs: 0, fadeEndMs: 0 };
+        this._fusDamageScreenMesh = null;
+
+        /** FUS Laby: cube env map from `src/resources/sky/*.png` — no tessellated sky disc. */
+        this._fusLabySkyboxMode = false;
+        this._fusLabyCubeTex = null;
+
         this.initialize();
     }
 
@@ -68,38 +90,50 @@ export default class WorldRenderer {
         // Frustum
         this.frustum = new THREE.Frustum();
 
-        // Create background scene
+        // Background (sky) must render in its own `Scene` + pass: sharing one `Scene` with
+        // `scene.background` + sky meshes + world broke fog/overlay compositing (entities, lines, flags
+        // looked like sky) when `webRenderer` uses `autoClear: false` between passes.
         this.background = new THREE.Scene();
         this.background.matrixAutoUpdate = false;
 
-        // Create world scene
         this.scene = new THREE.Scene();
         this.scene.matrixAutoUpdate = false;
+
+        /** FUS: one GPU fog + one clear color, updated in place — per-frame `new Fog`/`new Color` tanked mobile GC. */
+        this._fusFrustumViewProj = new THREE.Matrix4();
+        this._fusBackgroundColor = new THREE.Color(0, 0, 0);
+        /** Sky pass: must not be the same `Color` ref as {@link #_fusBackgroundColor} — `setupFog` mutates that for world fog, which was painting a false solid “sky” if the cubemap 404s. */
+        this._fusSkyPassClear = new THREE.Color(0, 0, 0);
+        this._fusSceneFog = new THREE.Fog(0x000000, 0.0025, 512);
+        this.scene.fog = this._fusSceneFog;
+        this.background.background = this._fusSkyPassClear;
+        this.background.fog = this._fusSceneFog;
+        this._fusCameraDirScratch = new THREE.Vector3();
 
         // Create overlay for first person model rendering
         this.overlay = new THREE.Scene();
         this.overlay.matrixAutoUpdate = false;
 
-        // Create web renderer
+        const labyEmbed = typeof window !== "undefined" && window.__LABY_MC_FUS_EMBED__;
         this.webRenderer = new THREE.WebGLRenderer({
             canvas: this.window.canvasWorld,
             antialias: false,
-            alpha: true
+            powerPreference: "high-performance",
         });
 
         // Settings
         this.webRenderer.setSize(this.window.width, this.window.height);
-        this.webRenderer.shadowMap.enabled = true;
-        this.webRenderer.shadowMap.type = THREE.PCFSoftShadowMap; // default THREE.PCFShadowMap
         this.webRenderer.autoClear = false;
-        this.webRenderer.sortObjects = false;
+        /** FUS: was `false` (classic fork). With {@link Tessellator}'s {@code transparent: true} on
+         *  all chunk geometry, leaving sorting off made transparent draw order follow scene-graph
+         *  insertion only — break-decal meshes could never rely on {@link Object3D#renderOrder}. */
+        this.webRenderer.sortObjects = true;
         this.webRenderer.setClearColor(0x000000, 0);
         this.webRenderer.clear();
 
         // r152+ defaults + tone mapping wash out Minecraft-style atlas / vertex colors; keep output sRGB, no filmic curve.
-        this.webRenderer.outputColorSpace = THREE.SRGBColorSpace;
-        this.webRenderer.toneMapping = THREE.NoToneMapping;
-        this.webRenderer.toneMappingExposure = 1;
+        this.webRenderer.outputColorSpace = THREE.LinearSRGBColorSpace;
+        this.webRenderer.toneMapping = THREE.NeutralToneMapping;
 
         // Create sky
         this.generateSky();
@@ -112,15 +146,162 @@ export default class WorldRenderer {
         }));
         this.scene.add(this.blockHitBox);
 
+        /** FUS: camera-space full-screen plane — drawn after the world, brief solid red (no radial). */
+        {
+            const g = new THREE.PlaneGeometry(1, 1);
+            const m = new THREE.MeshBasicMaterial({
+                color: 0xd41616,
+                transparent: true,
+                opacity: 0,
+                depthTest: false,
+                depthWrite: false,
+                side: THREE.DoubleSide,
+            });
+            const mesh = new THREE.Mesh(g, m);
+            mesh.name = "fusDamageFlash";
+            mesh.renderOrder = 100000;
+            mesh.frustumCulled = false;
+            this._fusDamageScreenMesh = mesh;
+            this.overlay.add(mesh);
+        }
+
         // FUS: proves this file is the patched fork (see `window.__FUS_LABY_ENGINE_PATCH` in DevTools).
         if (typeof window !== "undefined" && window.__LABY_MC_FUS_EMBED__) {
-            window.__FUS_LABY_ENGINE_PATCH = "2026-04-14-v5";
+            window.__FUS_LABY_ENGINE_PATCH = "2026-04-24-skybox-staticday";
+        }
+    }
+
+    /**
+     * FUS Laby: chunk radius (2..10) matching the capped in-game render slider. Used by
+     * {@link FusMobSync} so mob LOD radii track the same distance the player actually sees.
+     */
+    getEffectiveViewDistanceChunks() {
+        const vd = Number(this.minecraft?.settings?.viewDistance);
+        const c = Number.isFinite(vd) && vd > 0 ? Math.round(vd) : 5;
+        return Math.max(2, Math.min(10, c));
+    }
+
+    /**
+     * Laby: re-run {@link GameWindow#updateWindowSize} after `fusIosSafari` / `fusLowTierMobile`
+     * are set on `minecraft`, so WebGL `pixelRatio` (see GameWindow) matches the real device
+     * tier. Safe to call multiple times.
+     */
+    applyFusMobileGraphicsProfile() {
+        if (this.window && typeof this.window.updateWindowSize === "function") {
+            this.window.updateWindowSize();
+        }
+    }
+
+    /** Min time at full opacity so the flash is noticeable (ms). */
+    static FUS_DAMAGE_FLASH_HOLD_MS = 100;
+    /** Fade-out after hold (ms). */
+    static FUS_DAMAGE_FLASH_FADE_MS = 40;
+
+    /**
+     * Brief full-viewport red tint in WebGL (camera-space quad, {@link #_fusSyncDamageFlashOpacity}
+     * drives opacity from wall-clock time).
+     * @param {number} [strength] 0..1 — higher for bigger HP drops; clamped to a visible range.
+     */
+    queueFusDamageFlash(strength = 0.5) {
+        const now =
+            typeof performance !== "undefined" && typeof performance.now === "function"
+                ? performance.now()
+                : Date.now();
+        const s = this._fusDmgFlash;
+        const peak = Math.min(0.55, Math.max(0.12, Number(strength) || 0.35));
+        s.peak = Math.max(s.peak, peak);
+        s.holdEndMs = now + WorldRenderer.FUS_DAMAGE_FLASH_HOLD_MS;
+        s.fadeEndMs = now + WorldRenderer.FUS_DAMAGE_FLASH_HOLD_MS + WorldRenderer.FUS_DAMAGE_FLASH_FADE_MS;
+        s.active = 1;
+    }
+
+    /** Instantly hide the red tint (e.g. on death screen). */
+    clearFusDamageFlash() {
+        const s = this._fusDmgFlash;
+        s.active = 0;
+        s.peak = 0;
+        s.holdEndMs = 0;
+        s.fadeEndMs = 0;
+        if (this._fusDamageScreenMesh && this._fusDamageScreenMesh.material) {
+            this._fusDamageScreenMesh.material.opacity = 0;
+        }
+    }
+
+    /**
+     * Full-viewport quad in front of the camera — {@link THREE.Object3D#lookAt} keeps the
+     * red face toward the eye regardless of Z-up vs Y-up quirks.
+     */
+    _fusUpdateDamageFlashScreenQuad() {
+        const mesh = this._fusDamageScreenMesh;
+        if (!mesh) return;
+        const cam = this.camera;
+        const dist = 0.12;
+        const dir = this._fusCameraDirScratch;
+        cam.getWorldDirection(dir);
+        mesh.position.copy(cam.position).addScaledVector(dir, dist);
+        mesh.lookAt(cam.position);
+        const vFov = (cam.fov * Math.PI) / 180;
+        const h = 2 * Math.tan(vFov / 2) * dist;
+        const w = h * (this.window.width / Math.max(1, this.window.height));
+        mesh.scale.set(w, h, 1);
+    }
+
+    _fusSyncDamageFlashOpacity() {
+        const s = this._fusDmgFlash;
+        const mesh = this._fusDamageScreenMesh;
+        if (!mesh || !mesh.material) return;
+        if (!s.active) {
+            mesh.material.opacity = 0;
+            return;
+        }
+        const now =
+            typeof performance !== "undefined" && typeof performance.now === "function"
+                ? performance.now()
+                : Date.now();
+        if (now >= s.fadeEndMs) {
+            s.active = 0;
+            s.peak = 0;
+            s.holdEndMs = 0;
+            s.fadeEndMs = 0;
+            mesh.material.opacity = 0;
+            return;
+        }
+        if (now < s.holdEndMs) {
+            mesh.material.opacity = s.peak;
+        } else {
+            const fd = s.fadeEndMs - s.holdEndMs;
+            const t = fd > 0 ? (s.fadeEndMs - now) / fd : 0;
+            mesh.material.opacity = s.peak * Math.max(0, Math.min(1, t));
         }
     }
 
     render(partialTicks) {
+        if (typeof this.minecraft.fusCombatFxTick === "function") {
+            try {
+                this.minecraft.fusCombatFxTick();
+            } catch {
+                /* ignore */
+            }
+        }
+        if (typeof this.minecraft.fusWorldDropsTick === "function") {
+            try {
+                this.minecraft.fusWorldDropsTick();
+            } catch {
+                /* ignore */
+            }
+        }
+        if (typeof this.minecraft.fusSimpleMobsFrameTick === "function") {
+            try {
+                this.minecraft.fusSimpleMobsFrameTick();
+            } catch {
+                /* ignore */
+            }
+        }
         // Setup camera
         this.orientCamera(partialTicks);
+
+        this._fusUpdateDamageFlashScreenQuad();
+        this._fusSyncDamageFlashOpacity();
 
         // Render chunks
         let player = this.minecraft.player;
@@ -150,16 +331,29 @@ export default class WorldRenderer {
 
             // Render entity
             entity.renderer.render(entity, partialTicks);
-            entity.renderer.group.visible = true;
+            const inv =
+                entity === player &&
+                Number.isFinite(this.minecraft.fusSpawnInvulnUntilMs) &&
+                Date.now() < this.minecraft.fusSpawnInvulnUntilMs
+            if (inv) {
+                entity.renderer.group.visible = (Math.floor(Date.now() / 150) & 1) === 0
+            } else {
+                entity.renderer.group.visible = true
+            }
         }
 
         // Render hand
         this.renderHand(partialTicks);
 
-        // Render background scene
+        // Pass 1: sky / horizon (own scene). Pass 2: world + entities (fog here only — matches classic fork).
+        // `Scene.background` as a `CubeTexture` is drawn with depthTest/depthWrite false, and WebGLBackground
+        // does *not* set `forceClear` (only `Color` backgrounds do). With `webRenderer.autoClear = false` the
+        // depth buffer was never reset, so the world pass depth-tested against the *previous* frame and most
+        // geometry disappeared (skybox-only + edge artifacts). Clear once per frame before the sky pass.
+        if (this._fusLabySkyboxMode) {
+            this.webRenderer.clear(true, true, true);
+        }
         this.webRenderer.render(this.background, this.camera);
-
-        // Render actual scene
         this.webRenderer.render(this.scene, this.camera);
 
         // Render overlay with a static FOV
@@ -168,16 +362,67 @@ export default class WorldRenderer {
         this.webRenderer.render(this.overlay, this.camera);
     }
 
-    onTick() {
-        // Rebuild 2 chunk sections each tick
-        for (let i = 0; i < 2; i++) {
-            if (this.chunkSectionUpdateQueue.length !== 0) {
-                let chunkSection = this.chunkSectionUpdateQueue.shift();
-                if (chunkSection != null) {
-                    // Rebuild chunk
-                    chunkSection.rebuild(this);
-                }
+    /**
+     * Pops one chunk section from the update queue and rebuilds it. When
+     * {@code minecraft.fusChunkSplitSectionRebuild} is not false (default: on), a section
+     * is meshed in two steps — solid, then translucent — on separate queue operations so
+     * each main-thread slice does roughly half the work (better frame times while moving).
+     * Set {@code fusChunkSplitSectionRebuild = false} to restore a single monolithic
+     * mesh build per section.
+     */
+    _fusDequeueAndRebuildOneChunkSection() {
+        if (this.chunkSectionUpdateQueue.length === 0) {
+            return;
+        }
+        let chunkSection = this.chunkSectionUpdateQueue.shift();
+        if (chunkSection == null) {
+            return;
+        }
+        const split = this.minecraft.fusChunkSplitSectionRebuild !== false;
+        if (!split) {
+            try {
+                this._fusChunkInUpdateQueue.delete(chunkSection);
+            } catch {
+                /* ignore */
             }
+            chunkSection.rebuild(this);
+        } else if (chunkSection._fusRebuildSplit !== 1) {
+            try {
+                this._fusChunkInUpdateQueue.delete(chunkSection);
+            } catch {
+                /* ignore */
+            }
+            chunkSection._fusRebuildSolidOnly(this);
+            chunkSection._fusRebuildSplit = 1;
+            this.chunkSectionUpdateQueue.unshift(chunkSection);
+            this._fusChunkInUpdateQueue.add(chunkSection);
+        } else {
+            try {
+                this._fusChunkInUpdateQueue.delete(chunkSection);
+            } catch {
+                /* ignore */
+            }
+            chunkSection._fusRebuildTranslucentOnly(this);
+            chunkSection._fusRebuildSplit = 0;
+        }
+    }
+
+    onTick() {
+        /**
+         * Chunk mesh rebuilds per tick. Each step walks placed blocks in a 16×16×16
+         * section (sparse iteration when the section is not full) to build geometry, which
+         * is the dominant per-tick cost when new terrain streams in. `fusLowTierMobile`
+         * uses a budget of 1; otherwise 2, unless Laby sets `fusChunkRebuildsPerTick`.
+         * {@code flushRebuild} uses `fusChunkFlushRebuildCap` for the block edit catch-up
+         * path.
+         */
+        let rebuildsPerTick = this.minecraft.fusLowTierMobile ? 1 : 2;
+        if (typeof this.minecraft.fusChunkRebuildsPerTick === "number" && Number.isFinite(this.minecraft.fusChunkRebuildsPerTick)) {
+            /** Laby: optional override to cap per-tick mesh work when streaming terrain (1–2). */
+            rebuildsPerTick = Math.max(1, Math.min(2, Math.floor(this.minecraft.fusChunkRebuildsPerTick)));
+        }
+        for (let i = 0; i < rebuildsPerTick; i++) {
+            this._fusDequeueAndRebuildOneChunkSection();
         }
 
         this.prevFogBrightness = this.fogBrightness;
@@ -298,7 +543,8 @@ export default class WorldRenderer {
         this.camera.updateProjectionMatrix();
 
         // Update frustum
-        this.frustum.setFromProjectionMatrix(new THREE.Matrix4().multiplyMatrices(this.camera.projectionMatrix, this.camera.matrixWorldInverse));
+        this._fusFrustumViewProj.multiplyMatrices(this.camera.projectionMatrix, this.camera.matrixWorldInverse);
+        this.frustum.setFromProjectionMatrix(this._fusFrustumViewProj);
 
         // Setup fog
         this.setupFog(x, z, player.isHeadInWater(), partialTicks);
@@ -308,6 +554,46 @@ export default class WorldRenderer {
         // Create background center group
         this.backgroundCenter = new THREE.Object3D();
         this.background.add(this.backgroundCenter);
+
+        const labyEmbed = typeof window !== "undefined" && window.__LABY_MC_FUS_EMBED__;
+        if (labyEmbed) {
+            this._fusLabySkyboxMode = true;
+            this.listSky = null;
+            this.listSunset = null;
+            this.listStars = null;
+            this.listVoid = null;
+            this.cycleGroup = new THREE.Object3D();
+            this.sun = null;
+            this.moon = null;
+            const base =
+                typeof window !== "undefined" && window.__LABY_MC_ASSET_BASE__
+                    ? String(window.__LABY_MC_ASSET_BASE__).replace(/\/?$/, "/")
+                    : "/";
+            const loader = new THREE.CubeTextureLoader();
+            loader.setPath(base + "src/resources/sky/");
+            const self = this;
+            loader.load(
+                ["px.png", "nx.png", "py.png", "ny.png", "pz.png", "nz.png"],
+                (tex) => {
+                    if (typeof THREE.SRGBColorSpace !== "undefined") {
+                        tex.colorSpace = THREE.LinearSRGBColorSpace;
+                    }
+                    self.background.background = tex;
+                    self._fusLabyCubeTex = tex;
+                },
+                undefined,
+                (err) => {
+                    if (typeof console !== "undefined" && console.warn) {
+                        const p = base + "src/resources/sky/*.png";
+                        console.warn("[FUS Laby] skybox load failed; check " + p, err);
+                    }
+                }
+            );
+            this.backgroundCenter.add(this.cycleGroup);
+            return;
+        }
+
+        this._fusLabySkyboxMode = false;
 
         let size = 64;
         let scale = 256 / size + 2;
@@ -501,20 +787,36 @@ export default class WorldRenderer {
         // Center sky
         this.backgroundCenter.position.copy(this.camera.position);
 
+        if (this._fusLabySkyboxMode) {
+            return;
+        }
+
         // Rotate sky cycle
         let angle = this.minecraft.world.getCelestialAngle(partialTicks);
         this.cycleGroup.rotation.set(angle * Math.PI * 2 + Math.PI / 2, 0, 0);
     }
 
     setupFog(x, z, inWater, partialTicks) {
+        const bg = this._fusBackgroundColor;
+        const fog = this._fusSceneFog;
         if (inWater) {
-            let color = new THREE.Color(0.2, 0.2, 0.4);
-            this.background.background = color;
-            this.scene.fog = new THREE.Fog(color, 0.0025, 5);
+            bg.setRGB(0.2, 0.2, 0.4);
+            fog.color.copy(bg);
+            fog.near = 0.0025;
+            fog.far = 5;
         } else {
             let world = this.minecraft.world;
 
             let viewDistance = this.minecraft.settings.viewDistance * ChunkSection.SIZE;
+
+            if (this._fusLabySkyboxMode) {
+                bg.setRGB(0.53, 0.72, 0.92);
+                fog.color.copy(bg);
+                fog.near = 0.0025;
+                fog.far = viewDistance * 2;
+                return;
+            }
+
             let viewFactor = 1.0 - Math.pow(0.25 + 0.75 * this.minecraft.settings.viewDistance / 32.0, 0.25);
 
             let angle = world.getCelestialAngle(partialTicks);
@@ -530,122 +832,148 @@ export default class WorldRenderer {
             let green = (fogColor.y + (skyColor.y - fogColor.y) * viewFactor) * brightness;
             let blue = (fogColor.z + (skyColor.z - fogColor.z) * viewFactor) * brightness;
 
-            // Update background color
-            this.background.background = new THREE.Color(red, green, blue);
-
-            // Update fog color
-            this.scene.fog = new THREE.Fog(new THREE.Color(red, green, blue), 0.0025, viewDistance * 2);
+            bg.setRGB(red, green, blue);
+            fog.color.copy(bg);
+            fog.near = 0.0025;
+            fog.far = viewDistance * 2;
 
             let skyMesh = this.listSky.children[0];
             let voidMesh = this.listVoid.children[0];
             let starsMesh = this.listStars.children[0];
             let sunsetMesh = this.listSunset.children[0];
 
-            // Update sky and void color
-            skyMesh.material.color.set(new THREE.Color(skyColor.x, skyColor.y, skyColor.z));
-            voidMesh.material.color.set(new THREE.Color(
+            // Update sky and void color (in-place, no per-frame `new Color`)
+            skyMesh.material.color.set(skyColor.x, skyColor.y, skyColor.z);
+            voidMesh.material.color.set(
                 skyColor.x * 0.2 + 0.04,
                 skyColor.y * 0.2 + 0.04,
                 skyColor.z * 0.6 + 0.1
-            ));
+            );
 
             // Update star brightness
             if (starBrightness > 0) {
                 starsMesh.material.opacity = starBrightness;
-                starsMesh.material.color.set(new THREE.Color(starBrightness, starBrightness, starBrightness));
+                starsMesh.material.color.set(starBrightness, starBrightness, starBrightness);
             }
             this.listStars.visible = starBrightness > 0;
 
             // Update sunset
             if (sunsetColor !== null) {
                 sunsetMesh.material.opacity = sunsetColor.w;
-                sunsetMesh.material.color.set(new THREE.Color(sunsetColor.x, sunsetColor.y, sunsetColor.z));
+                sunsetMesh.material.color.set(sunsetColor.x, sunsetColor.y, sunsetColor.z);
                 sunsetMesh.rotation.x = MathHelper.toRadians(angle <= 0.5 ? 90 : 135);
             }
             sunsetMesh.visible = sunsetColor !== null;
         }
-
-        this.background.fog = this.scene.fog;
     }
 
     renderChunks(cameraChunkX, cameraChunkZ) {
         let world = this.minecraft.world;
         let renderDistance = this.minecraft.settings.viewDistance;
+        const provider = world.getChunkProvider();
+        const colBox = this._fusChunkColumnBox;
+        const lowMob = this.minecraft.fusLowTierMobile || this.minecraft.fusIosSafari;
 
-        // Update chunks
-        for (let [index, chunk] of world.getChunkProvider().getChunks()) {
-            let distanceX = Math.abs(cameraChunkX - chunk.x);
-            let distanceZ = Math.abs(cameraChunkZ - chunk.z);
-
-            // Is in render distance check
+        /**
+         * FUS: was `for (chunk of all loaded)` + distance check — on large shared worlds that
+         * accrue hundreds of out-of-radius chunks, every frame paid O(loaded × 16) frustum tests
+         * for chunks that are never on screen. Pass 1 only does O(loaded) int math; pass 2 walks
+         * the (2·rd−1)² *near* cells (≤81 when rd=5) and may skip 16 section tests with one column
+         * frustum reject.
+         */
+        for (const [, cFar] of provider.getChunks()) {
+            const distanceX = Math.abs(cameraChunkX - cFar.x);
+            const distanceZ = Math.abs(cameraChunkZ - cFar.z);
             if (distanceX < renderDistance && distanceZ < renderDistance) {
-                // Make chunk visible
+                continue;
+            }
+            cFar.group.visible = false;
+            if (cFar.loaded) {
+                cFar.unload();
+            }
+        }
+
+        const maxD = renderDistance - 1;
+        for (let ddx = -maxD; ddx <= maxD; ddx++) {
+            for (let ddz = -maxD; ddz <= maxD; ddz++) {
+                if (Math.abs(ddx) >= renderDistance || Math.abs(ddz) >= renderDistance) {
+                    continue;
+                }
+                const nx = cameraChunkX + ddx;
+                const nz = cameraChunkZ + ddz;
+                if (!provider.chunkExists(nx, nz)) {
+                    continue;
+                }
+                const chunk = provider.getChunkAt(nx, nz);
                 chunk.group.visible = true;
                 chunk.loaded = true;
 
-                // For all chunk sections
+                colBox.min.set(nx * 16, 0, nz * 16);
+                colBox.max.set(nx * 16 + 16, 256, nz * 16 + 16);
+                if (!this.frustum.intersectsBox(colBox)) {
+                    for (const y in chunk.sections) {
+                        chunk.sections[y].group.visible = false;
+                    }
+                    continue;
+                }
+
                 for (let y in chunk.sections) {
                     let chunkSection = chunk.sections[y];
-
-                    // Is in camera view check
                     if (this.frustum.intersectsBox(chunkSection.boundingBox) && !chunkSection.isEmpty()) {
-                        // Make section visible
                         chunkSection.group.visible = true;
-
-                        // Render chunk section
                         chunkSection.render();
-
-                        // Queue for rebuild
-                        if (chunkSection.isModified && !this.chunkSectionUpdateQueue.includes(chunkSection)) {
+                        if (chunkSection.isModified && !this._fusChunkInUpdateQueue.has(chunkSection)) {
+                            this._fusChunkInUpdateQueue.add(chunkSection);
                             this.chunkSectionUpdateQueue.push(chunkSection);
                         }
                     } else {
-                        // Hide section
                         chunkSection.group.visible = false;
                     }
-                }
-            } else {
-                // Hide chunk
-                chunk.group.visible = false;
-
-                // Unload chunk
-                if (chunk.loaded) {
-                    chunk.unload();
-
-                    // TODO Implement chunk unloading
-                    //let index = chunk.x + (chunk.z << 16);
-                    //world.getChunkProvider().getChunks().delete(index);
-                    //world.group.remove(chunk.group);
                 }
             }
         }
 
         // Sort update queue, chunk sections that are closer to the camera get a higher priority
-        this.chunkSectionUpdateQueue.sort((section1, section2) => {
-            let distance1 = Math.floor(Math.pow(section1.x - cameraChunkX, 2) + Math.pow(section1.z - cameraChunkZ, 2));
-            let distance2 = Math.floor(Math.pow(section2.x - cameraChunkX, 2) + Math.pow(section2.z - cameraChunkZ, 2));
-            return distance1 - distance2;
-        });
+        /** FUS: `render` runs every frame; on chunk streaming, sorting the queue + `world.group`
+         *  children is pure CPU. Touch: sort less often; use diff² (no `Math.pow`). */
+        this._fusRenderChunksCount++;
+        const vd = this.getEffectiveViewDistanceChunks();
+        const sortEvery =
+            typeof this.minecraft.fusChunkRenderSortEvery === "number" && Number.isFinite(this.minecraft.fusChunkRenderSortEvery)
+                ? Math.max(1, Math.min(20, Math.floor(this.minecraft.fusChunkRenderSortEvery)))
+                : lowMob
+                    ? vd >= 4
+                        ? 8
+                        : 5
+                    : 2;
+        if (this._fusRenderChunksCount % sortEvery === 1) {
+            const cx = cameraChunkX;
+            const cz = cameraChunkZ;
+            this.chunkSectionUpdateQueue.sort((s1, s2) => {
+                const d1x = s1.x - cx;
+                const d1z = s1.z - cz;
+                const d2x = s2.x - cx;
+                const d2z = s2.z - cz;
+                return d1x * d1x + d1z * d1z - (d2x * d2x + d2z * d2z);
+            });
+            world.group.children.sort((a, b) => {
+                const d1x = a.chunkX - cx;
+                const d1z = a.chunkZ - cz;
+                const d2x = b.chunkX - cx;
+                const d2z = b.chunkZ - cz;
+                return d2x * d2x + d2z * d2z - (d1x * d1x + d1z * d1z);
+            });
+        }
 
-        // Update render order of chunks
-        world.group.children.sort((a, b) => {
-            let distance1 = Math.floor(Math.pow(a.chunkX - cameraChunkX, 2) + Math.pow(a.chunkZ - cameraChunkZ, 2));
-            let distance2 = Math.floor(Math.pow(b.chunkX - cameraChunkX, 2) + Math.pow(b.chunkZ - cameraChunkZ, 2));
-            return distance2 - distance1;
-        });
-
-        // Flush by rebuilding 8 chunk sections
+        // Flush by rebuilding several chunk sections (block break / place catch-up).
         if (this.flushRebuild) {
             this.flushRebuild = false;
 
-            for (let i = 0; i < 8; i++) {
-                if (this.chunkSectionUpdateQueue.length !== 0) {
-                    let chunkSection = this.chunkSectionUpdateQueue.shift();
-                    if (chunkSection != null) {
-                        // Rebuild chunk
-                        chunkSection.rebuild(this);
-                    }
-                }
+            const flushCap = typeof this.minecraft.fusChunkFlushRebuildCap === "number" && Number.isFinite(this.minecraft.fusChunkFlushRebuildCap)
+                ? Math.max(1, Math.min(12, Math.floor(this.minecraft.fusChunkFlushRebuildCap)))
+                : 8;
+            for (let i = 0; i < flushCap; i++) {
+                this._fusDequeueAndRebuildOneChunkSection();
             }
         }
     }
@@ -744,6 +1072,14 @@ export default class WorldRenderer {
         if (typeof this.minecraft.fusSyncFpToolIntoFirstPerson === 'function') {
             this.minecraft.fusSyncFpToolIntoFirstPerson(player, stack, partialTicks, hasItem);
         }
+        const inv1p =
+            Number.isFinite(this.minecraft.fusSpawnInvulnUntilMs) &&
+            Date.now() < this.minecraft.fusSpawnInvulnUntilMs
+        if (inv1p) {
+            stack.visible = (Math.floor(Date.now() / 150) & 1) === 0
+        } else {
+            stack.visible = true
+        }
     }
 
     renderBlockHitBox(player, partialTicks) {
@@ -816,5 +1152,90 @@ export default class WorldRenderer {
         }
         this.webRenderer.clear();
         this.overlay.clear();
+    }
+
+    /**
+     * FUS Laby: pre-mesh a box of chunks at the current player position (same window as
+     * {@link #renderChunks}) by marking sections modified, enqueueing without frustum
+     * culling, then draining the mesh queue in bursts per rAF. Run while the boot loader
+     * is up so the first minutes of play don’t pay all rebuild cost at once.
+     *
+     * @param {{ maxTotalMs?: number, stepsPerRaf?: number }} [opts]
+     * @returns {Promise<void>}
+     */
+    async fusPrewarmSpawnAreaMeshes(opts = {}) {
+        const maxTotalMs = Number.isFinite(opts.maxTotalMs) ? opts.maxTotalMs : 10000;
+        const stepsPerRaf = Math.max(4, Math.min(80, Math.floor(opts.stepsPerRaf) || 28));
+        const player = this.minecraft.player;
+        const world = this.minecraft.world;
+        if (!player || !world) {
+            return;
+        }
+        const cx = Math.floor(player.x) >> 4;
+        const cz = Math.floor(player.z) >> 4;
+        const rd = this.minecraft.settings?.viewDistance;
+        if (!Number.isFinite(rd) || rd <= 0) {
+            return;
+        }
+        for (let ndx = -(rd - 1); ndx <= rd - 1; ndx++) {
+            for (let ndz = -(rd - 1); ndz <= rd - 1; ndz++) {
+                if (Math.abs(ndx) >= rd || Math.abs(ndz) >= rd) {
+                    continue;
+                }
+                const chunk = world.getChunkAt(cx + ndx, cz + ndz);
+                if (chunk) {
+                    chunk.setModifiedAllSections();
+                }
+            }
+        }
+        for (const [, chunk] of world.getChunkProvider().getChunks()) {
+            const ddx = Math.abs(cx - chunk.x);
+            const ddz = Math.abs(cz - chunk.z);
+            if (ddx >= rd || ddz >= rd) {
+                continue;
+            }
+            chunk.group.visible = true;
+            chunk.loaded = true;
+            for (const y in chunk.sections) {
+                const section = chunk.sections[y];
+                if (section.isEmpty()) {
+                    continue;
+                }
+                section.group.visible = true;
+                if (section.isModified && !this._fusChunkInUpdateQueue.has(section)) {
+                    this._fusChunkInUpdateQueue.add(section);
+                    this.chunkSectionUpdateQueue.push(section);
+                }
+            }
+        }
+        this.chunkSectionUpdateQueue.sort((a, b) => {
+            const d1 = (a.x - cx) * (a.x - cx) + (a.z - cz) * (a.z - cz);
+            const d2 = (b.x - cx) * (b.x - cx) + (b.z - cz) * (b.z - cz);
+            return d1 - d2;
+        });
+
+        return new Promise((resolve) => {
+            const t0 = typeof performance !== "undefined" ? performance.now() : 0;
+            const step = () => {
+                for (let s = 0; s < stepsPerRaf && this.chunkSectionUpdateQueue.length > 0; s++) {
+                    this._fusDequeueAndRebuildOneChunkSection();
+                }
+                const now = typeof performance !== "undefined" ? performance.now() : t0;
+                if (this.chunkSectionUpdateQueue.length > 0 && now - t0 < maxTotalMs) {
+                    if (typeof requestAnimationFrame === "function") {
+                        requestAnimationFrame(step);
+                    } else {
+                        setTimeout(step, 0);
+                    }
+                } else {
+                    resolve();
+                }
+            };
+            if (typeof requestAnimationFrame === "function") {
+                requestAnimationFrame(step);
+            } else {
+                step();
+            }
+        });
     }
 }

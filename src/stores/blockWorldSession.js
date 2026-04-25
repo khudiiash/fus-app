@@ -2,8 +2,8 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 
 /**
- * While the voxel world is running, student chrome (header + bottom nav) is hidden
- * and the HUD can sit above the page chrome.
+ * Laby (and block-world) “play” mode: bottom tab bar hidden; a slim app header can stay
+ * visible (see `StudentLayout` + `--fus-laby-chrome-top`).
  */
 export const useBlockWorldSession = defineStore('blockWorldSession', () => {
   const immersive = ref(false)

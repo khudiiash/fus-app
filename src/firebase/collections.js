@@ -23,6 +23,79 @@ export const txCol       = () => collection(db, 'transactions')
 export const achievementsCol = () => collection(db, 'achievements')
 export const subjectsCol     = () => collection(db, 'subjects')
 
+/** @type {Map<string, Promise<unknown>>} */
+const _userDocWriteTails = new Map()
+
+/**
+ * Laby can enqueue many XP / coin grants per second. Concurrent `runTransaction` calls on
+ * the same `users/{uid}` doc read the same version and all fail on commit with
+ * `failed-precondition` (the SDK may still log each failed Commit — a later attempt can
+ * still succeed). Serialize mutations from this tab so at most one runs at a time.
+ * (Other tabs / devices can still race — the retry layer handles that.)
+ * @template T
+ * @param {string} uid
+ * @param {() => Promise<T>} fn
+ * @returns {Promise<T>}
+ */
+function runSerializedUserDocWrite(uid, fn) {
+  const key = String(uid || '')
+  if (!key) return fn()
+  const prev = _userDocWriteTails.get(key) || Promise.resolve()
+  const out = /** @type {Promise<T>} */ (prev.catch(() => {}).then(() => fn()))
+  _userDocWriteTails.set(key, out)
+  return out
+}
+
+/**
+ * Laby and other world code can post several updates to the same `users/{uid}` doc in one
+ * second (XP, mob coins, profile listeners). Firestore’s transaction commit uses a version
+ * precondition; if the doc changes between our read and commit, the REST `Commit` returns
+ * 400 + `failed-precondition` even after the client’s built-in retries. Re-run the full
+ * {@link runTransaction} a few more times with backoff.
+ * @param {unknown} e
+ */
+function isFirestoreTransactionConflictError(e) {
+  const c = e && /** @type {{ code?: string }} */ (e).code
+  if (c === 'failed-precondition' || c === 'aborted' || c === 'deadline-exceeded') return true
+  let m = ''
+  try {
+    m = String((e && /** @type {{ message?: string }} */ (e).message) || e || '')
+  } catch {
+    m = ''
+  }
+  if (m.includes('failed-precondition') || m.includes('ABORTED') || m.includes('aborted')) return true
+  try {
+    const j = JSON.stringify(e)
+    if (j.includes('failed-precondition') || j.includes('aborted')) return true
+  } catch {
+    /* ignore */
+  }
+  return false
+}
+
+/**
+ * @template T
+ * @param {() => Promise<T>} runOnce
+ * @param {{ maxAttempts?: number }} [opts]
+ * @returns {Promise<T>}
+ */
+async function withFirestoreTransactionRetry(runOnce, opts = {}) {
+  const max = Math.max(1, Math.min(35, Number(opts.maxAttempts) || 20))
+  let last
+  for (let i = 0; i < max; i++) {
+    try {
+      return await runOnce()
+    } catch (e) {
+      last = e
+      if (!isFirestoreTransactionConflictError(e) || i >= max - 1) {
+        throw e
+      }
+      await new Promise((r) => setTimeout(r, 40 + i * 40))
+    }
+  }
+  throw last
+}
+
 // ─── User helpers ─────────────────────────────────────────────────────────────
 export async function getUser(uid) {
   const snap = await getDoc(doc(db, 'users', uid))
@@ -786,66 +859,138 @@ export async function grantStudentCoinsFromGame(uid, amount, note = 'Блок-с
 export async function grantLabyGameplayXp(uid, xpDelta, note = 'Лабі-світ — бій') {
   const amt = Math.max(0, Math.min(200, Math.round(Number(xpDelta) || 0)))
   if (amt === 0 || !uid) return
-  await runTransaction(db, async (tx) => {
-    const uRef = doc(db, 'users', uid)
-    const snap = await tx.get(uRef)
-    if (!snap.exists()) throw new Error('User not found')
-    const u = snap.data()
-    const newXp = (u.xp || 0) + amt
-    tx.update(uRef, {
-      xp: newXp,
-      level: calcLevel(newXp),
-    })
-  })
+  return runSerializedUserDocWrite(uid, () =>
+    withFirestoreTransactionRetry(() =>
+      runTransaction(db, async (tx) => {
+        const uRef = doc(db, 'users', uid)
+        const snap = await tx.get(uRef)
+        if (!snap.exists()) throw new Error('User not found')
+        const u = snap.data()
+        const newXp = (u.xp || 0) + amt
+        tx.update(uRef, {
+          xp: newXp,
+          level: calcLevel(newXp),
+        })
+      })
+    )
+  )
 }
 
-/** Max coins per calendar day (UTC) from Laby mob pickups — economy guard. */
-export const LABY_MOB_COINS_DAILY_CAP = 50
+/** Max coins per calendar day (UTC) from Laby mob pickups. Large value = no practical cap. */
+export const LABY_MOB_COINS_DAILY_CAP = 1_000_000_000
 
 /**
  * Grant coins from Laby mob drops with a daily cap (UTC day, field {@code labyMobCoinDay} / {@code labyMobCoinsToday}).
  * @returns {Promise<{ granted: number, skipped: number }>}
  */
 export async function grantLabyMobCoinsCapped(uid, amount, note = 'Лабі-світ — здобич') {
-  const want = Math.max(0, Math.min(5, Math.round(Number(amount) || 0)))
+  /** Aligned with world drop coin max (20) so one pickup does not discard the rest. */
+  const want = Math.max(0, Math.min(20, Math.round(Number(amount) || 0)))
   if (want === 0 || !uid) return { granted: 0, skipped: want }
-  const dayKey = new Date().toISOString().slice(0, 10)
-  let granted = 0
-  await runTransaction(db, async (tx) => {
-    const uRef = doc(db, 'users', uid)
-    const snap = await tx.get(uRef)
-    if (!snap.exists()) throw new Error('User not found')
-    const u = snap.data()
-    const prevDay = typeof u.labyMobCoinDay === 'string' ? u.labyMobCoinDay : ''
-    let used = Number(u.labyMobCoinsToday) || 0
-    if (prevDay !== dayKey) {
-      used = 0
+  return runSerializedUserDocWrite(uid, async () => {
+    const dayKey = new Date().toISOString().slice(0, 10)
+    let granted = 0
+    await withFirestoreTransactionRetry(() =>
+      runTransaction(db, async (tx) => {
+        const uRef = doc(db, 'users', uid)
+        const snap = await tx.get(uRef)
+        if (!snap.exists()) throw new Error('User not found')
+        const u = snap.data()
+        const prevDay = typeof u.labyMobCoinDay === 'string' ? u.labyMobCoinDay : ''
+        let used = Number(u.labyMobCoinsToday) || 0
+        if (prevDay !== dayKey) {
+          used = 0
+        }
+        const room = Math.max(0, LABY_MOB_COINS_DAILY_CAP - used)
+        granted = Math.min(want, room)
+        if (granted <= 0) {
+          return
+        }
+        const newCoins = (u.coins || 0) + granted
+        const newXp = (u.xp || 0) + Math.ceil(granted * 1.5)
+        tx.update(uRef, {
+          coins: newCoins,
+          xp: newXp,
+          level: calcLevel(newXp),
+          labyMobCoinDay: dayKey,
+          labyMobCoinsToday: used + granted,
+        })
+      })
+    )
+    if (granted > 0) {
+      await logTransaction({
+        type: 'award',
+        fromUid: uid,
+        toUid: uid,
+        amount: granted,
+        note: String(note || '').slice(0, 200),
+      })
     }
-    const room = Math.max(0, LABY_MOB_COINS_DAILY_CAP - used)
-    granted = Math.min(want, room)
-    if (granted <= 0) {
-      return
-    }
-    const newCoins = (u.coins || 0) + granted
-    const newXp = (u.xp || 0) + Math.ceil(granted * 1.5)
-    tx.update(uRef, {
-      coins: newCoins,
-      xp: newXp,
-      level: calcLevel(newXp),
-      labyMobCoinDay: dayKey,
-      labyMobCoinsToday: used + granted,
-    })
+    return { granted, skipped: want - granted }
   })
-  if (granted > 0) {
-    await logTransaction({
-      type: 'award',
-      fromUid: uid,
-      toUid: uid,
-      amount: granted,
-      note: String(note || '').slice(0, 200),
-    })
-  }
-  return { granted, skipped: want - granted }
+}
+
+/**
+ * Single Firestore write for a mob kill: combat XP + (optional) Laby-capped mob coins in one
+ * transaction. Avoids piling two {@link runSerializedUserDocWrite} hops (coins then XP) so
+ * profile updates (and the listener UI) are not minutes behind a burst of other writes.
+ * Coin XP (1.5× per coin) matches {@link grantLabyMobCoinsCapped}.
+ *
+ * @returns {Promise<{ granted: number, skipped: number, xpCombat: number, ok: boolean }>}
+ */
+export async function grantLabyMobKillPayout(
+  uid,
+  { xp = 0, coins = 0, note = 'Лабі — здобич з мобів' } = {},
+) {
+  const xpCombat = Math.max(0, Math.min(200, Math.round(Number(xp) || 0)))
+  const want = Math.max(0, Math.min(20, Math.round(Number(coins) || 0)))
+  if (!uid) return { granted: 0, skipped: want, xpCombat: 0, ok: false }
+  if (xpCombat === 0 && want === 0) return { granted: 0, skipped: 0, xpCombat: 0, ok: true }
+  return runSerializedUserDocWrite(uid, async () => {
+    let granted = 0
+    let skipped = 0
+    await withFirestoreTransactionRetry(() =>
+      runTransaction(db, async (tx) => {
+        const uRef = doc(db, 'users', uid)
+        const snap = await tx.get(uRef)
+        if (!snap.exists()) throw new Error('User not found')
+        const u = snap.data()
+        const dayKey = new Date().toISOString().slice(0, 10)
+        const prevDay = typeof u.labyMobCoinDay === 'string' ? u.labyMobCoinDay : ''
+        let used = Number(u.labyMobCoinsToday) || 0
+        if (prevDay !== dayKey) {
+          used = 0
+        }
+        const room = Math.max(0, LABY_MOB_COINS_DAILY_CAP - used)
+        granted = want > 0 ? Math.min(want, room) : 0
+        skipped = want - granted
+        const coinXp = granted > 0 ? Math.ceil(granted * 1.5) : 0
+        const newXp = (u.xp || 0) + xpCombat + coinXp
+        const newCoins = (u.coins || 0) + granted
+        /** @type {Record<string, unknown>} */
+        const up = {
+          xp: newXp,
+          level: calcLevel(newXp),
+        }
+        if (granted > 0) {
+          up.coins = newCoins
+          up.labyMobCoinDay = dayKey
+          up.labyMobCoinsToday = used + granted
+        }
+        tx.update(uRef, up)
+      }),
+    )
+    if (granted > 0) {
+      await logTransaction({
+        type: 'award',
+        fromUid: uid,
+        toUid: uid,
+        amount: granted,
+        note: String(note || '').slice(0, 200),
+      })
+    }
+    return { granted, skipped, xpCombat, ok: true }
+  })
 }
 
 /**
@@ -910,6 +1055,194 @@ export async function grantShopSkinBySkinId(uid, skinId) {
     })
   })
   return true
+}
+
+/**
+ * PvP-loss: atomically debit 1 coin from the user's profile. Returns `{ debited: 1 }` on
+ * success, `{ debited: 0 }` if the user had no coins (user spec: "If no coin on the
+ * loser, no one gets anything"). Caller only spawns a physical coin drop when
+ * `debited > 0`.
+ *
+ * @param {string} uid
+ * @returns {Promise<{ debited: 0 | 1 }>}
+ */
+export async function debitPvpCoinFromUser(uid) {
+  if (!uid) return { debited: 0 }
+  let debited = 0
+  await runTransaction(db, async (tx) => {
+    const uRef = doc(db, 'users', uid)
+    const snap = await tx.get(uRef)
+    if (!snap.exists()) return
+    const u = snap.data()
+    const coins = Number(u.coins) || 0
+    if (coins < 1) return
+    debited = 1
+    tx.update(uRef, { coins: coins - 1 })
+  })
+  if (debited > 0) {
+    await logTransaction({
+      type: 'award',
+      fromUid: uid,
+      toUid: uid,
+      amount: -1,
+      note: 'PvP — програш (−1 монета)',
+    }).catch(() => {})
+  }
+  return { debited }
+}
+
+/**
+ * PK-death: debit coins + random items from the fallen PK's profile. Returns the
+ * metadata the world-drops installer needs to spawn one physical drop per loot unit.
+ *
+ * User spec (2026-04, tightened):
+ *   • Karma 1: **1–3** coins (plus 0–1 common item only, see below).
+ *   • Karma 2: **2–5** coins; higher karma → wider range and higher caps, up to **50** coins
+ *     at the top end (victim’s balance still caps what actually drops).
+ *   • "All must drop around the killed PK physically" (world drops, caller side).
+ *
+ * Implementation notes (coins):
+ *   • k=1: uniform 1..3. k≥2: `lo` grows from 2@k=2 to ~26@k=50, `hi` from 5@k=2 to 50@k=50
+ *     (integers, inclusive random).
+ *   • Item count = random int in `[k-1, k]` (clamped to what's in inventory). So karma 1
+ *     drops 0–1 item, karma 2 drops 1–2, …
+ *   • Rarity gate: karma 1 only drops `rarity === 'common'` items; karma ≥ 2 unlocks
+ *     any non-mystery-box rarity. This matches the "common / rare" tiering in the spec.
+ *   • Mystery boxes and non-existent item docs are skipped — they would break the
+ *     physical drop (no stable bwSeedKey / skinId for the grant side to consume).
+ *
+ * Debits happen in a single Firestore transaction so a PK that dies with exactly N
+ * coins and M items never over-drops (e.g. reading inventory, then racing the shop).
+ *
+ * @param {string} uid
+ * @param {{ karma: number }} opts
+ * @returns {Promise<{ coinsDropped: number, items: Array<{ subtype: 'tool'|'skin'|'block'|'accessory'|'item', payload: { bwSeedKey?: string, skinId?: string }, label: string, itemId: string }> }>}
+ */
+export async function debitPkLootFromUser(uid, { karma }) {
+  const k = Math.max(1, Math.min(50, Math.floor(Number(karma) || 1)))
+  /** PK coin drop count — *before* capping to `coinsHave` in the transaction. */
+  const coinTarget =
+    k === 1
+      ? 1 + Math.floor(Math.random() * 3)
+      : (() => {
+          const lo = 2 + Math.floor(((k - 2) * 24) / 48)
+          const hi = Math.min(50, 5 + Math.floor(((k - 2) * 45) / 48))
+          const a = Math.min(lo, hi)
+          const b = Math.max(lo, hi)
+          return a + Math.floor(Math.random() * (b - a + 1))
+        })()
+  const itemMin = Math.max(0, k - 1)
+  const itemMax = k
+  const itemTarget = Math.floor(Math.random() * (itemMax - itemMin + 1)) + itemMin
+
+  const uSnap = await getDoc(doc(db, 'users', uid))
+  if (!uSnap.exists()) return { coinsDropped: 0, items: [] }
+  const u0 = uSnap.data()
+  const coinsHave = Number(u0.coins) || 0
+  const inv0 = Array.isArray(u0.inventory) ? u0.inventory : []
+
+  /** Limit fan-out — 50 reads is already generous for a single drop event. An inventory
+   *  bigger than that means the PK was sitting on a hoard; we'll only sample the first
+   *  50 which still gives variety without a Firestore cost spike. */
+  const invToConsider = inv0.slice(0, 50)
+  const itemDocs = await Promise.all(
+    invToConsider.map((iid) => getDoc(doc(db, 'items', iid)).catch(() => null)),
+  )
+  /** @type {Array<{ itemId: string, data: any }>} */
+  const eligible = []
+  for (let i = 0; i < invToConsider.length; i++) {
+    const snap = itemDocs[i]
+    if (!snap || !snap.exists()) continue
+    const it = snap.data() || {}
+    if (it.category === 'mystery_box') continue
+    if (it.active === false) continue
+    const rarity = it.rarity || 'common'
+    if (k < 2 && rarity !== 'common') continue
+    eligible.push({ itemId: invToConsider[i], data: it })
+  }
+  for (let i = eligible.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[eligible[i], eligible[j]] = [eligible[j], eligible[i]]
+  }
+  const picked = eligible.slice(0, itemTarget)
+
+  const coinsToDrop = Math.min(coinsHave, coinTarget)
+
+  /** Single atomic debit so a PK that dies at exactly N coins never drops N+1. */
+  await runTransaction(db, async (tx) => {
+    const uRef = doc(db, 'users', uid)
+    const snap = await tx.get(uRef)
+    if (!snap.exists()) return
+    const user = snap.data()
+    let newInv = Array.isArray(user.inventory) ? [...user.inventory] : []
+    let newCounts = { ...(user.inventoryCounts || {}) }
+    for (const { itemId } of picked) {
+      const r = consumeOneFromInventory(newInv, newCounts, itemId)
+      if (!r) continue
+      newInv = r.inventory
+      newCounts = r.inventoryCounts
+    }
+    const coinsNow = Number(user.coins) || 0
+    const actualCoinDebit = Math.min(coinsNow, coinsToDrop)
+    tx.update(uRef, {
+      coins: coinsNow - actualCoinDebit,
+      inventory: newInv,
+      inventoryCounts: newCounts,
+    })
+  })
+
+  const items = picked.map(({ itemId, data }) => {
+    const cat = data.category || 'item'
+    /** Map to visual subtype used by `fusWorldDropsInstall`. We only ship `skin` and a
+     *  generic `item` cube today — future tool/block/accessory subtypes will wire up
+     *  dedicated colour palettes automatically. */
+    const subtype =
+      cat === 'skin'
+        ? 'skin'
+        : cat === 'tool'
+          ? 'tool'
+          : cat === 'block' || cat === 'blockWorld' || cat === 'block_world'
+            ? 'block'
+            : cat === 'accessory' || cat === 'cosmetic'
+              ? 'accessory'
+              : 'item'
+    /** Payload that `__FUS_GRANT_LOOT__` consumes on pickup. We prefer `skinId` when it's
+     *  a skin (so the grant helper wires it into the avatar), fall back to `bwSeedKey`
+     *  for everything else. */
+    const payload = {}
+    if (cat === 'skin' && typeof data.skinId === 'string' && data.skinId) {
+      payload.skinId = data.skinId
+    } else if (typeof data.bwSeedKey === 'string' && data.bwSeedKey) {
+      payload.bwSeedKey = data.bwSeedKey
+    }
+    if (subtype === 'block') {
+      const bid = Number(
+        data.minecraftBlockId ?? data.mcBlockId ?? data.labyTerrainIndex ?? data.blockId,
+      )
+      if (Number.isFinite(bid) && bid > 0) {
+        payload.blockId = Math.floor(bid)
+      }
+    }
+    return {
+      subtype,
+      payload,
+      label: (data.name || cat || 'Предмет').slice(0, 24),
+      itemId,
+    }
+  })
+
+  if (coinsToDrop > 0 || items.length > 0) {
+    await logTransaction({
+      type: 'award',
+      fromUid: uid,
+      toUid: uid,
+      amount: -coinsToDrop,
+      itemIds: items.map((i) => i.itemId),
+      note: `PK-смерть: карма ${k}, монети −${coinsToDrop}, предмети −${items.length}`,
+    }).catch(() => {})
+  }
+
+  return { coinsDropped: coinsToDrop, items }
 }
 
 /**

@@ -131,6 +131,9 @@ export default class GameWindow {
             this.initialSoundEngine();
         });
         this.registerListener(document, 'mousemove', event => {
+            if (event.target && event.target.closest && event.target.closest(".dg")) {
+                return;
+            }
             this.mouseX = event.clientX / this.scaleFactor;
             this.mouseY = event.clientY / this.scaleFactor;
 
@@ -262,10 +265,8 @@ export default class GameWindow {
             return { x, y };
         };
 
-        // FUS: geometry must match IngameOverlay.renderHotbar (padLeft, extraGap, extraW).
+        // FUS: geometry must match IngameOverlay.renderHotbar (padLeft; no overflow column in Laby embed).
         const FUS_HOTBAR_PAD_LEFT = 10;
-        const FUS_HOTBAR_EXTRA_GAP = 2;
-        const FUS_HOTBAR_EXTRA_W = 20;
 
         const fusHotbarSlotAt = (gx, gy) => {
             const w = this.width;
@@ -273,9 +274,6 @@ export default class GameWindow {
             const hbX = w / 2 - 91 - FUS_HOTBAR_PAD_LEFT;
             const hbY = h - 22;
             if (gy < hbY - 6 || gy > hbY + 26) return null;
-            const ex0 = hbX + 200 + FUS_HOTBAR_EXTRA_GAP;
-            const ex1 = ex0 + FUS_HOTBAR_EXTRA_W;
-            if (gx >= ex0 - 2 && gx <= ex1 + 2) return 9;
             if (gx < hbX - 2 || gx > hbX + 182) return null;
             const slot = Math.floor((gx - hbX) / 20);
             if (slot < 0 || slot > 8) return null;
@@ -285,7 +283,8 @@ export default class GameWindow {
         const onWindowHotbarPointerDown = (ev) => {
             const fusEmbed = typeof window !== "undefined" && window.__LABY_MC_FUS_EMBED__;
             if (!this.mobileDevice && !fusEmbed) return;
-            if (!ev.isPrimary) return;
+            // Ignore secondary mouse/pen buttons only — some Android browsers mis-set `isPrimary` on touch.
+            if (!ev.isPrimary && ev.pointerType && ev.pointerType !== "touch") return;
             if (this.minecraft.currentScreen !== null) return;
             if (!this.minecraft.isInGame()) return;
             const inv = this.minecraft.player?.inventory;
@@ -293,18 +292,6 @@ export default class GameWindow {
             const { x, y } = clientToGame(ev);
             const slot = fusHotbarSlotAt(x, y);
             if (slot === null) return;
-            if (slot === 9) {
-                try {
-                    if (typeof window.__fusLabyOpenHotbarExtras === "function") {
-                        window.__fusLabyOpenHotbarExtras();
-                    }
-                } catch (_) {
-                    /* ignore */
-                }
-                ev.preventDefault();
-                ev.stopImmediatePropagation();
-                return;
-            }
             inv.selectedSlotIndex = slot;
             this.mouseX = x;
             this.mouseY = y;
@@ -316,7 +303,7 @@ export default class GameWindow {
 
         const onPointerDown = (ev) => {
             if (this.minecraft.currentScreen === null) return;
-            if (!ev.isPrimary) return;
+            if (!ev.isPrimary && ev.pointerType && ev.pointerType !== "touch") return;
             const { x, y } = clientToGame(ev);
             this.mouseX = x;
             this.mouseY = y;
@@ -519,15 +506,47 @@ export default class GameWindow {
         let worldRenderer = this.minecraft.worldRenderer;
         let itemRenderer = this.minecraft.itemRenderer;
 
+        let dpr =
+            typeof window !== "undefined" &&
+            typeof window.devicePixelRatio === "number" &&
+            window.devicePixelRatio > 0
+                ? window.devicePixelRatio
+                : 1;
+        let webglPr = dpr;
+        const mc = this.minecraft;
+        /**
+         * Fill rate is the main limiter for 60fps at chunk radius 5 on high-DPR Android phones.
+         * {@link LabyJsMinecraftView} sets {@code fusWebglPixelRatioMax} after embed boot; until
+         * then, Laby Android still uses the UA fallback below so the first resize matches.
+         */
+        const cap = mc && typeof mc.fusWebglPixelRatioMax === "number" && Number.isFinite(mc.fusWebglPixelRatioMax) ? mc.fusWebglPixelRatioMax : null;
+        if (cap != null && cap > 0) {
+            webglPr = Math.min(dpr, cap);
+        } else if (
+            typeof window !== "undefined" &&
+            window.__LABY_MC_FUS_EMBED__ &&
+            typeof navigator !== "undefined" &&
+            /Android/i.test(navigator.userAgent)
+        ) {
+            webglPr = Math.min(dpr, 1.25);
+        }
+
         // Update world renderer size and camera
         worldRenderer.camera.aspect = this.width / this.height;
         worldRenderer.camera.updateProjectionMatrix();
+        worldRenderer.webRenderer.setPixelRatio(webglPr);
         worldRenderer.webRenderer.setSize(wrapperWidth, wrapperHeight);
 
         // Update item renderer size and camera
+        /** {@link ItemRenderer#render} builds an {@link THREE.OrthographicCamera} in **logical**
+         *  game units ({@code this.width} × {@code this.height}) — the same space as
+         *  {@link IngameOverlay#renderHotbar} uses for slot centres. The WebGL buffer size must
+         *  share that 1:1 span; using {@code wrapperWidth} (logical × {@code scaleFactor}) stretched
+         *  the hotbar 3D layer vs the 2D strip (icons “floating” above cells). */
         itemRenderer.camera.aspect = this.width / this.height;
         itemRenderer.camera.updateProjectionMatrix();
-        itemRenderer.webRenderer.setSize(wrapperWidth, wrapperHeight);
+        itemRenderer.webRenderer.setPixelRatio(webglPr);
+        itemRenderer.webRenderer.setSize(this.width, this.height);
 
         // Update canvas 2d size
         this.canvas.style.width = wrapperWidth + "px";
@@ -620,8 +639,13 @@ export default class GameWindow {
         if (prevLock !== nextLock) {
             let currentScreen = this.minecraft.currentScreen;
 
-            // Open in-game menu
-            if (currentScreen === null && !nextLock) {
+            // Open in-game menu (skip in FUS Laby embed: Vue death/pause layer handles UX; ESC
+            // should not open the block-world pause screen on desktop)
+            if (
+                currentScreen === null &&
+                !nextLock &&
+                !(typeof window !== "undefined" && window.__LABY_MC_FUS_EMBED__)
+            ) {
                 this.minecraft.displayScreen(new GuiIngameMenu());
             }
 
@@ -634,14 +658,27 @@ export default class GameWindow {
     }
 
     requestCursorUpdate() {
-        // Check if the current state doesn't match the canvas lock
-        if (this.mouseInsideWindow && this.focusState.isLock() !== this.isCursorLockedToCanvas()) {
-            // Request cursor lock depending on the state
-            if (this.focusState.isLock()) {
-                this.canvas.requestPointerLock();
-            } else {
-                document.exitPointerLock();
+        // Match desired lock state to the browser. Unlock must **not** be gated on
+        // `mouseInsideWindow` — with pointer lock active that flag is often false, so
+        // inventory / Vue overlays would never get `exitPointerLock` and the cursor stayed trapped.
+        const wantsLock = this.focusState.isLock();
+        const locked = this.isCursorLockedToCanvas();
+        if (wantsLock === locked) {
+            return;
+        }
+        if (!wantsLock) {
+            const exit = document.exitPointerLock || document.webkitExitPointerLock;
+            if (typeof exit === "function" && locked) {
+                try {
+                    exit.call(document);
+                } catch {
+                    /* ignore */
+                }
             }
+            return;
+        }
+        if (this.mouseInsideWindow) {
+            this.canvas.requestPointerLock();
         }
     }
 
@@ -698,7 +735,6 @@ export default class GameWindow {
         if (typeof window !== "undefined" && window.__LABY_MC_FUS_EMBED__) {
             return;
         }
-        this.openUrl(Minecraft.URL_GITHUB);
     }
 
     async getClipboardText() {

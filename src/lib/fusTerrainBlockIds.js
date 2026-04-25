@@ -1,12 +1,12 @@
 /**
- * FUS shop / Firestore blockWorld.blockType uses a small catalog index (0–12).
- * js-minecraft World.setBlockAt expects engine block ids (see BlockRegistry in js-minecraft).
+ * FUS shop / Firestore `blockWorld.blockType` = catalog index. Maps to engine block ids
+ * (js-minecraft {@link BlockRegistry}).
  *
- * RTDB worldBlockEdits cells historically stored catalog indices; new clients
- * write protocol v2: t and p fields plus v=2 meaning t is an engine block id.
+ * RTDB: prefer protocol v2 so `t` is always an engine id; when {@code v !== 2}, values in
+ * {@code 0..CATALOG_LEN-1} are treated as **catalog** indices (not engine ids, even <20).
  */
 
-/** @type {readonly number[]} index = FUS catalog, value = engine block id */
+/** @type {readonly number[]} catalog index → engine block id */
 export const FUS_CATALOG_TO_ENGINE_BLOCK_ID = [
   2, // 0 grass
   12, // 1 sand
@@ -21,7 +21,7 @@ export const FUS_CATALOG_TO_ENGINE_BLOCK_ID = [
   20, // 10 glass
   7, // 11 — unused in seeds; bedrock fallback
   9, // 12 water
-  21, // 13 indestructible (shop-only, see BlockIndestructible engine block)
+  21, // 13 indestructible obsidian (shop — engine id 21, see {@link BlockRegistry#INDESTRUCTIBLE_OBSIDIAN})
 ]
 
 /**
@@ -43,11 +43,11 @@ export function decodeWorldBlockTypeFromRtdb(val) {
   if (v === WORLD_BLOCK_EDIT_PROTOCOL_V2) {
     return id
   }
-  if (id > 12) {
-    return id
+  const n = FUS_CATALOG_TO_ENGINE_BLOCK_ID.length
+  if (id >= 0 && id < n) {
+    return FUS_CATALOG_TO_ENGINE_BLOCK_ID[id] ?? 0
   }
-  const mapped = FUS_CATALOG_TO_ENGINE_BLOCK_ID[id]
-  return typeof mapped === 'number' ? mapped : 0
+  return id
 }
 
 /**
@@ -83,6 +83,7 @@ export const ENGINE_BLOCK_ID_TO_BW_SEED_KEY = Object.freeze({
   17: 'fus_bw_block_tree',
   18: 'fus_bw_block_leaf',
   20: 'fus_bw_block_glass',
+  21: 'fus_bw_block_indestructible',
 })
 
 /**

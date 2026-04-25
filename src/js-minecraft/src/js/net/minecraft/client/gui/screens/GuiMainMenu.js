@@ -19,7 +19,6 @@ export default class GuiMainMenu extends GuiScreen {
 
     init() {
         super.init();
-        this.textureLogo = this.getTexture("gui/title/minecraft.png");
 
         let y = this.height / 4 + 48;
 
@@ -39,7 +38,7 @@ export default class GuiMainMenu extends GuiScreen {
             this.minecraft.stop();
         }));
 
-        this.initPanoramaRenderer();
+        //this.initPanoramaRenderer();
     }
 
     drawScreen(stack, mouseX, mouseY, partialTicks) {
@@ -50,33 +49,35 @@ export default class GuiMainMenu extends GuiScreen {
         let rotationX = Math.sin((this.panoramaTimer + partialTicks) / 400.0) * 25.0 + 20.0;
         let rotationY = -(this.panoramaTimer + partialTicks) * 0.1;
 
-        // Draw panorama
-        this.camera.aspect = this.width / this.height;
-        this.camera.rotation.x = -MathHelper.toRadians(rotationX + 180);
-        this.camera.rotation.y = -MathHelper.toRadians(rotationY - 180);
-        this.camera.updateProjectionMatrix();
-        this.minecraft.worldRenderer.webRenderer.clear();
-        this.minecraft.worldRenderer.webRenderer.render(this.scene, this.camera);
+        // Draw panorama (requires {@link #initPanoramaRenderer}; it is not called from {@link #init} in this fork)
+        if (this.camera && this.scene && this.width > 0 && this.height > 0) {
+            this.camera.aspect = this.width / this.height;
+            this.camera.rotation.x = -MathHelper.toRadians(rotationX + 180);
+            this.camera.rotation.y = -MathHelper.toRadians(rotationY - 180);
+            this.camera.updateProjectionMatrix();
+            this.minecraft.worldRenderer.webRenderer.clear();
+            this.minecraft.worldRenderer.webRenderer.render(this.scene, this.camera);
+        }
 
         // Draw panorama overlay
-        this.drawGradientRect(stack, 0, 0, this.width, this.height, 'rgba(255,255,255,0.5)', 'rgb(255,255,255,0)');
-        this.drawGradientRect(stack, 0, 0, this.width, this.height, 'rgb(0,0,0,0)', 'rgb(0,0,0,0.5)');
+        // this.drawGradientRect(stack, 0, 0, this.width, this.height, 'rgba(255,255,255,0.5)', 'rgb(255,255,255,0)');
+        // this.drawGradientRect(stack, 0, 0, this.width, this.height, 'rgb(0,0,0,0)', 'rgb(0,0,0,0.5)');
 
-        // Draw logo
-        this.drawLogo(stack, x, y);
+        // // Draw logo
+        // //this.drawLogo(stack, x, y);
 
-        // Draw version
-        this.drawString(stack, "js-minecraft " + Minecraft.VERSION, 2, this.height - 10, 0xFFFFFFff);
+        // // Draw version
+        // this.drawString(stack, "js-minecraft " + Minecraft.VERSION, 2, this.height - 10, 0xFFFFFFff);
 
         // Draw copyright
-        let mouseOver = mouseX > this.width / 2 + 70 && mouseY > this.height - 20;
-        this.drawRightString(stack, "GitHub @LabyStudio/js-minecraft", this.width - 2, this.height - 10, mouseOver ? 0xFF00FFFF : 0xFFFFFFff);
+        // let mouseOver = mouseX > this.width / 2 + 70 && mouseY > this.height - 20;
+        // this.drawRightString(stack, "GitHub @LabyStudio/js-minecraft", this.width - 2, this.height - 10, mouseOver ? 0xFF00FFFF : 0xFFFFFFff);
 
-        // Draw buttons
-        super.drawScreen(stack, mouseX, mouseY, partialTicks);
+        // // Draw buttons
+        // super.drawScreen(stack, mouseX, mouseY, partialTicks);
 
-        // Draw splash text
-        this.drawSplash(stack);
+        // // Draw splash text
+        // this.drawSplash(stack);
     }
 
     updateScreen() {
@@ -84,8 +85,8 @@ export default class GuiMainMenu extends GuiScreen {
     }
 
     drawLogo(stack, x, y) {
-        this.drawSprite(stack, this.textureLogo, 0, 0, 155, 44, x, y, 155, 44);
-        this.drawSprite(stack, this.textureLogo, 0, 45, 155, 44, x + 155, y, 155, 44);
+        // this.drawSprite(stack, this.textureLogo, 0, 0, 155, 44, x, y, 155, 44);
+        // this.drawSprite(stack, this.textureLogo, 0, 45, 155, 44, x + 155, y, 155, 44);
     }
 
     drawSplash(stack) {

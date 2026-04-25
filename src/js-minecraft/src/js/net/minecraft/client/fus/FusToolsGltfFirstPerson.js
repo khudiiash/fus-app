@@ -154,21 +154,91 @@ export function cloneToolForFirstPerson(source) {
  *   groupRotXDeg: number, groupRotYDeg: number, groupRotZDeg: number,
  * }} FusFpToolTuning
  */
+/**
+ * First-person tool tuning.
+ *
+ * Scale math: the parent {@link WorldRenderer#renderHand} stack is at world-scale 0.0625
+ * (16 pixels per block). After {@link fitToolForFirstPersonHand} fits the tool, its max
+ * dimension is `0.42 × unitScale × 0.0625` blocks.
+ *
+ * Position math: `groupX/Y/Z` are in stack units (1 stack unit = 1/16 block). The stack
+ * origin has already been translated/rotated through the engine's FP arm sequence
+ * (see {@link WorldRenderer#renderHand}), so these values shift the tool relative to the
+ * palm pivot — positive X pushes the tool toward the screen's right side, positive Y
+ * upward, negative Z further forward (away from the camera).
+ *
+ * User-reported history: the previous aggressive shrink (`unitScale=24`, `groupX=16`)
+ * pushed the tool entirely off-screen — "Tools are not visible at all". Reverted to a
+ * known-visible baseline (52, 10, 6, -10) that renders a tool "too big but visible" and
+ * exposed via {@link installFusFpToolTuningGui} so the user can interactively tune with
+ * dat.gui. The sliders cover the full practical range so both shrinking further and
+ * re-inflating are reachable without code changes.
+ */
 export const fusFpToolTuning = {
-    unitScale: 84,
+    unitScale: 40,
     strikeX: 0,
     strikeY: 0,
     strikeZ: 0,
     alignBlade: true,
-    extraToolRotXDeg: 87.5,
-    extraToolRotYDeg: -23.5,
-    extraToolRotZDeg: 80,
-    groupX: 10,
-    groupY: 6,
-    groupZ: -10,
+    extraToolRotXDeg: 147,
+    extraToolRotYDeg: -14,
+    extraToolRotZDeg: 180,
+    groupX: -4.9,
+    groupY: 11.1,
+    groupZ: -8.4,
     groupRotXDeg: 0,
     groupRotYDeg: 0,
     groupRotZDeg: 0,
+};
+
+/**
+ * Swing-animation compensator applied on top of the engine's vanilla FP arm swing.
+ *
+ * The engine's {@link WorldRenderer#renderHand} swings `stack` by rotating it heavily
+ * around Y (yaw, −powRotation·20°) and Z (roll, −sqrtRotation·20°) and then pitching
+ * it by −80° around X at peak. That pitch is so large that by strike-time the stack's
+ * local axes no longer resemble screen-space forward/up/right — local +Z points mostly
+ * toward the camera while local −Y points roughly forward-and-down.
+ *
+ * Sign convention used by {@link applySwingCompensator} below:
+ *
+ *   • {@code counterYawDeg}  — positive cancels the engine's −yaw (less left swing).
+ *   • {@code counterRollDeg} — positive cancels the engine's −roll (less left tilt).
+ *   • {@code extraPitchDeg}  — positive adds MORE pitch, which pushes the blade tip past
+ *     vertical toward the camera. We apply the negated value so that positive values in
+ *     the slider feel like "more chop forward/down". (Implementation applies −pitch to
+ *     reduce the engine's −80° overshoot, not add to it.)
+ *   • {@code forwardZ}       — positive pushes the tool away from the camera at strike
+ *     peak (applied along local +Z, which empirically resolves to screen-forward after
+ *     the engine's strike-time rotation chain).
+ *   • {@code downY}          — positive shifts the tool downward in screen space
+ *     (applied along local +Y).
+ *
+ * User-reported tuning history:
+ *   1. "swings too much to the left, must go more forward and down" → introduced this
+ *      compensator with counter-yaw / counter-roll plus forward-down pushes.
+ *   2. "it hits towards the player, must be the other way around" → discovered the
+ *      naïve "negate engine axes" math was wrong because of the strike-time pitch
+ *      composition. Flipped sign of forwardZ and downY application (now translate along
+ *      local −Z / −Y) and reduced extraPitchDeg magnitude; strike now reads as a chop
+ *      into the scene rather than a backswing into the face.
+ */
+export const fusFpToolSwingTuning = {
+    /** Cancels most of the 20° yaw the engine adds at peak — tune down to keep a bit of
+     *  side swing, up past 20 to invert the swing direction entirely. */
+    counterYawDeg: -15,
+    /** Cancels most of the 20° roll — at 20 the blade stays upright through the swing. */
+    counterRollDeg: -20,
+    /** Positive = reduce the engine's −80° pitch overshoot so the blade stays forward-
+     *  facing instead of flopping back toward the camera. Small default (8°) because the
+     *  engine's own pitch is already the primary chop motion. */
+    extraPitchDeg: 44,
+    /** Positive = push the tool away from the camera at strike peak. 1.5 stack units
+     *  (~0.1 blocks in world space after the stack's 0.025 combined scale) adds enough
+     *  reach for the chop to feel directional without losing the hand pivot. */
+    forwardZ: 1.5,
+    /** Positive = push the tool downward at strike peak. */
+    downY: 1.8,
 };
 
 /**
@@ -183,14 +253,14 @@ export const fusFpToolTuning = {
  */
 export const fusTpToolTuning = {
     scaleTarget: 10.5,
-    posX: -2.25,
-    posY: 8,
-    posZ: -5.75,
-    rotXDeg: 0,
-    rotYDeg: 80,
-    rotZDeg: 0,
-    innerRotXDeg: -84,
-    innerRotYDeg: -132,
+    posX: 0.1,
+    posY: 3.6,
+    posZ: 7.6,
+    rotXDeg: -103,
+    rotYDeg: 180,
+    rotZDeg: -92,
+    innerRotXDeg: -20,
+    innerRotYDeg: -128,
     innerRotZDeg: 180,
 };
 

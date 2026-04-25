@@ -14,6 +14,7 @@ import BlockGlass from "./type/BlockGlass.js";
 import SoundGlass from "./sound/SoundGlass.js";
 import BlockGravel from "./type/BlockGravel.js";
 import BlockCobblestone from "./type/BlockCobblestone.js";
+import BlockGoldOre from "./type/BlockGoldOre.js";
 
 export class BlockRegistry {
 
@@ -41,5 +42,14 @@ export class BlockRegistry {
         BlockRegistry.WATER = new BlockWater(9, 7);
         BlockRegistry.SAND = new BlockSand(12, 8)
         BlockRegistry.TORCH = new BlockTorch(50, 9)
+        /**
+         * Gold ore — macrotile 15 on FUS {@code terrain.png}; {@link BlockGoldOre#getColor} tints
+         * for visibility; {@code finishBreak} in fus block hardness drops coins.
+         */
+        BlockRegistry.GOLD_ORE = new BlockGoldOre(51, 15)
+        /**
+         * Shop “indestructible” block (catalog 13): unbreakable like bedrock, obsidian look (tile 24).
+         */
+        BlockRegistry.INDESTRUCTIBLE_OBSIDIAN = new BlockStone(21, 24)
     }
 }

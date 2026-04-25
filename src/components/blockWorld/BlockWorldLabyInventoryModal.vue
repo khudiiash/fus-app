@@ -13,6 +13,9 @@ import BlockWorldHotbarIconInner from '@/components/blockWorld/BlockWorldHotbarI
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
+  /** When true, hide the overlay (e.g. in-game pause/options open). Replaces v-show on
+   *  the parent — `Teleport` is not a valid target for `v-show` and triggers a Vue warn. */
+  labyEngineGuiOpen: { type: Boolean, default: false },
   uid: { type: String, default: '' },
   profile: { type: Object, default: null },
   shopItems: { type: Array, default: () => [] },
@@ -384,15 +387,16 @@ function hotbarSlotClass(ix) {
 <template>
   <Teleport to="body">
     <div
-      v-if="modelValue"
+      v-if="modelValue && !labyEngineGuiOpen"
       class="inv-overlay"
+      dir="ltr"
       role="dialog"
       aria-modal="true"
       @pointerdown.self="onOverlayBackdropPointerDown"
       @click.self="onOverlayBackdropClick"
     >
       <div class="inv-wrap">
-        <!-- Native 195×136: palette 164×92 @(7,19) 9×5; hotbar 162×18 @(7,110); scrollbar right of palette -->
+        <!-- texture 195×136: palette 162×90 @ (8,17) 9×5; hotbar 162×17 @ (8,111) 9 slots -->
         <div class="inv-frame" @click.stop>
           <div class="inv-panel" :style="{ backgroundImage: `url(${creativeBg})` }">
             <button type="button" class="inv-auto" @click.stop="autofill">Авто</button>
@@ -414,7 +418,7 @@ function hotbarSlotClass(ix) {
                   v-if="paletteIdAt(cellIndex - 1)"
                   class="inv-icon"
                   :minecraft="gameMc"
-                  :block-icon-render-size="34"
+                  :block-icon-render-size="56"
                   :visual="paletteVisual(cellIndex - 1)"
                 />
               </button>
@@ -440,7 +444,7 @@ function hotbarSlotClass(ix) {
                 <BlockWorldHotbarIconInner
                   class="inv-icon"
                   :minecraft="gameMc"
-                  :block-icon-render-size="34"
+                  :block-icon-render-size="56"
                   :visual="slotVisuals[ix - 1]"
                 />
               </button>
@@ -476,6 +480,9 @@ function hotbarSlotClass(ix) {
   justify-content: center;
   padding: min(12px, 2vw);
   background: rgba(2, 6, 23, 0.55);
+  /** Grids must stay column-major LTR; OS/bidi must not mirror the 9×n layout. */
+  direction: ltr;
+  unicode-bidi: isolate;
 }
 
 .inv-wrap {
@@ -487,63 +494,106 @@ function hotbarSlotClass(ix) {
 }
 
 .inv-frame {
-  width: min(390px, 96vw);
+  /** Fits phones without dominating the whole screen. */
+  width: min(380px, calc(100vw - max(16px, env(safe-area-inset-left, 0px) + env(safe-area-inset-right, 0px))));
+  max-width: 100%;
   filter: drop-shadow(0 12px 28px rgba(0, 0, 0, 0.55));
 }
 
-/* 195×136 texture — slots are 18×18 px starting at (7,7) */
+/**
+ * `creative.png` is cropped to 195×136; slot regions match the overlay math below (1:1 with pixels).
+ */
 .inv-panel {
   position: relative;
   width: 100%;
   aspect-ratio: 195 / 136;
-  background-size: 100% 100%;
+  overflow: hidden;
   background-repeat: no-repeat;
-  background-position: center;
+  background-position: 0 0;
+  background-size: 100% 100%;
   image-rendering: pixelated;
   border-radius: 2px;
+  direction: ltr;
 }
 
+/**
+ * Use flex (not grid) for row-major LTR: some WebViews mirror CSS Grid when any ancestor
+ * is RTL / bidi — flex row + `justify-content: flex-start` is harder to flip visually.
+ */
 .inv-palette {
   position: absolute;
-  left: calc(7 / 195 * 100%);
-  top: calc(19 / 136 * 100%);
-  width: calc(164 / 195 * 100%);
-  height: calc(92 / 136 * 100%);
-  display: grid;
-  grid-template-columns: repeat(9, 1fr);
-  grid-template-rows: repeat(5, 1fr);
+  left: calc(8 / 195 * 100%);
+  top: calc(17 / 136 * 100%);
+  width: calc(162 / 195 * 100%);
+  height: calc(90 / 136 * 100%);
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  align-items: stretch;
+  justify-content: flex-start;
   gap: 0;
+  overflow: hidden;
+  direction: ltr !important;
+}
+
+.inv-palette > .inv-slot {
+  box-sizing: border-box;
+  flex: 0 0 calc(100% / 9);
+  width: calc(100% / 9);
+  max-width: calc(100% / 9);
+  height: calc(100% / 5);
+  min-height: 0;
 }
 
 .inv-hotbar {
   position: absolute;
-  left: calc(7 / 195 * 100%);
-  top: calc(110 / 136 * 100%);
+  left: calc(8 / 195 * 100%);
+  top: calc(111 / 136 * 100%);
   width: calc(162 / 195 * 100%);
-  height: calc(18 / 136 * 100%);
-  display: grid;
-  grid-template-columns: repeat(9, 1fr);
+  height: calc(17 / 136 * 100%);
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  justify-content: flex-start;
   gap: 0;
+  overflow: hidden;
+  direction: ltr !important;
+}
+
+.inv-hotbar > .inv-slot {
+  flex: 1 1 0;
+  min-width: 0;
+  width: 0;
 }
 
 .inv-scrollbar {
   position: absolute;
-  left: calc((7 + 164) / 195 * 100%);
-  top: calc(19 / 136 * 100%);
-  width: calc(19 / 195 * 100%);
-  height: calc(92 / 136 * 100%);
+  /* Same strip as classic creative (x=171, w=24) unless the PNG moves it — only palette hotbar use (8,17)/(8,111). */
+  left: calc(171 / 195 * 100%);
+  top: calc(17 / 136 * 100%);
+  width: calc(24 / 195 * 100%);
+  min-width: 20px;
+  height: calc(90 / 136 * 100%);
   display: flex;
   align-items: stretch;
   justify-content: center;
+  overflow: hidden;
+  box-sizing: border-box;
+  direction: ltr;
+  unicode-bidi: isolate;
 }
 
+/** Vertical range; `direction: ltr` only — `rtl` was a suspect for bidi leaks on WebKit. */
 .inv-scroll-range {
   writing-mode: vertical-lr;
-  direction: rtl;
+  direction: ltr;
   width: 100%;
   min-height: 0;
   accent-color: #8b5cf6;
   cursor: pointer;
+  unicode-bidi: isolate;
 }
 
 .inv-slot {
@@ -559,6 +609,10 @@ function hotbarSlotClass(ix) {
   min-width: 0;
   min-height: 0;
   box-sizing: border-box;
+  overflow: hidden;
+  /** Lets icons size with `cqmin` so tools stay square inside slightly rectangular cells. */
+  container-type: size;
+  direction: ltr;
 }
 
 .inv-slot:active {
@@ -578,39 +632,74 @@ function hotbarSlotClass(ix) {
   background: rgba(124, 58, 237, 0.2);
 }
 
-/* +10% vs previous max 18px; block GL icons +20% (see .bw-hb-gui-block) */
+/**
+ * Fill each slot — previous rules capped sprites at ~20px while cells are ~35–45px on phones,
+ * so icons looked tiny. Use cqmin for a square that fits the cell; fall back via @supports.
+ */
 .inv-icon {
-  transform: translate(2px, -2px);
+  width: 100%;
+  height: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  flex-shrink: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .inv-slot :deep(.bw-hb-tool-sprite),
 .inv-slot :deep(.bw-hb-terrain-sprite) {
-  width: calc(88% * 1.1) !important;
-  height: calc(88% * 1.1) !important;
-  max-width: 20px;
-  max-height: 20px;
+  width: 92% !important;
+  height: 92% !important;
+  max-width: 100% !important;
+  max-height: 100% !important;
+  flex-shrink: 0;
+  box-sizing: border-box;
 }
 
 .inv-slot :deep(.bw-hb-gui-block) {
-  width: calc(88% * 1.2) !important;
-  height: calc(88% * 1.2) !important;
-  max-width: 22px;
-  max-height: 22px;
+  width: 92% !important;
+  height: 92% !important;
+  max-width: 100% !important;
+  max-height: 100% !important;
+  flex-shrink: 0;
+  box-sizing: border-box;
 }
 
 .inv-slot :deep(.bw-hb-emoji) {
-  font-size: 15.4px;
+  font-size: clamp(20px, 6.5vw, 34px);
   line-height: 1;
 }
 
+@supports (width: min(1cqmin, 1px)) {
+  .inv-slot :deep(.bw-hb-tool-sprite),
+  .inv-slot :deep(.bw-hb-terrain-sprite) {
+    width: min(94cqmin, 100%) !important;
+    height: min(94cqmin, 100%) !important;
+  }
+
+  .inv-slot :deep(.bw-hb-gui-block) {
+    width: min(94cqmin, 100%) !important;
+    height: min(94cqmin, 100%) !important;
+  }
+
+  .inv-slot :deep(.bw-hb-emoji) {
+    font-size: clamp(20px, 55cqmin, 36px);
+  }
+}
+
 .inv-slot :deep(.bw-hb-icon-img) {
-  width: 17.6px;
-  height: 17.6px;
+  width: 92%;
+  height: 92%;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  flex-shrink: 0;
 }
 
 .inv-auto {
   position: absolute;
-  left: calc(4 / 195 * 100%);
+  left: calc(8 / 195 * 100%);
   top: calc(2 / 136 * 100%);
   z-index: 4;
   min-width: 40px;
@@ -632,7 +721,7 @@ function hotbarSlotClass(ix) {
 .inv-close {
   position: absolute;
   top: calc(2 / 136 * 100%);
-  right: calc(4 / 195 * 100%);
+  right: calc(8 / 195 * 100%);
   z-index: 4;
   width: 26px;
   height: 26px;

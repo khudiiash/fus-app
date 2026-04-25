@@ -12,6 +12,7 @@ import {
     cloneToolForFirstPerson,
     disposeFusFpToolSubtree,
     fitToolForFirstPersonHand,
+    fusFpToolSwingTuning,
     loadFusToolsGlbTemplateScene,
     resolveFusToolsGltfObjectForFp,
 } from "./FusToolsGltfFirstPerson.js";
@@ -85,6 +86,8 @@ export function installFusLabyFpToolHooks(mc) {
             toolsGltfLoadPromise = loadFusToolsGlbTemplateScene(toolsGlbUrl).then((scene) => {
                 toolsGltfTemplate = scene;
                 mc.fusToolsGltfTemplateLoaded = true;
+                /** Expose the template so non-engine installers (e.g. remote avatars) can clone it. */
+                mc.fusToolsGltfTemplate = scene;
                 const pl = mc.player;
                 if (pl?.renderer?.rebuild) {
                     pl.renderer.rebuild(pl);
@@ -182,7 +185,55 @@ export function installFusLabyFpToolHooks(mc) {
         return root;
     };
 
-    mc.fusSyncFpToolIntoFirstPerson = (player, stack, _partialTicks, _hasItem) => {
+    /**
+     * Apply the swing compensator transform. The compensator is a child of `stack`
+     * that parents the tuned FP tool; we animate its local rotation + translation per
+     * frame based on the current swing curve, so the tool goes *more forward and down*
+     * on a hit instead of wildly to the left.
+     *
+     * This is called from {@link mc.fusSyncFpToolIntoFirstPerson} on every FP frame
+     * (not just on tool-change), so it stays cheap — a handful of sin calls and some
+     * Euler / Vector writes, no allocations.
+     *
+     * @param {THREE.Object3D} comp  swing compensator group
+     * @param {any} player
+     * @param {number} partialTicks
+     */
+    const applySwingCompensator = (comp, player, partialTicks) => {
+        if (!comp) return;
+        const T = fusFpToolSwingTuning;
+        let sp = 0;
+        try {
+            sp = player?.getSwingProgress?.(partialTicks) ?? 0;
+        } catch (_) {
+            sp = 0;
+        }
+        if (!Number.isFinite(sp) || sp <= 0) {
+            comp.rotation.set(0, 0, 0);
+            comp.position.set(0, 0, 0);
+            return;
+        }
+        /** Matches the engine's own curves in {@link WorldRenderer#renderHand} so our
+         *  compensation stays in lockstep with the stack's swing. */
+        const sqrtRotation = Math.sin(Math.sqrt(sp) * Math.PI);
+        const powRotation = Math.sin(sp * sp * Math.PI);
+        /** Counter the engine's leftward yaw/roll. Pitch is subtracted (not added) to
+         *  *reduce* the engine's 80° overshoot — adding more pitch sent the blade tip
+         *  past vertical back toward the camera (user: "it hits towards the player,
+         *  must be the other way around"). */
+        comp.rotation.x = THREE.MathUtils.degToRad(sqrtRotation * T.extraPitchDeg);
+        comp.rotation.y = THREE.MathUtils.degToRad(powRotation * T.counterYawDeg);
+        comp.rotation.z = THREE.MathUtils.degToRad(sqrtRotation * T.counterRollDeg);
+        /** At peak swing the stack has been rotated ~−80° around its X (plus camera
+         *  pitch/yaw + rotateY(45)), so local axes are far from screen-space. Empirically
+         *  after the previous "toward player" bug, translating along local +Z moves the
+         *  tool outward/forward and along local +Y moves it downward relative to the
+         *  player's view, so `forwardZ` / `downY` are applied positively. */
+        comp.position.z = sqrtRotation * T.forwardZ;
+        comp.position.y = sqrtRotation * T.downY;
+    };
+
+    mc.fusSyncFpToolIntoFirstPerson = (player, stack, partialTicks, _hasItem) => {
         const sel = player.inventory.selectedSlotIndex;
         const meta = mc.fusHotbarSlotMeta?.[sel];
         const img = mc.fusToolsSpriteSheet || sheet;
@@ -214,6 +265,11 @@ export function installFusLabyFpToolHooks(mc) {
                     /* ignore */
                 }
             }
+            /** Hot path: tool unchanged; just re-apply the swing compensator. The root
+             *  itself is the compensator group when `mode === "gltf"`; the sprite fallback
+             *  also passes (it's a Group with identity rotation so `applySwingCompensator`
+             *  is a no-op when swing progress is 0 and harmless otherwise). */
+            applySwingCompensator(fpToolRoot, player, partialTicks);
             return;
         }
 
@@ -238,8 +294,21 @@ export function installFusLabyFpToolHooks(mc) {
             return;
         }
 
-        stack.add(built);
-        fpToolRoot = built;
+        /** Wrap `built` in a swing compensator. The compensator sits at identity until
+         *  {@link applySwingCompensator} adjusts it per frame; it keeps the user-tuned
+         *  rest pose of `built` intact and only adds the swing-time delta. Mirror the
+         *  rest-pose userData onto the outer wrapper so downstream code (dispose walker,
+         *  PlayerRenderer checks) finds the FP tool root via either object. */
+        const compensator = new THREE.Group();
+        compensator.add(built);
+        compensator.userData.__fusLabyFpToolRoot = true;
+        compensator.userData.__fusFpToolMode = built.userData.__fusFpToolMode;
+        compensator.renderOrder = built.renderOrder;
+
+        stack.add(compensator);
+        fpToolRoot = compensator;
         lastFpToolKey = key;
+
+        applySwingCompensator(compensator, player, partialTicks);
     };
 }

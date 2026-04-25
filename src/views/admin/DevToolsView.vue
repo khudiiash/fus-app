@@ -15,6 +15,7 @@ import {
 } from 'lucide-vue-next'
 import { useToast } from '@/composables/useToast'
 import { useAuthStore } from '@/stores/auth'
+import { clearLabySharedWorldMobsRtdb } from '@/firebase/labyMobsRtdb'
 import { seedSchoolRoster, ROSTER_TEACHERS, ROSTER_STUDENTS } from '@/firebase/schoolRosterSeed'
 
 const { success, error, warning } = useToast()
@@ -181,6 +182,14 @@ const FLUSH_OPS = [
     desc:    'Обнуляє монети, XP, рівень, серію, інвентар та бейджі',
     danger:  true,
     fn:      () => adminResetStudentStats(),
+  },
+  {
+    label:   'RTDB: очистити всіх мобів у спільному Лабі',
+    desc:    'Видаляє усі worldMobs/…/instances і worldMobPlayerHits (застарілі тестові моби).',
+    danger:  true,
+    fn:      async () => {
+      await clearLabySharedWorldMobsRtdb()
+    },
   },
 ]
 

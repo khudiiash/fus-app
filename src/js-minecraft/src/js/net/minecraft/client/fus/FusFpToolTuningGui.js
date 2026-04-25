@@ -1,5 +1,7 @@
 import { GUI } from "dat.gui";
-import { fusFpToolTuning } from "./FusToolsGltfFirstPerson.js";
+import { fusFpToolSwingTuning, fusFpToolTuning } from "./FusToolsGltfFirstPerson.js";
+import { installFusToolGuiInputShield } from "./FusToolGuiInputShield.js";
+import { fusToolTuningGuiBegin, fusToolTuningGuiEnd } from "./FusToolTuningViewRef.js";
 
 /**
  * Dev-only dat.gui for {@link fusFpToolTuning}. Calls `mc.fusBumpFpToolGltfRebuild` on change.
@@ -11,6 +13,7 @@ export function installFusFpToolTuningGui(mc) {
     }
     if (mc._fusFpToolTuningGui) {
         const prev = mc._fusFpToolTuningGui;
+        fusToolTuningGuiEnd(mc);
         try {
             prev.domElement.remove();
         } catch (_) {
@@ -29,10 +32,12 @@ export function installFusFpToolTuningGui(mc) {
 
     const el = gui.domElement;
     el.style.position = "fixed";
-    el.style.top = "52px";
-    el.style.left= "12px";
+    el.style.top = "8px";
+    el.style.left = "8px";
     el.style.zIndex = "10050";
+    installFusToolGuiInputShield(el);
     document.body.appendChild(el);
+    fusToolTuningGuiBegin(mc);
 
     const bump = () => {
         if (typeof mc.fusBumpFpToolGltfRebuild === "function") {
@@ -43,7 +48,11 @@ export function installFusFpToolTuningGui(mc) {
     const T = fusFpToolTuning;
 
     const scale = gui.addFolder("Scale");
-    scale.add(T, "unitScale", 1, 250, 1).onChange(bump);
+    /** Widened upper bound from 250 → 300: useful when tuning a blade-style tool where
+     *  0.42 × unitScale × 0.0625 ≈ 7.8 blocks, so values beyond 250 still have reasonable
+     *  meaning. Step of 1 is fine for unit scale; sub-integer values don't meaningfully
+     *  change the visual result. */
+    scale.add(T, "unitScale", 1, 300, 1).onChange(bump);
     scale.open();
 
     const strike = gui.addFolder("Blade align (+Y → strike)");
@@ -60,19 +69,42 @@ export function installFusFpToolTuningGui(mc) {
     tool.open();
 
     const grp = gui.addFolder("Group (hand offset)");
-    grp.add(T, "groupX", -10, 10, 0.005).onChange(bump);
-    grp.add(T, "groupY", -10, 10, 0.005).onChange(bump);
-    grp.add(T, "groupZ", -10, 10, 0.005).onChange(bump);
+    /** Widened hand-offset sliders from [-10, 10] → [-30, 30]. In stack units (1 stack
+     *  unit ≈ 1/16 block) the previous ±10 range was too narrow to explore "push the tool
+     *  fully to the right edge of the screen" or "pull it back behind the hand" — the
+     *  user's most recent attempt to tune those values set `groupX=16` which the old
+     *  slider couldn't even reach. Finer 0.1 step still lets you land on whole integers. */
+    grp.add(T, "groupX", -30, 30, 0.1).onChange(bump);
+    grp.add(T, "groupY", -30, 30, 0.1).onChange(bump);
+    grp.add(T, "groupZ", -30, 30, 0.1).onChange(bump);
     grp.add(T, "groupRotXDeg", -180, 180, 0.5).onChange(bump);
     grp.add(T, "groupRotYDeg", -180, 180, 0.5).onChange(bump);
     grp.add(T, "groupRotZDeg", -180, 180, 0.5).onChange(bump);
     grp.open();
 
+    /** Swing animation compensator — fine-tunes the vanilla FP arm swing at strike time
+     *  (user: "must go more forward and down"). No bump() needed: values are read live
+     *  every frame, so edits take effect on the next swing. */
+    const S = fusFpToolSwingTuning;
+    const sw = gui.addFolder("Swing animation (strike)");
+    sw.add(S, "counterYawDeg", -40, 40, 0.5);
+    sw.add(S, "counterRollDeg", -40, 40, 0.5);
+    sw.add(S, "extraPitchDeg", -60, 60, 0.5);
+    sw.add(S, "forwardZ", -6, 6, 0.1);
+    sw.add(S, "downY", -6, 6, 0.1);
+    sw.open();
+
     gui.add(
         {
             copyJson() {
                 try {
-                    void navigator.clipboard?.writeText(JSON.stringify(fusFpToolTuning, null, 2));
+                    void navigator.clipboard?.writeText(
+                        JSON.stringify(
+                            { rest: fusFpToolTuning, swing: fusFpToolSwingTuning },
+                            null,
+                            2,
+                        ),
+                    );
                 } catch (_) {
                     /* ignore */
                 }
@@ -97,6 +129,7 @@ export function installFusFpToolTuningGui(mc) {
                 if (mc._fusFpToolTuningGui === gui) {
                     mc._fusFpToolTuningGui = null;
                 }
+                fusToolTuningGuiEnd(mc);
             },
         },
         "closePanel",

@@ -818,14 +818,13 @@ export const BLOCK_WORLD_SHOP_ITEM_SEEDS = [
   },
   {
     /**
-     * Indestructible — shop-exclusive: cannot be acquired by mining. Engine id 21,
-     * FUS catalog index 13. See {@link BlockIndestructible} and {@link fusMineBlockOnClick}
-     * for break protection; the red tint marks it as "protected" at a glance.
+     * Indestructible — shop-exclusive, obsidian look (engine id 21). Cannot be broken;
+     * see {@link BlockIndestructible} / red tint in world.
      */
     bwSeedKey: 'fus_bw_block_indestructible',
-    name: 'Незламний блок',
+    name: 'Незламний обсидіан',
     description:
-      'Червоний блок, який неможливо зламати жодним інструментом. Купується лише в магазині — мобами і шахтою не випадає. Стане в пригоді, щоб позначити або захистити свою будівлю у спільному світі.',
+      'Виглядає як обсидіан, неможливо зламати жодним інструментом. Купується лише в магазині. Золоту руду (у світі) добувай кайлом — з неї падають монети.',
     category: 'block_world',
     rarity: 'legendary',
     price: 500,

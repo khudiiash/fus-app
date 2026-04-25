@@ -255,13 +255,19 @@ export default class Minecraft {
                 this.player.turn(deltaX, deltaY);
             }
 
-            // Update lights
-            while (this.world.updateLights()) {
-                // Empty
+            // Update lights (cap passes per rAF so huge queues can’t freeze — long-session leak guard)
+            {
+                let n = 0;
+                const cap =
+                    typeof window !== "undefined" && window.__LABY_MC_FUS_EMBED__ ? 8 : 200;
+                while (n < cap && this.world.updateLights()) {
+                    n++;
+                }
             }
 
-            // Render the game
-            if (this.isInGame() && !this.isPaused()) {
+            // Render the game (FUS: keep 3D visible while a tool-tuning dat.gui is open, even
+            // in singleplayer after pointer lock was released by clicking the panel)
+            if (this.isInGame() && (!this.isPaused() || (this.fusToolTuningGuiRefCount | 0) > 0)) {
                 this.worldRenderer.render(partialTicks);
             }
         }
@@ -402,6 +408,14 @@ export default class Minecraft {
 
         // Open inventory
         if (button === this.settings.keyOpenInventory) {
+            if (
+                typeof window !== "undefined" &&
+                window.__LABY_MC_FUS_EMBED__ &&
+                typeof window.__FUS_LABY_TOGGLE_INVENTORY__ === "function"
+            ) {
+                window.__FUS_LABY_TOGGLE_INVENTORY__();
+                return;
+            }
             this.displayScreen(new GuiContainerCreative(this.player));
         }
     }

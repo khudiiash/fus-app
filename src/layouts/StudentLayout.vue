@@ -89,8 +89,17 @@ const isActive = (item) => {
 /** Кімната: без pt/px у main — інакше залишаються смуги; flex-1 заповнює область під хедером і над таббаром */
 const isStudentRoom = computed(() => route.path.startsWith('/student/room'))
 const isStudentWorld = computed(() => route.path.startsWith('/student/world'))
-/** Voxel world play mode: hide header + tab bar and drop main padding so the canvas fills the viewport. */
-const hideStudentChrome = computed(() => isStudentWorld.value && bwImmersive.value)
+/**
+ * Laby (and block world) play: hide bottom tab bar. Top bar stays visible in a **slim** row
+ * (level, XP, coins) — see {@code top-bar--laby-slim}.
+ */
+const labyHidesTabBar = computed(() => isStudentWorld.value && bwImmersive.value)
+/** Offset passed to the fixed Laby canvas via {@code --fus-laby-chrome-top} in scoped CSS. */
+const labyChromeLayoutStyle = computed(() =>
+  labyHidesTabBar.value
+    ? { '--fus-laby-chrome-top': 'calc(env(safe-area-inset-top, 0px) + 40px)' }
+    : { '--fus-laby-chrome-top': '0px' },
+)
 
 watch(
   () => (auth.profile?.role === 'student' ? auth.profile.id : null),
@@ -121,12 +130,53 @@ onUnmounted(() => {
 
 <template>
   <!-- h-dvh: явна висота viewport — інакше flex-1 у main не заповнює екран (кімната лишається «карткою») -->
-  <div class="flex flex-col h-dvh max-h-dvh min-h-0 overflow-hidden bg-game-bg">
+  <div
+    class="flex flex-col h-dvh max-h-dvh min-h-0 overflow-hidden bg-game-bg"
+    :style="labyChromeLayoutStyle"
+  >
 
-    <!-- ── Top bar ──────────────────────────────────────────────────────── -->
-    <header v-show="!hideStudentChrome" class="top-bar shrink-0 z-40 px-4 pb-2">
-      <div class="flex items-center gap-3 max-w-lg mx-auto">
+    <!-- ── Top bar (full in lobby; single slim row in Laby play — keeps Lv/XP/coins) ── -->
+    <header
+      class="shrink-0 z-50"
+      :class="labyHidesTabBar ? 'top-bar top-bar--laby-slim' : 'top-bar px-4 pb-2'"
+    >
+      <!-- Laby play: one thin row; name hidden to save height -->
+      <div
+        v-if="labyHidesTabBar"
+        class="flex items-center gap-2 max-w-lg mx-auto px-3 h-8"
+      >
+        <RouterLink to="/student/profile" class="flex-shrink-0 opacity-90" aria-label="Профіль">
+          <AvatarDisplay
+            :avatar="auth.profile?.avatar"
+            :display-name="auth.profile?.displayName || ''"
+            :items="userStore.items"
+            size="xs"
+          />
+        </RouterLink>
+        <div class="flex-1 min-w-0 flex items-center gap-1.5">
+          <span class="text-[10px] font-extrabold shrink-0 leading-none text-accent">Lv.{{ level }}</span>
+          <div class="flex-1 h-0.5 min-w-0 bg-white/[0.08] rounded-full overflow-hidden">
+            <div
+              class="h-full rounded-full transition-all duration-500"
+              :style="{
+                width: xpProgress.percent + '%',
+                background: 'linear-gradient(to right, var(--accent), #34d399)',
+              }"
+            />
+          </div>
+          <span class="text-[9px] text-slate-500 shrink-0 leading-none tabular-nums">
+            {{ xpProgress.current }}/{{ xpProgress.needed }}
+          </span>
+        </div>
+        <div class="coin-chip coin-chip--slim shrink-0">
+          <Coins :size="12" :stroke-width="2" class="text-coin" />
+          <span class="font-extrabold text-xs tabular-nums text-coin">{{
+            (auth.profile?.coins || 0).toLocaleString()
+          }}</span>
+        </div>
+      </div>
 
+      <div v-else class="flex items-center gap-3 max-w-lg mx-auto">
         <!-- Avatar -->
         <RouterLink to="/student/profile" class="flex-shrink-0">
           <AvatarDisplay
@@ -161,7 +211,6 @@ onUnmounted(() => {
           <Coins :size="14" :stroke-width="2" class="text-coin" />
           <span class="font-extrabold text-sm tabular-nums text-coin">{{ (auth.profile?.coins || 0).toLocaleString() }}</span>
         </div>
-
       </div>
     </header>
 
@@ -172,7 +221,7 @@ onUnmounted(() => {
       <div
         v-if="isStudentRoom || isStudentWorld"
         class="flex min-h-0 w-full flex-1 flex-col"
-        :class="hideStudentChrome ? 'overflow-hidden' : 'overflow-hidden pb-[calc(4rem+env(safe-area-inset-bottom,0px))]'"
+        :class="labyHidesTabBar ? 'overflow-hidden' : 'overflow-hidden pb-[calc(4rem+env(safe-area-inset-bottom,0px))]'"
       >
         <RouterView />
       </div>
@@ -185,7 +234,7 @@ onUnmounted(() => {
     </main>
 
     <!-- ── Bottom navigation ─────────────────────────────────────────────── -->
-    <nav v-show="!hideStudentChrome" class="bottom-nav fixed bottom-0 left-0 right-0 z-40">
+    <nav v-show="!labyHidesTabBar" class="bottom-nav fixed bottom-0 left-0 right-0 z-40">
       <div class="flex max-w-lg mx-auto px-2 py-1">
         <RouterLink
           v-for="item in navItems"
@@ -236,6 +285,22 @@ onUnmounted(() => {
   padding: 4px 10px;
   border-radius: 999px;
   box-shadow: inset 0 0 0 1px rgba(245, 158, 11, 0.18);
+}
+
+.coin-chip--slim {
+  padding: 2px 8px;
+  gap: 3px;
+}
+
+.top-bar--laby-slim {
+  padding-top: calc(env(safe-area-inset-top, 0px) + 4px);
+  padding-bottom: 4px;
+  padding-left: 0;
+  padding-right: 0;
+  background: rgba(10, 10, 10, 0.96);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.06);
 }
 
 .bottom-nav {

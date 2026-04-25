@@ -9,45 +9,75 @@ import { useBlockWorldSession } from '@/stores/blockWorldSession'
 import { get, ref as dbRef } from 'firebase/database'
 import { rtdb } from '@/firebase/config'
 import {
+  calcLevel,
+  debitPkLootFromUser,
+  debitPvpCoinFromUser,
   grantLabyGameplayXp,
+  grantLabyMobKillPayout,
   grantLabyMobCoinsCapped,
   grantShopItemByBwSeedKey,
   grantShopSkinBySkinId,
   grantStudentCoinsFromGame,
 } from '@/firebase/collections'
+import { clearLabySharedWorldMobsRtdb } from '@/firebase/labyMobsRtdb'
 import {
   FUS_SHARED_WORLD_LABY_ID,
   ensureSharedWorldSeeds,
   loadLabySharedWorldDoc,
 } from '@/firebase/sharedWorldLaby'
 import { createLabyWorldAndLoad } from '@/lib/labyEmbedWorld'
+import { fusLabyFeetYAtColumn } from '@/lib/fusLabySpawnFeet'
 import { resolveFusLabyHotbar } from '@/lib/fusLabyHotbarLayout'
 import BlockWorldLabyInventoryModal from '@/components/blockWorld/BlockWorldLabyInventoryModal.vue'
 import LabyMobileControls from '@/components/laby/LabyMobileControls.vue'
 import { installFusLabyFpToolHooks } from '@labymc/src/js/net/minecraft/client/fus/FusLabyFpToolHeld.js'
+import { installFusFpToolTuningGui } from '@labymc/src/js/net/minecraft/client/fus/FusFpToolTuningGui.js'
+import { installFusTpToolTuningGui } from '@labymc/src/js/net/minecraft/client/fus/FusTpToolTuningGui.js'
 import { normalizeSkinUrlForPresence } from '@/utils/presenceSkinUrl'
+import FocusStateType from '@labymc/src/js/net/minecraft/util/FocusStateType.js'
 import GameProfile from '@labymc/src/js/net/minecraft/util/GameProfile.js'
 import Session from '@labymc/src/js/net/minecraft/util/Session.js'
 import UUID from '@labymc/src/js/net/minecraft/util/UUID.js'
 import PlayerController from '@labymc/src/js/net/minecraft/client/network/controller/PlayerController.js'
 import { applyFusPlayerLevelToMinecraft } from '@labymc/src/js/net/minecraft/client/fus/fusLabyLevelStats.js'
-import { restoreFusLabySessionOnce } from '@/lib/fusLabySessionPersist'
+import {
+  flushFusLabySessionToStorage,
+  restoreFusLabySessionOnce,
+  tickPersistFusLabySession,
+} from '@/lib/fusLabySessionPersist'
+import {
+  FUS_LABY_VIEW_MAX,
+  FUS_LABY_VIEW_MIN,
+  applyFusLabyViewDistanceFromStorage,
+  installFusLabyViewDistanceSaveHook,
+} from '@/lib/fusLabyViewDistance'
 import { effectiveUserLevelFromProfile } from '@/lib/fusLabyUserLevel.js'
+import { labyDisplayNameForMobDropBwKey } from '@/lib/fusLabyMobDropLabels.js'
+import { useToast } from '@/composables/useToast'
 import { FUS_LABY_FLAG_CHANNEL_MS } from '@labymc/src/js/net/minecraft/client/fus/FusLabyFlagChannel.js'
 import { installFusLabySpawnFlag } from '@/lib/fusLabySpawnFlagInstall'
 import { installFusSkinLoader } from '@/lib/fusSkinLoaderInstall'
 import { installFusSimpleMobs } from '@/lib/fusSimpleMobsInstall'
+import { installFusPlayerCombat } from '@/lib/fusPlayerCombatInstall'
 import { installFusAutoJump } from '@/lib/fusAutoJumpInstall'
 import { installFusBlockHardness } from '@/lib/fusBlockHardnessInstall'
 import { installFusDamageFlash } from '@/lib/fusDamageFlashInstall'
 import { installFusPvpKarma } from '@/lib/fusPvpKarmaInstall'
+import { installFusWorldDrops } from '@/lib/fusWorldDropsInstall'
 import { installFusWorldEditsRtdb } from '@/lib/fusWorldEditsRtdbInstall'
+import { installFusSpawnInvuln } from '@/lib/fusSpawnInvulnInstall'
+import { installFusPresenceWriter } from '@/lib/fusPresenceWriterInstall'
+import { installFusRemoteAvatars } from '@/lib/fusRemoteAvatarsInstall'
+import { installFusHealthRegen } from '@/lib/fusHealthRegenInstall'
+import { installFusDeathScreen } from '@/lib/fusDeathScreenInstall'
+import { installFusCombatFx } from '@/lib/fusCombatFxInstall'
 
 const router = useRouter()
 const auth = useAuthStore()
 const { user: authFbUser } = storeToRefs(auth)
 const userStore = useUserStore()
 const bwSession = useBlockWorldSession()
+const { success: toastLabySuccess, info: toastLabyInfo } = useToast()
 
 const hostId = 'laby-js-mc-canvas-host'
 /** Host for mrdoob/stats.js — set in template */
@@ -87,7 +117,11 @@ function unmountFusStats() {
 }
 
 const error = ref('')
-const booting = ref(true)
+const booting = ref(false)
+/** Set true when the user taps “Вхід” to begin the heavy load. */
+const labyPlayStarted = ref(false)
+/** Root container for the Laby shell (canvas + HUD). */
+const labyPageRef = ref(/** @type {HTMLElement | null} */ (null))
 
 /**
  * Wait until the first render pass around the player is ready, or until {@code timeoutMs}
@@ -137,22 +171,192 @@ async function waitForWorldRenderReady(mc, timeoutMs) {
 /** @type {import('vue').Ref<import('@labymc/src/js/net/minecraft/client/Minecraft.js').default | null>} */
 const gameMc = ref(null)
 const showHotbarInventory = ref(false)
+/** True while the engine shows a 2D screen (e.g. legacy canvas UI if any). */
+const labyEngineGuiOpen = ref(false)
+/** FUS: Ukrainian HTML settings panel (replaces canvas GuiOptions in Laby). */
+const labyHtmlSettingsOpen = ref(false)
+const labyHudBlocked = computed(() => labyEngineGuiOpen.value || labyHtmlSettingsOpen.value)
+/** Synced for the fullscreen button label. */
+const labyPageFullscreen = ref(false)
+/** iOS Safari often lacks a working Fullscreen API; we expand the play layer to the viewport. */
+const labyPseudoPageFullscreen = ref(false)
+/** Form mirrors {@code mc.settings} while the HTML panel is open. */
+const labySetAmbientOcclusion = ref(false)
+const labySetViewBobbing = ref(false)
+const labySetFov = ref(70)
+const labySetViewDistance = ref(5)
+
+let _labyFsListener = null
+
+function fusLabyIsNativePageFullscreen() {
+  if (typeof document === 'undefined') return false
+  const d = document
+  return Boolean(
+    d.fullscreenElement || d.webkitFullscreenElement || d.mozFullScreenElement || d.msFullscreenElement,
+  )
+}
+
+function fusLabyIsPageFullscreen() {
+  return fusLabyIsNativePageFullscreen() || labyPseudoPageFullscreen.value
+}
+
+function fusLabySyncFullscreenState() {
+  labyPageFullscreen.value = fusLabyIsPageFullscreen()
+}
+
+async function fusLabyTogglePageFullscreen() {
+  if (typeof document === 'undefined') return
+  const doc = document
+
+  if (fusLabyIsNativePageFullscreen()) {
+    const exit = doc.exitFullscreen || doc.webkitExitFullscreen || doc.mozCancelFullScreen || doc.msExitFullscreen
+    try {
+      exit?.call(doc)
+    } catch {
+      /* ignore */
+    }
+    fusLabySyncFullscreenState()
+    return
+  }
+  if (labyPseudoPageFullscreen.value) {
+    labyPseudoPageFullscreen.value = false
+    fusLabySyncFullscreenState()
+    return
+  }
+
+  const tryFullscreen = async (el) => {
+    if (!el) return false
+    const req =
+      el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen || el.msRequestFullscreen
+    if (typeof req !== 'function') return false
+    try {
+      const p = req.call(el)
+      if (p && typeof p.then === 'function') await p
+      return fusLabyIsNativePageFullscreen()
+    } catch {
+      return false
+    }
+  }
+
+  let ok = await tryFullscreen(doc.documentElement)
+  if (!ok) ok = await tryFullscreen(labyPageRef.value)
+  if (!ok) labyPseudoPageFullscreen.value = true
+  fusLabySyncFullscreenState()
+}
+
+function syncLabySettingsFormFromMc() {
+  const mc = gameMc.value
+  const s = mc?.settings
+  if (!s) return
+  labySetAmbientOcclusion.value = Boolean(s.ambientOcclusion)
+  labySetViewBobbing.value = Boolean(s.viewBobbing)
+  labySetFov.value = Math.max(50, Math.min(100, Math.round(Number(s.fov) || 70)))
+  const vd = Math.round(Number(s.viewDistance) || FUS_LABY_VIEW_MIN)
+  labySetViewDistance.value = Math.max(FUS_LABY_VIEW_MIN, Math.min(FUS_LABY_VIEW_MAX, vd))
+  fusLabySyncFullscreenState()
+}
+
+function closeLabyHtmlSettings() {
+  const mc = gameMc.value
+  labyHtmlSettingsOpen.value = false
+  if (mc?.settings) {
+    try {
+      mc.settings.save()
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+/** Pointer-lock captures the mouse on desktop, so HTML buttons in the shell (place-flag,
+ *  teleport, settings, inventory, respawn) are effectively unclickable without releasing
+ *  the lock first. We release it whenever we open an overlay UI from a keybind; when the
+ *  user closes the overlay the engine re-acquires the lock on the next canvas click.
+ *  {@link document.exitPointerLock} alone is not enough: {@code GameWindow.requestCursorUpdate}
+ *  re-requests the lock on the next event while focus state is still {@code LOCKED}. */
+function releaseDesktopPointerLock(mc) {
+  const w = mc?.window
+  if (w && typeof w.updateFocusState === 'function') {
+    try {
+      w.updateFocusState(FocusStateType.REQUEST_EXIT)
+    } catch {
+      /* ignore */
+    }
+    return
+  }
+  if (typeof document === 'undefined') return
+  const exit = document.exitPointerLock || document.webkitExitPointerLock
+  if (typeof exit === 'function') {
+    try {
+      exit.call(document)
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+/** Toggles the Vue block-world inventory; assigned to `window.__FUS_LABY_TOGGLE_INVENTORY__` so
+ *  `Minecraft.onKeyPressed` (default KeyE) opens the same UI instead of the canvas
+ *  `GuiContainerCreative` (which bypassed modal layout/CSS). */
+function toggleLabyBlockInventory() {
+  const nextOpen = !showHotbarInventory.value
+  showHotbarInventory.value = nextOpen
+  if (nextOpen) releaseDesktopPointerLock(gameMc.value)
+}
 
 /**
- * Desktop (pointer lock): F — прапор, I/0 — інвентар, R — телепорт до прапора (T залишено під чат у грі).
+ * Desktop (pointer lock): F — прапор, E/I/0 — інвентар (у грі E за замовчуванням
+ *  відкриває Vue-модалку, не канвасний креатив), R — телепорт до прапора,
+ *  Esc / K — меню налаштувань (кнопка «⚙» схована на ПК, щоб не клацати в обхід
+ *  pointer lock; Esc і так виходить із захоплення курсора). (T залишено під чат; Space/Enter — респавн.)
  */
 function onLabyInventoryKeydown(e) {
   if (e.repeat) return
   const el = /** @type {HTMLElement | null} */ (e.target)
   if (el?.closest?.('input, textarea, select, [contenteditable="true"]')) return
   const mc = gameMc.value
+  if (!labyPlayStarted.value) {
+    e.preventDefault()
+    e.stopPropagation()
+    if (e.code === 'Escape') {
+      goBack()
+    }
+    return
+  }
+  if (e.code === 'Escape') {
+    if (showHotbarInventory.value) {
+      e.preventDefault()
+      e.stopPropagation()
+      showHotbarInventory.value = false
+      return
+    }
+    if (labyHtmlSettingsOpen.value) {
+      e.preventDefault()
+      e.stopImmediatePropagation()
+      closeLabyHtmlSettings()
+      return
+    }
+    if (mc && mc.currentScreen !== null) {
+      e.preventDefault()
+      e.stopImmediatePropagation()
+      mc.displayScreen(null)
+      return
+    }
+    if (mc && mc.currentScreen === null) {
+      e.preventDefault()
+      e.stopImmediatePropagation()
+      void openLabySettings()
+    }
+    return
+  }
   if (e.code === 'Digit0' || e.key === '0') {
     e.preventDefault()
-    showHotbarInventory.value = !showHotbarInventory.value
+    toggleLabyBlockInventory()
   }
-  if (e.code === 'KeyI') {
+  const invKey = mc?.settings?.keyOpenInventory || 'KeyE'
+  if (e.code === 'KeyI' && invKey !== 'KeyI') {
     e.preventDefault()
-    showHotbarInventory.value = !showHotbarInventory.value
+    toggleLabyBlockInventory()
   }
   if (e.code === 'KeyF') {
     e.preventDefault()
@@ -167,6 +371,37 @@ function onLabyInventoryKeydown(e) {
       void mc.fusLabyStartFlagTeleportChannel()
     }
   }
+  if (e.code === 'KeyK' && mc && mc.currentScreen === null) {
+    e.preventDefault()
+    e.stopPropagation()
+    void openLabySettings()
+  }
+  if (e.code === 'F7') {
+    /** Developer hotkey for the FP tool tuning dat.gui panel. The panel mutates
+     *  {@link fusFpToolTuning} live (position/scale/rotation of the held tool in first
+     *  person) and calls `mc.fusBumpFpToolGltfRebuild()` on each tweak so changes show
+     *  up next frame. Toggle so repeat presses close it without rebuilding from scratch
+     *  — keeps tuned values across multiple debug sessions in the same page load. */
+    e.preventDefault()
+    e.stopPropagation()
+    if (mc) {
+      if (mc._fusFpToolTuningGui) {
+        try {
+          mc._fusFpToolTuningGui.domElement?.remove?.()
+        } catch {
+          /* ignore */
+        }
+        try {
+          mc._fusFpToolTuningGui.destroy?.()
+        } catch {
+          /* ignore */
+        }
+        mc._fusFpToolTuningGui = null
+      } else {
+        //installFusFpToolTuningGui(mc)
+      }
+    }
+  }
 }
 
 const labyCoordX = ref(0)
@@ -174,10 +409,28 @@ const labyCoordY = ref(0)
 const labyCoordZ = ref(0)
 /** 0…1 fill for flag teleport channel (engine-driven). */
 const flagChannelProgress = ref(0)
+/** Live PvP mode + karma count for the HUD. Driven off {@code mc.fusPvpSelfState} via the
+ *  same 250 ms poll that updates the coord readout — cheap and avoids plumbing a
+ *  reactive bridge through the karma installer. User spec: "we need to display Karma
+ *  count". */
+const labyPvpMode = ref('white')
+const labyKarma = ref(0)
+/** Death-screen state — populated by {@link installFusDeathScreen} when the local player's
+ *  health crosses 0. `active` flips the overlay on; `killerLabel` is the attributed killer
+ *  (another player's name, a mob type, or "Невідомо" when nothing relevant was recorded).
+ *  Reset by the "Відродитися" button which drives `mc.fusRespawnNow()`. */
+const deathActive = ref(false)
+const deathKillerLabel = ref('')
 /** Interval id for coord ticks — cleared when `gameMc` changes or on unmount */
 let labyCoordsIv = 0
+/** `pagehide` listener for last-chance session flush (mobile backgrounding). */
+let labyPageHideFlush = null
 
 const noRtdb = computed(() => !rtdb)
+
+const labyUserReady = computed(() => !!(authFbUser.value?.uid || auth.profile?.id))
+
+const labyInPlay = computed(() => !!gameMc.value && !booting.value && !error.value)
 
 /** Firestore item ids for engine slots 1–8 — mirrors live `mc.fusHotbarSlotMeta` for the inventory UI. */
 const liveLabyHotbarItemIds = computed(() => {
@@ -257,6 +510,21 @@ function goBack() {
   router.push({ name: 'student-home' })
 }
 
+/**
+ * User gesture: immersive play (slim app header preserved — no browser fullscreen, so PWA
+ * / OS notifications and toasts are not blocked).
+ */
+async function labyStartPlay() {
+  if (booting.value) return
+  bwSession.setImmersive(true)
+  if (typeof document !== 'undefined') {
+    document.documentElement.classList.add('fus-laby-play')
+  }
+  labyPlayStarted.value = true
+  await nextTick()
+  await runLabyEngineBootstrap()
+}
+
 /** Keyboard hints row — fine pointer desktops only (avoids clutter on touch). */
 const showDesktopKeyHint = computed(() => {
   if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false
@@ -278,14 +546,81 @@ function _labyBtnCooldown(key) {
   return false
 }
 
-async function openLabySettings() {
-  if (_labyBtnCooldown('settings')) return
+function openLabySettings() {
   const mc = gameMc.value
   if (!mc) return
-  const { default: GuiOptions } = await import(
-    '@labymc/src/js/net/minecraft/client/gui/screens/GuiOptions.js'
+  /**
+   * Dismiss any engine canvas screen first (not subject to the 350 ms double-tap guard).
+   */
+  if (mc.currentScreen !== null) {
+    releaseDesktopPointerLock(mc)
+    mc.displayScreen(null)
+    return
+  }
+  if (labyHtmlSettingsOpen.value) {
+    closeLabyHtmlSettings()
+    return
+  }
+  if (_labyBtnCooldown('settings')) return
+  releaseDesktopPointerLock(mc)
+  showHotbarInventory.value = false
+  syncLabySettingsFormFromMc()
+  labyHtmlSettingsOpen.value = true
+}
+
+function onLabySetAmbientOcclusion(e) {
+  const v = e.target && 'checked' in e.target ? Boolean(e.target.checked) : labySetAmbientOcclusion.value
+  labySetAmbientOcclusion.value = v
+  const mc = gameMc.value
+  if (mc?.settings) {
+    mc.settings.ambientOcclusion = v
+    try {
+      mc.worldRenderer?.rebuildAll?.()
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+function onLabySetViewBobbing(e) {
+  const v = e.target && 'checked' in e.target ? Boolean(e.target.checked) : labySetViewBobbing.value
+  labySetViewBobbing.value = v
+  const mc = gameMc.value
+  if (mc?.settings) mc.settings.viewBobbing = v
+}
+
+function onLabySetFovInput(e) {
+  const n = Math.round(Number(e?.target?.value))
+  labySetFov.value = Math.max(50, Math.min(100, Number.isFinite(n) ? n : 70))
+  const mc = gameMc.value
+  if (mc?.settings) mc.settings.fov = labySetFov.value
+}
+
+function onLabySetViewDistanceInput(e) {
+  const n = Math.round(Number(e?.target?.value))
+  labySetViewDistance.value = Math.max(
+    FUS_LABY_VIEW_MIN,
+    Math.min(FUS_LABY_VIEW_MAX, Number.isFinite(n) ? n : FUS_LABY_VIEW_MIN),
   )
-  mc.displayScreen(new GuiOptions(null))
+  const mc = gameMc.value
+  if (mc?.settings) mc.settings.viewDistance = labySetViewDistance.value
+}
+
+function labyStuckTeleportToSpawn() {
+  const mc = gameMc.value
+  if (mc && typeof mc.fusTeleportToDefaultSpawn === 'function') {
+    try {
+      mc.fusTeleportToDefaultSpawn()
+    } catch (err) {
+      console.warn('[LabyJsMinecraftView] stuck teleport', err)
+    }
+  }
+}
+
+/** Touch HUD: no E / I / 0 key — same as hotbar "⋯" slot + {@link toggleLabyBlockInventory}. */
+function openLabyBlockInventoryFromUi() {
+  if (_labyBtnCooldown('invui')) return
+  toggleLabyBlockInventory()
 }
 
 function placeSpawnFlagAtFeet() {
@@ -302,6 +637,27 @@ function startTeleportToFlagChannel() {
   const mc = gameMc.value
   if (mc && typeof mc.fusLabyStartFlagTeleportChannel === 'function') {
     void mc.fusLabyStartFlagTeleportChannel()
+  }
+}
+
+/**
+ * Death-screen respawn button handler. Delegates to {@link mc.fusRespawnNow} which knows
+ * how to choose between the player's planted flag and the engine's default spawn. The
+ * `onRespawn` callback set up in {@link boot} clears {@link deathActive} so the overlay
+ * unmounts once the teleport commits.
+ */
+function respawnFromDeath() {
+  const mc = gameMc.value
+  if (!mc || typeof mc.fusRespawnNow !== 'function') {
+    /** Overlay stuck without an install is a bug, but don't leave the user trapped. */
+    deathActive.value = false
+    return
+  }
+  try {
+    mc.fusRespawnNow()
+  } catch (e) {
+    console.warn('[LabyJsMinecraftView] respawn from death failed', e)
+    deathActive.value = false
   }
 }
 
@@ -340,6 +696,15 @@ watch(
   { deep: true },
 )
 
+watch(labyHudBlocked, (open) => {
+  if (open) showHotbarInventory.value = false
+})
+
+/** Pointer lock: opening the Vue inventory may bypass {@link toggleLabyBlockInventory} (e.g. v-model from child) — always request unlock when the modal opens. */
+watch(showHotbarInventory, (open) => {
+  if (open) releaseDesktopPointerLock(gameMc.value)
+})
+
 watch(
   () => gameMc.value,
   (mc) => {
@@ -352,9 +717,12 @@ watch(
       labyCoordY.value = 0
       labyCoordZ.value = 0
       flagChannelProgress.value = 0
+      labyPvpMode.value = 'white'
+      labyKarma.value = 0
       return
     }
     const tick = () => {
+      labyEngineGuiOpen.value = mc.currentScreen != null
       const pl = mc.player
       if (pl) {
         labyCoordX.value = Math.floor(pl.x)
@@ -369,6 +737,14 @@ watch(
       } else {
         flagChannelProgress.value = 0
       }
+      /** Pull PvP state + karma for the HUD. `fusPvpSelfState` is written every time the
+       *  karma module updates state so polling is safe (no reactive plumbing needed). */
+      const self = mc.fusPvpSelfState
+      if (self) {
+        labyPvpMode.value = self.mode || 'white'
+        labyKarma.value = Math.max(0, Math.floor(Number(self.karma) || 0))
+      }
+      tickPersistFusLabySession(mc, FUS_SHARED_WORLD_LABY_ID)
     }
     tick()
     labyCoordsIv = window.setInterval(tick, 220)
@@ -376,72 +752,14 @@ watch(
   { immediate: true },
 )
 
-onMounted(async () => {
+async function runLabyEngineBootstrap() {
   error.value = ''
   booting.value = true
-  gameMc.value = null
-  bwSession.setImmersive(true)
-  if (typeof document !== 'undefined') {
-    document.documentElement.classList.add('fus-laby-play')
-  }
-
-  const base = `${import.meta.env.BASE_URL || '/'}`.replace(/\/?$/, '/')
-  window.__LABY_MC_ASSET_BASE__ = `${base}labyminecraft/`
-  window.__LABY_MC_FUS_EMBED__ = true
-
-  window.__fusLabyOpenHotbarExtras = () => {
-    showHotbarInventory.value = true
-  }
-
-  if (typeof window !== 'undefined') {
-    window.addEventListener('keydown', onLabyInventoryKeydown, true)
-  }
-
-  installLabyDocumentInteractionGuards()
-
   try {
-    await auth.init()
-    if (!userStore.items.length) await userStore.fetchItems()
-
     const uid = authFbUser.value?.uid || auth.profile?.id
     if (!uid) {
       error.value = 'Увійдіть, щоб грати'
       return
-    }
-
-    window.__FUS_GRANT_LABY_XP__ = async (amount, meta) => {
-      const myUid = authFbUser.value?.uid || auth.profile?.id
-      const killerUid = meta && typeof meta.killerUid === 'string' ? meta.killerUid : ''
-      if (!myUid || killerUid !== myUid || amount == null) return
-      try {
-        const label =
-          meta && typeof meta.mobType === 'string'
-            ? `Лабі-світ — ${meta.mobType}`
-            : 'Лабі-світ — моб'
-        await grantLabyGameplayXp(auth.profile?.id, Number(amount), label)
-      } catch (e) {
-        console.warn('[LabyJsMinecraftView] grant xp', e)
-      }
-    }
-
-    window.__FUS_GRANT_LOOT__ = async (payload) => {
-      const u = auth.profile?.id
-      if (!u || !payload || typeof payload !== 'object') return
-      const kind = payload.kind
-      if (kind === 'coins' && payload.coins != null) {
-        const amt = Number(payload.coins)
-        if (payload.source === 'pk') {
-          await grantStudentCoinsFromGame(u, amt, 'PK — здобич')
-        } else {
-          await grantLabyMobCoinsCapped(u, amt, 'Лабі — здобич з мобів')
-        }
-      } else if (kind === 'item' && payload.bwSeedKey) {
-        await grantShopItemByBwSeedKey(u, String(payload.bwSeedKey))
-        await userStore.fetchItems()
-      } else if (kind === 'skin' && payload.skinId) {
-        await grantShopSkinBySkinId(u, String(payload.skinId))
-        await userStore.fetchItems()
-      }
     }
 
     const skinUrl = resolvePresenceSkinUrl(auth.profile, userStore.items)
@@ -463,7 +781,16 @@ onMounted(async () => {
     const { default: Start } = startMod
     const start = new Start()
     const mc = await start.launch(hostId)
-    gameMc.value = mc
+    gameMc.value = mc;
+    labyEngineGuiOpen.value = mc.currentScreen != null
+    const _origDisplayScreen = mc.displayScreen.bind(mc)
+    mc.displayScreen = function fusLabyPatchedDisplayScreen(screen) {
+      try {
+        _origDisplayScreen(screen)
+      } finally {
+        labyEngineGuiOpen.value = mc.currentScreen != null
+      }
+    }
     /**
      * Freeze the engine until boot completes — prevents touch drags from spinning the camera,
      * dropped block clicks, and mob AI / world ticks from burning CPU behind the loader spinner.
@@ -472,12 +799,22 @@ onMounted(async () => {
     mc.fusFrozen = true
 
     installFusLabyFpToolHooks(mc)
+    if (import.meta.env.DEV === true) {
+      // installFusTpToolTuningGui(mc)
+      // installFusFpToolTuningGui(mc)
+    }
     installFusLabySpawnFlag(mc, { worldId: FUS_SHARED_WORLD_LABY_ID, uid, rtdb })
     installFusSkinLoader(mc)
     installFusAutoJump(mc)
     installFusBlockHardness(mc)
     installFusDamageFlash(mc)
+    installFusCombatFx(mc)
     installFusPvpKarma(mc, { worldId: FUS_SHARED_WORLD_LABY_ID, uid, rtdb })
+    installFusWorldDrops(mc, { worldId: FUS_SHARED_WORLD_LABY_ID, uid, rtdb })
+
+    if (import.meta.env.DEV && typeof window !== 'undefined') {
+      window.__FUS_CLEAR_LABY_MOBS__ = () => clearLabySharedWorldMobsRtdb()
+    }
 
     const ua = typeof navigator !== 'undefined' ? navigator.userAgent : ''
     const isIosSafari =
@@ -502,6 +839,8 @@ onMounted(async () => {
       mc.fusLowTierMobile = true
     } else if (isAndroid) {
       mc.fusLowTierMobile = true
+      /** Cuts framebuffer pixels on 2–3× DPR devices; see {@link GameWindow#updateWindowSize}. */
+      mc.fusWebglPixelRatioMax = 2;
       if (strainedAndroid) {
         /**
          * Route Android through the same ultra-strict throttle constants as iOS Safari. All the
@@ -511,32 +850,46 @@ onMounted(async () => {
         mc.fusIosSafari = true
       }
     }
+    /** Tighter horizontal cull for mobs / remotes / spawn flag so they do not draw past cut-off sky on touch clients. */
+    mc.fusLabyStricterEntityCull = isIosSafari || isAndroid
+
+    /**
+     * {@link WorldRenderer#onTick}: at most N chunk-section mesh rebuilds per game tick, and
+     * a lower burst cap on {@code flushRebuild} so explore-spikes don’t stutter the main thread.
+     * Android: explicit 1/tick; all Laby low-tier touch clients also use a smaller flush cap.
+     */
+    if (isAndroid) {
+      mc.fusChunkRebuildsPerTick = 1
+    }
+    if (mc.fusLowTierMobile) {
+      mc.fusChunkFlushRebuildCap = 4
+    }
+    /**
+     * Laby in-browser (PC included): 2 section rebuilds per tick + large flush cap spikes the
+     * main thread when many chunks become visible. Match the Android steady-state budget on
+     * all embed clients so explore stays smooth; horizon fills marginally slower.
+     */
+    if (typeof window !== 'undefined' && window.__LABY_MC_FUS_EMBED__) {
+      mc.fusChunkRebuildsPerTick = 1
+      const cap = Number(mc.fusChunkFlushRebuildCap)
+      mc.fusChunkFlushRebuildCap = Number.isFinite(cap) && cap > 0 ? Math.min(cap, 4) : 4
+    }
+    /** {@link World#onTick}: no advancing time / sky-light / full chunk rebuilds from day cycle. */
+    mc.fusLabyStaticDayTime = true
 
     if (mc.settings) {
       /**
-       * First-ever launch on this device gets a safe default per tier; thereafter we respect the
-       * user's saved `viewDistance` (they can crank it up or down via the in-game Settings screen
-       * and it persists through {@link GameSettings#save}).
+       * Render distance: {@link applyFusLabyViewDistanceFromStorage} uses localStorage as
+       * the source of truth (clamped 2..5) so mobile browsers that drop or partition
+       * cookies still respect the in-game slider. {@link installFusLabyViewDistanceSaveHook}
+       * mirrors every {@link GameSettings#save} into the same key.
        */
-      const FUS_VD_INITIALIZED_KEY = 'fus:viewDistanceInitialized:v1'
-      let hasInit = false
-      try {
-        hasInit = !!(typeof localStorage !== 'undefined' && localStorage.getItem(FUS_VD_INITIALIZED_KEY))
-      } catch {
-        /* ignore */
-      }
-      if (!hasInit) {
-        const vdCap = isIosSafari ? 2 : isAndroid ? 3 : 4
-        mc.settings.viewDistance = vdCap
-        try {
-          mc.settings.save?.()
-          if (typeof localStorage !== 'undefined') {
-            localStorage.setItem(FUS_VD_INITIALIZED_KEY, '1')
-          }
-        } catch {
-          /* ignore */
-        }
-      }
+      applyFusLabyViewDistanceFromStorage(mc, {
+        isAndroid,
+        isIosSafari,
+        strainedAndroid,
+      })
+      installFusLabyViewDistanceSaveHook(mc)
     }
 
     mc.worldRenderer?.applyFusMobileGraphicsProfile?.()
@@ -557,6 +910,29 @@ onMounted(async () => {
       return
     }
 
+    if (rtdb) {
+      try {
+        const snap = await get(dbRef(rtdb, `worldSpawnFlags/${FUS_SHARED_WORLD_LABY_ID}/${uid}`))
+        if (snap.exists()) {
+          const f = snap.val()
+          const x = Number(f.x)
+          const y = Number(f.y)
+          const z = Number(f.z)
+          if ([x, y, z].every((n) => Number.isFinite(n))) {
+            const ry = Number.isFinite(Number(f.ry)) ? Number(f.ry) : null
+            mc.fusSpawnFlagPos = { x, y, z, ry: ry != null && Number.isFinite(ry) ? ry : undefined }
+            const feetY = fusLabyFeetYAtColumn(mc.world, x, z, y)
+            mc.player.setPosition(x + 0.5, feetY, z + 0.5)
+            if (ry != null && Number.isFinite(ry) && typeof mc.player.rotationYaw === 'number') {
+              mc.player.rotationYaw = ry
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('[LabyJsMinecraftView] spawn flag load (early)', e)
+      }
+    }
+
     /** First ~10s: defer distant RTDB cell applies on embed (nearest-first still streams; see FusRtdbBlocks). */
     if (typeof performance !== 'undefined') {
       mc._fusTerrainBootUntil = performance.now() + 10000
@@ -569,25 +945,37 @@ onMounted(async () => {
       installFusWorldEditsRtdb(mc, { worldId: FUS_SHARED_WORLD_LABY_ID, uid, rtdb })
     }
 
+    /**
+     * Multiplayer avatars: write our pose/HP/held/PvP state to `worldPresence/...` at ~10 Hz
+     * and subscribe to every peer's row to draw their skinned model + nametag + HP bar. The
+     * remote-avatar installer must come after world-edits so the avatar scale computations
+     * get the final `worldRenderer` camera (set during world load).
+     */
+    if (rtdb) {
+      installFusSpawnInvuln(mc)
+      installFusPresenceWriter(mc, {
+        worldId: FUS_SHARED_WORLD_LABY_ID,
+        uid,
+        rtdb,
+        displayName,
+        skinUrl,
+        slim: auth.profile?.avatar?.modelType === 'slim',
+      })
+      try {
+        mc.fusForcePresenceWrite?.()
+      } catch {
+        /* first push of invUntil after writer exists */
+      }
+      installFusRemoteAvatars(mc, { worldId: FUS_SHARED_WORLD_LABY_ID, uid, rtdb })
+    }
+
     syncHotbarToEngine()
     mc.player.inventory.selectedSlotIndex = 0
 
-    if (rtdb) {
-      try {
-        const snap = await get(dbRef(rtdb, `worldSpawnFlags/${FUS_SHARED_WORLD_LABY_ID}/${uid}`))
-        if (snap.exists()) {
-          const f = snap.val()
-          const x = Number(f.x)
-          const y = Number(f.y)
-          const z = Number(f.z)
-          if ([x, y, z].every((n) => Number.isFinite(n))) {
-            mc.fusSpawnFlagPos = { x, y, z }
-            mc.player.setPosition(x, y, z)
-          }
-        }
-      } catch (e) {
-        console.warn('[LabyJsMinecraftView] spawn flag load', e)
-      }
+    try {
+      mc.fusRefreshSpawnFlagMarker?.()
+    } catch {
+      /* ignore */
     }
 
     applyFusPlayerLevelToMinecraft(mc, effectiveUserLevelFromProfile(auth.profile))
@@ -617,6 +1005,28 @@ onMounted(async () => {
      * that chunk uploads desperately need. Unfreezing even a couple frames early is visible.
      */
     await waitForWorldRenderReady(mc, 5000)
+    if (typeof window !== 'undefined' && window.__LABY_MC_FUS_EMBED__ && mc.worldRenderer?.fusPrewarmSpawnAreaMeshes) {
+      try {
+        await mc.worldRenderer.fusPrewarmSpawnAreaMeshes({ maxTotalMs: 8000, stepsPerRaf: 28 })
+      } catch (e) {
+        console.warn('[LabyJsMinecraftView] chunk mesh prewarm', e)
+      }
+    }
+
+    if (mc.fusSpawnFlagPos) {
+      const fp = mc.fusSpawnFlagPos
+      const x = Number(fp.x)
+      const y = Number(fp.y)
+      const z = Number(fp.z)
+      if ([x, y, z].every((n) => Number.isFinite(n)) && mc.player) {
+        try {
+          const feetY = fusLabyFeetYAtColumn(mc.world, x, z, y)
+          mc.player.setPosition(x + 0.5, feetY, z + 0.5)
+        } catch (e) {
+          console.warn('[LabyJsMinecraftView] spawn flag feet re-apply after terrain ready', e)
+        }
+      }
+    }
 
     /**
      * Local-only simple mob system (spawns/AI/attack hook). Drop-in replacement for the
@@ -627,26 +1037,367 @@ onMounted(async () => {
       count: mc.fusLowTierMobile ? 4 : 8,
       spawnRadius: 28,
       level: Math.max(1, Math.floor(labyLevel) || 1),
+      worldId: rtdb ? FUS_SHARED_WORLD_LABY_ID : null,
+      /** Always pass the same id the XP handler uses — null was breaking solo / no-RTDB kills. */
+      uid,
+      rtdb: rtdb || null,
+      displayName,
+    })
+    /**
+     * PvP / PK combat wiring. Must come AFTER {@link installFusSimpleMobs} so it can
+     * chain on top of the mob-melee hook — see {@link installFusPlayerCombat} for the
+     * priority it uses (player → mob → block). Requires presence + remote-avatars to
+     * already be subscribed so the attacker's target resolver has positions to raycast
+     * against.
+     */
+    if (rtdb) {
+      installFusPlayerCombat(mc, {
+        worldId: FUS_SHARED_WORLD_LABY_ID,
+        uid,
+        rtdb,
+        displayName,
+      })
+    }
+
+    /**
+     * Passive HP regen: 30 s after any hit (given or taken), then +1 HP every 10 s until
+     * full. See {@link installFusHealthRegen}. After combat install so `player.health`
+     * is the same reference; `fusMarkCombatForRegen` runs from PvP + mob installers.
+     */
+    installFusHealthRegen(mc, { outOfCombatMs: 30000, regenIntervalMs: 10000, amount: 1 })
+
+    /**
+     * Death-screen coordinator. Shows an overlay (template below) naming the killer and
+     * offering a "Відродитися" respawn button. We keep the install *after* combat / regen
+     * so `mc.fusRecordDamageFrom` exists before mobs or PvP start landing hits. The Vue
+     * callbacks bridge reactive refs to the raw `mc` state.
+     */
+    installFusDeathScreen(mc, {
+      onDeath: ({ killerLabel }) => {
+        deathKillerLabel.value = killerLabel || 'Невідомо'
+        deathActive.value = true
+      },
+      onRespawn: () => {
+        deathActive.value = false
+        deathKillerLabel.value = ''
+      },
     })
   } catch (e) {
     console.warn('[LabyJsMinecraftView]', e)
     error.value = e?.message || 'Помилка запуску'
   } finally {
-    /** Release the engine first so the first unfrozen frame already has terrain. */
+    if (error.value) labyPlayStarted.value = false
+    if (error.value) {
+      bwSession.setImmersive(false)
+      if (typeof document !== 'undefined') {
+        document.documentElement.classList.remove('fus-laby-play')
+      }
+    }
     const mc = gameMc.value
     if (mc) {
-      mc.fusFrozen = false
+      /** Freeze only on failed bootstrap; clear on success (same intent as the old `!error && !labyPlayStarted` product). */
+      mc.fusFrozen = Boolean(error.value)
     }
     booting.value = false
   }
-  await nextTick()
+  if (!error.value) {
+    await nextTick()
     mountFusStats()
+  }
+}
+
+onMounted(async () => {
+  error.value = ''
+  booting.value = false
+  labyPlayStarted.value = false
+  gameMc.value = null
+  bwSession.setImmersive(false)
+
+  const base = `${import.meta.env.BASE_URL || '/'}`.replace(/\/?$/, '/')
+  window.__LABY_MC_ASSET_BASE__ = `${base}labyminecraft/`
+  window.__LABY_MC_FUS_EMBED__ = true
+
+  window.__FUS_LABY_TOGGLE_INVENTORY__ = toggleLabyBlockInventory
+
+  if (typeof window !== 'undefined') {
+    window.addEventListener('keydown', onLabyInventoryKeydown, true)
+    labyPageHideFlush = () => {
+      const mc = gameMc.value
+      if (mc) flushFusLabySessionToStorage(mc, FUS_SHARED_WORLD_LABY_ID)
+    }
+    window.addEventListener('pagehide', labyPageHideFlush)
+  }
+
+  if (typeof document !== 'undefined') {
+    _labyFsListener = () => fusLabySyncFullscreenState()
+    document.addEventListener('fullscreenchange', _labyFsListener)
+    document.addEventListener('webkitfullscreenchange', _labyFsListener)
+    fusLabySyncFullscreenState()
+  }
+
+  installLabyDocumentInteractionGuards()
+
+  try {
+    await auth.init()
+    if (!userStore.items.length) await userStore.fetchItems()
+
+    const uid = authFbUser.value?.uid || auth.profile?.id
+    if (!uid) {
+      error.value = 'Увійдіть, щоб грати'
+      return
+    }
+
+    window.__FUS_GRANT_LABY_XP__ = async (amount, meta) => {
+      /** Firestore `users/{uid}` uses Firebase auth uid — align with coin grants. */
+      const u = authFbUser.value?.uid || auth.profile?.id
+      const fb = authFbUser.value?.uid
+      const prof = auth.profile?.id
+      const killerUid = meta && typeof meta.killerUid === 'string' ? meta.killerUid : ''
+      if (!killerUid || amount == null) return
+      const isLocalKiller =
+        (fb && killerUid === fb) || (prof && killerUid === prof) || killerUid === uid
+      if (!isLocalKiller) return
+      if (!u) return
+      try {
+        const label =
+          meta && typeof meta.mobType === 'string'
+            ? `Лабі-світ — ${meta.mobType}`
+            : 'Лабі-світ — моб'
+        await grantLabyGameplayXp(u, Number(amount), label)
+      } catch (e) {
+        console.warn('[LabyJsMinecraftView] grant xp', e)
+      }
+    }
+
+    /**
+     * One Firestore write for mob-kill combat XP + capped mob coins — keeps rewards immediate
+     * (see {@link grantLabyMobKillPayout}). Used when {@code installFusSimpleMobs} sees this hook.
+     */
+    window.__FUS_GRANT_LABY_MOB_PAYOUT__ = async (payload) => {
+      if (!payload || typeof payload !== 'object') return
+      const u = authFbUser.value?.uid || auth.profile?.id
+      if (!u) {
+        console.warn('[Laby] mob payout: no uid')
+        return
+      }
+      const fb = authFbUser.value?.uid
+      const prof = auth.profile?.id
+      const killerUid = typeof payload.killerUid === 'string' ? payload.killerUid : ''
+      if (!killerUid) return
+      const isLocalKiller =
+        (fb && killerUid === fb) || (prof && killerUid === prof) || killerUid === uid
+      if (!isLocalKiller) return
+      const xp = Math.max(0, Math.round(Number(payload.xp) || 0))
+      const coins = Math.max(0, Math.round(Number(payload.coins) || 0))
+      if (xp === 0 && coins === 0) return
+      const label =
+        typeof payload.mobType === 'string' && payload.mobType.length
+          ? `Лабі-світ — ${payload.mobType}`
+          : 'Лабі — здобич з мобів'
+      try {
+        await grantLabyMobKillPayout(u, { xp, coins, note: label })
+      } catch (e) {
+        console.warn('[LabyJsMinecraftView] grantLabyMobKillPayout', e)
+      }
+    }
+
+    window.__FUS_GRANT_LOOT__ = async (payload) => {
+      if (!payload || typeof payload !== 'object') {
+        console.warn('[LabyJsMinecraftView] __FUS_GRANT_LOOT__: invalid payload', payload)
+        return { ok: false, reason: 'bad-payload' }
+      }
+      /**
+       * `users/{uid}` in Firestore uses the Firebase auth uid. Prefer it over
+       * `auth.profile.id` (which can differ or lag while profile hydrates) or grants no-op
+       * / wrong-doc writes without an obvious error.
+       */
+      const u = authFbUser.value?.uid || auth.profile?.id
+      if (!u) {
+        console.warn(
+          '[LabyJsMinecraftView] __FUS_GRANT_LOOT__: no uid — wait for auth/profile (pickup was too early)',
+        )
+        return { ok: false, reason: 'no-uid' }
+      }
+      const kind = payload.kind
+      try {
+        if (kind === 'coins' && payload.coins != null) {
+          const amt = Number(payload.coins)
+          if (payload.source === 'pk') {
+            await grantStudentCoinsFromGame(u, amt, 'PK — здобич')
+            return { ok: true, kind: 'coins', source: 'pk' }
+          } else if (payload.source === 'ore') {
+            const r = await grantLabyMobCoinsCapped(u, amt, 'Лабі — золота руда')
+            /**
+             * Do **not** mutate `auth.profile` in place here — the Firestore listener will
+             * replace the profile object with server truth. In-place + listener ordering caused
+             * coin totals to “dip” and false −coin toasts (same grant applied twice in UI math).
+             */
+            if (amt > 0 && r.granted < amt) {
+              console.warn('[Laby] ore coins not fully granted (daily mob cap, etc.)', { wanted: amt, ...r })
+            }
+            return { ok: true, kind: 'coins', source: 'ore', ...r }
+          } else {
+            const r = await grantLabyMobCoinsCapped(u, amt, 'Лабі — здобич з мобів')
+            if (amt > 0 && r.granted < amt) {
+              console.warn('[Laby] mob coins not fully granted (daily mob cap, etc.)', { wanted: amt, ...r })
+            }
+            return { ok: true, kind: 'coins', source: 'mob', ...r }
+          }
+        } else if (kind === 'item' && payload.bwSeedKey) {
+          const bw = String(payload.bwSeedKey)
+          const fromPayload =
+            typeof payload.itemLabel === 'string' && payload.itemLabel.trim()
+              ? payload.itemLabel.trim()
+              : labyDisplayNameForMobDropBwKey(bw)
+          const added = await grantShopItemByBwSeedKey(u, bw)
+          await userStore.fetchItems()
+          await nextTick()
+          syncHotbarToEngine()
+          if (added) {
+            toastLabySuccess(`Отримано в інвентар: ${fromPayload}`, 2200)
+          } else {
+            toastLabyInfo(
+              `Предмет «${fromPayload}» не знайдено в каталозі (адміністратору: перевірте bwSeedKey).`,
+              3200,
+            )
+          }
+          return { ok: added, kind: 'item', label: fromPayload }
+        } else if (kind === 'skin' && payload.skinId) {
+          const ok = await grantShopSkinBySkinId(u, String(payload.skinId))
+          await userStore.fetchItems()
+          await nextTick()
+          syncHotbarToEngine()
+          if (ok) {
+            toastLabySuccess('Новий скін додано до інвентаря', 2000)
+          }
+          return { ok, kind: 'skin' }
+        }
+      } catch (e) {
+        console.warn('[LabyJsMinecraftView] grant loot', e)
+        throw e
+      }
+      return { ok: true }
+    }
+
+    /**
+     * PvP coin transfer: only when the victim was **purple** (flagged for PvP) — the losing
+     * client fires this hook. We debit one coin (if they have ≥1), then spawn a physical
+     * coin for the killer. Killing a white (innocent) player does not run this; the killer
+     * becomes PK via karma instead. If the loser is broke, nothing drops.
+     */
+    window.__FUS_ON_PVP_DEATH_DROP__ = async ({ killerUid, x, y, z }) => {
+      const u = auth.profile?.id
+      if (!u || !killerUid || killerUid === u) return
+      try {
+        const { debited } = await debitPvpCoinFromUser(u)
+        if (!debited) return
+        const mc = gameMc.value
+        if (mc && typeof mc.fusDropCoinAt === 'function') {
+          mc.fusDropCoinAt(Number(x) || 0, Number(y) || 0, Number(z) || 0, {
+            coins: 1,
+            winnerUid: killerUid,
+            source: 'pk',
+          })
+        }
+      } catch (e) {
+        console.warn('[LabyJsMinecraftView] pvp death drop failed', e)
+      }
+    }
+
+    /**
+     * PK death: fallen PK drops scaled coins + random items from their own inventory.
+     * Coins drop as {@link coinStacks} separate physical coins (each 1 coin on pickup
+     * to keep the visual spread interesting), items drop one cube each. Spread is a
+     * small random XZ offset around the death point so the pile is visible as a
+     * pile, not a single superimposed mesh.
+     *
+     * User spec:
+     *   • karma 1 → up to 25 coins + common items
+     *   • karma 2 → up to 50 coins + rare items
+     *   • more karma → more loot overall
+     */
+    window.__FUS_ON_PK_DEATH_DROPS__ = async ({ karmaAtDeath, dropContext }) => {
+      const u = auth.profile?.id
+      if (!u) return
+      const k = Math.max(1, Math.floor(Number(karmaAtDeath) || 1))
+      const baseX = Number(dropContext?.x) || 0
+      const baseY = Number(dropContext?.y) || 0
+      const baseZ = Number(dropContext?.z) || 0
+      try {
+        const { coinsDropped, items } = await debitPkLootFromUser(u, { karma: k })
+        const mc = gameMc.value
+        if (!mc) return
+        /** One physical coin mesh per coin; each pickup grants +1 (see `fusWorldDropsInstall`). */
+        for (let i = 0; i < coinsDropped; i++) {
+          const jx = (Math.random() - 0.5) * 2.2
+          const jz = (Math.random() - 0.5) * 2.2
+          mc.fusDropCoinAt?.(baseX + jx, baseY + 0.3, baseZ + jz, {
+            source: 'pk',
+            loserUid: u,
+          })
+        }
+        for (const item of items) {
+          const jx = (Math.random() - 0.5) * 2.6
+          const jz = (Math.random() - 0.5) * 2.6
+          mc.fusDropItemAt?.(baseX + jx, baseY + 0.5, baseZ + jz, {
+            subtype: item.subtype,
+            payload: item.payload,
+            label: item.label,
+            loserUid: u,
+          })
+        }
+        void userStore.fetchItems()
+      } catch (e) {
+        console.warn('[LabyJsMinecraftView] PK drop failed', e)
+      }
+    }
+
+  } catch (e) {
+    console.warn('[LabyJsMinecraftView] init', e)
+    error.value = e?.message || 'Помилка'
+  }
 })
 
 onBeforeUnmount(() => {
   unmountFusStats()
+  labyPseudoPageFullscreen.value = false
+  if (typeof document !== 'undefined' && _labyFsListener) {
+    try {
+      document.removeEventListener('fullscreenchange', _labyFsListener)
+      document.removeEventListener('webkitfullscreenchange', _labyFsListener)
+    } catch {
+      /* ignore */
+    }
+    _labyFsListener = null
+  }
   if (typeof window !== 'undefined') {
     window.removeEventListener('keydown', onLabyInventoryKeydown, true)
+    if (labyPageHideFlush) {
+      try {
+        labyPageHideFlush()
+      } catch {
+        /* ignore */
+      }
+      window.removeEventListener('pagehide', labyPageHideFlush)
+      labyPageHideFlush = null
+    }
+  }
+  /** Dispose the FP tool tuning dat.gui if it was opened (either auto in dev, or F7 in
+   *  prod). The panel pins itself to `document.body`, so leaving it dangling after the
+   *  view unmounts would stack up across route changes. */
+  const gui = gameMc.value?._fusFpToolTuningGui
+  if (gui) {
+    try {
+      gui.domElement?.remove?.()
+    } catch {
+      /* ignore */
+    }
+    try {
+      gui.destroy?.()
+    } catch {
+      /* ignore */
+    }
+    if (gameMc.value) gameMc.value._fusFpToolTuningGui = null
   }
   if (labyCoordsIv) {
     window.clearInterval(labyCoordsIv)
@@ -673,9 +1424,14 @@ onBeforeUnmount(() => {
     window.__LABY_MC_ASSET_BASE__ = undefined
   }
   try {
-    delete window.__fusLabyOpenHotbarExtras
+    delete window.__FUS_LABY_TOGGLE_INVENTORY__
   } catch {
-    window.__fusLabyOpenHotbarExtras = undefined
+    window.__FUS_LABY_TOGGLE_INVENTORY__ = undefined
+  }
+  try {
+    delete window.__FUS_CLEAR_LABY_MOBS__
+  } catch {
+    window.__FUS_CLEAR_LABY_MOBS__ = undefined
   }
   try {
     delete window.__FUS_GRANT_LOOT__
@@ -687,10 +1443,47 @@ onBeforeUnmount(() => {
   } catch {
     window.__FUS_GRANT_LABY_XP__ = undefined
   }
+  try {
+    delete window.__FUS_GRANT_LABY_MOB_PAYOUT__
+  } catch {
+    window.__FUS_GRANT_LABY_MOB_PAYOUT__ = undefined
+  }
+  try {
+    delete window.__FUS_ON_PVP_DEATH_DROP__
+  } catch {
+    window.__FUS_ON_PVP_DEATH_DROP__ = undefined
+  }
+  try {
+    delete window.__FUS_ON_PK_DEATH_DROPS__
+  } catch {
+    window.__FUS_ON_PK_DEATH_DROPS__ = undefined
+  }
 
   const mc = gameMc.value
+  labyEngineGuiOpen.value = false
+  labyHtmlSettingsOpen.value = false
   gameMc.value = null
   if (!mc) return
+  try {
+    mc.fusDisposePlayerCombat?.()
+  } catch (e) {
+    console.warn('[LabyJsMinecraftView] dispose player combat', e)
+  }
+  try {
+    mc.fusDisposeHealthRegen?.()
+  } catch (e) {
+    console.warn('[LabyJsMinecraftView] dispose health regen', e)
+  }
+  try {
+    mc.fusDisposeDeathScreen?.()
+  } catch (e) {
+    console.warn('[LabyJsMinecraftView] dispose death screen', e)
+  }
+  try {
+    mc.fusDisposeCombatFx?.()
+  } catch (e) {
+    console.warn('[LabyJsMinecraftView] dispose combat fx', e)
+  }
   try {
     mc.fusDisposeSimpleMobs?.()
   } catch (e) {
@@ -722,9 +1515,29 @@ onBeforeUnmount(() => {
     console.warn('[LabyJsMinecraftView] dispose pvp karma', e)
   }
   try {
+    mc.fusDisposeWorldDrops?.()
+  } catch (e) {
+    console.warn('[LabyJsMinecraftView] dispose world drops', e)
+  }
+  try {
     mc.fusDisposeWorldEditsRtdb?.()
   } catch (e) {
     console.warn('[LabyJsMinecraftView] dispose world edits rtdb', e)
+  }
+  try {
+    mc.fusDisposeRemoteAvatars?.()
+  } catch (e) {
+    console.warn('[LabyJsMinecraftView] dispose remote avatars', e)
+  }
+  try {
+    try {
+      mc.fusDisposeSpawnInvuln?.()
+    } catch (e) {
+      console.warn('[LabyJsMinecraftView] dispose spawn invuln', e)
+    }
+    mc.fusDisposePresenceWriter?.()
+  } catch (e) {
+    console.warn('[LabyJsMinecraftView] dispose presence writer', e)
   }
   try {
     mc.loadWorld(null)
@@ -740,7 +1553,11 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="laby-page">
+  <div
+    ref="labyPageRef"
+    class="laby-page"
+    :class="{ 'laby-page--play': labyPlayStarted, 'laby-page--pseudo-fs': labyPseudoPageFullscreen }"
+  >
     <div v-if="booting" class="laby-boot" aria-busy="true">
       <div class="laby-boot-spinner" />
       <p class="laby-boot-text">Завантаження світу…</p>
@@ -751,60 +1568,109 @@ onBeforeUnmount(() => {
       можуть не працювати.
     </p>
 
-    <div class="laby-bar">
-      <button type="button" class="laby-back" @click="goBack">← Назад</button>
+    <div
+      v-if="labyUserReady && !labyPlayStarted"
+      class="laby-lobby"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Вхід"
+    >
+      <button
+        type="button"
+        class="laby-play-gate-cta"
+        @pointerdown.stop.prevent="labyStartPlay"
+        @click.stop.prevent="labyStartPlay"
+      >
+        Вхід
+      </button>
     </div>
 
+    <div v-show="labyInPlay && !labyHudBlocked" class="laby-top-hud">
+      <div class="laby-top-hud-left">
+        <button type="button" class="laby-back" @click="goBack">← Назад</button>
+      </div>
+      <div class="laby-top-hud-center" aria-hidden="true">
+        {{ labyCoordX }} {{ labyCoordY }} {{ labyCoordZ }}
+      </div>
+      <div class="laby-top-hud-right">
+        <button
+          v-if="!showDesktopKeyHint"
+          type="button"
+          class="laby-settings"
+          title="Налаштування"
+          aria-label="Налаштування"
+          @pointerdown.stop.prevent="openLabySettings"
+          @click.stop.prevent="openLabySettings"
+        >
+          <span class="laby-btn-icon">⚙</span>
+        </button>
+        <button
+          v-if="!showDesktopKeyHint"
+          type="button"
+          class="laby-inv-open"
+          title="Інвентар"
+          aria-label="Відкрити інвентар блоків"
+          @pointerdown.stop.prevent="openLabyBlockInventoryFromUi"
+          @click.stop.prevent="openLabyBlockInventoryFromUi"
+        >
+          <span class="laby-btn-icon">🎒</span>
+        </button>
+        <button
+          type="button"
+          class="laby-flag-place"
+          :title="showDesktopKeyHint ? 'Прапор (F)' : ''"
+          aria-label="Поставити прапор"
+          @pointerdown.stop.prevent="placeSpawnFlagAtFeet"
+          @click.stop.prevent="placeSpawnFlagAtFeet"
+        >
+          <span class="laby-btn-icon">🚩</span>
+          <span v-if="showDesktopKeyHint" class="laby-btn-key">F</span>
+        </button>
+        <button
+          type="button"
+          class="laby-flag-tp"
+          :title="showDesktopKeyHint ? 'До прапора (R)' : ''"
+          aria-label="Телепорт до прапора"
+          @pointerdown.stop.prevent="startTeleportToFlagChannel"
+          @click.stop.prevent="startTeleportToFlagChannel"
+        >
+          <span class="laby-btn-icon">✈</span>
+          <span v-if="showDesktopKeyHint" class="laby-btn-key">R</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Mobile: top HUD is hidden while налаштування (HTML) or canvas GUI is open — keep one
+         control so the same "gear" can dismiss. Desktop uses Esc / K. -->
     <div
-      v-if="gameMc && !booting && !error"
-      class="laby-right-actions"
+      v-if="labyInPlay && labyHudBlocked && !showDesktopKeyHint"
+      class="laby-engine-gui-chrome"
     >
       <button
         type="button"
         class="laby-settings"
-        :title="showDesktopKeyHint ? 'Налаштування' : ''"
-        aria-label="Налаштування"
+        title="Закрити налаштування"
+        aria-label="Закрити налаштування"
         @pointerdown.stop.prevent="openLabySettings"
         @click.stop.prevent="openLabySettings"
       >
         <span class="laby-btn-icon">⚙</span>
       </button>
-      <button
-        type="button"
-        class="laby-flag-place"
-        :title="showDesktopKeyHint ? 'Прапор (F)' : ''"
-        aria-label="Поставити прапор"
-        @pointerdown.stop.prevent="placeSpawnFlagAtFeet"
-        @click.stop.prevent="placeSpawnFlagAtFeet"
-      >
-        <span class="laby-btn-icon">🚩</span>
-        <span v-if="showDesktopKeyHint" class="laby-btn-key">F</span>
-      </button>
-      <button
-        type="button"
-        class="laby-flag-tp"
-        :title="showDesktopKeyHint ? 'До прапора (R)' : ''"
-        aria-label="Телепорт до прапора"
-        @pointerdown.stop.prevent="startTeleportToFlagChannel"
-        @click.stop.prevent="startTeleportToFlagChannel"
-      >
-        <span class="laby-btn-icon">✈</span>
-        <span v-if="showDesktopKeyHint" class="laby-btn-key">R</span>
-      </button>
     </div>
 
     <div
-      v-if="gameMc && !booting && !error && showDesktopKeyHint"
+      v-if="labyInPlay && !labyHudBlocked && showDesktopKeyHint"
       class="laby-key-hint"
       aria-live="polite"
     >
       <span>F — прапор</span>
       <span>I / 0 — інвентар</span>
       <span>R — телепорт до прапора</span>
+      <span>Esc / K — налаштування</span>
     </div>
 
     <div
-      v-if="gameMc && !booting && !error && flagChannelProgress > 0"
+      v-if="labyInPlay && !labyHudBlocked && flagChannelProgress > 0"
       class="laby-tp-channel"
       aria-hidden="true"
     >
@@ -815,19 +1681,108 @@ onBeforeUnmount(() => {
     </div>
 
     <div
-      v-if="gameMc && !booting && !error"
-      class="laby-coords"
-      aria-hidden="true"
+      v-if="labyInPlay && !labyHudBlocked && (labyKarma > 0 || labyPvpMode === 'purple')"
+      class="laby-pvp-indicator"
+      :class="{
+        'laby-pvp-red': labyPvpMode === 'red' || labyKarma > 0,
+        'laby-pvp-purple': labyPvpMode === 'purple' && labyKarma <= 0,
+      }"
+      aria-live="polite"
     >
-      {{ labyCoordX }} {{ labyCoordY }} {{ labyCoordZ }}
+      <span v-if="labyKarma > 0" class="laby-pvp-karma">
+        <span class="laby-pvp-icon">☠</span>
+        <span class="laby-pvp-label">PK</span>
+        <span class="laby-pvp-value">{{ labyKarma }}</span>
+        <span class="laby-pvp-suffix">карма</span>
+      </span>
+      <span v-else class="laby-pvp-karma">
+        <span class="laby-pvp-icon">⚔</span>
+        <span class="laby-pvp-label">PvP</span>
+      </span>
     </div>
 
-    <div ref="statsHostRef" class="laby-stats" aria-hidden="true" />
+    <div
+      v-if="labyInPlay && labyHtmlSettingsOpen"
+      class="laby-settings-html"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="laby-settings-html-title"
+      @click.self="closeLabyHtmlSettings"
+    >
+      <div class="laby-settings-html-card" @click.stop>
+        <h2 id="laby-settings-html-title" class="laby-settings-html-title">Налаштування</h2>
 
-    <LabyMobileControls v-if="gameMc && !booting && !error" :mc="gameMc" />
+        <label class="laby-settings-row laby-settings-check">
+          <input
+            type="checkbox"
+            :checked="labySetAmbientOcclusion"
+            @change="onLabySetAmbientOcclusion"
+          />
+          <span>Амбієнтне затінення (тіні між блоками)</span>
+        </label>
+
+        <label class="laby-settings-row laby-settings-check">
+          <input type="checkbox" :checked="labySetViewBobbing" @change="onLabySetViewBobbing" />
+          <span>Покачування камери під час руху</span>
+        </label>
+
+        <div class="laby-settings-row">
+          <div class="laby-settings-label">Поле зору (FOV): {{ labySetFov }}°</div>
+          <input
+            class="laby-settings-range"
+            type="range"
+            min="50"
+            max="100"
+            step="1"
+            :value="labySetFov"
+            @input="onLabySetFovInput"
+          />
+        </div>
+
+        <div class="laby-settings-row">
+          <div class="laby-settings-label">Дальність рендеру: {{ labySetViewDistance }} чанків</div>
+          <input
+            class="laby-settings-range"
+            type="range"
+            :min="FUS_LABY_VIEW_MIN"
+            :max="FUS_LABY_VIEW_MAX"
+            step="1"
+            :value="labySetViewDistance"
+            @input="onLabySetViewDistanceInput"
+          />
+        </div>
+
+        <div class="laby-settings-actions">
+          <button type="button" class="laby-settings-btn laby-settings-btn-secondary" @click="fusLabyTogglePageFullscreen">
+            {{ labyPageFullscreen ? 'Вийти з повноекранного режиму' : 'Повноекранний режим' }}
+          </button>
+          <button
+            v-if="gameMc && typeof gameMc.fusTeleportToDefaultSpawn === 'function'"
+            type="button"
+            class="laby-settings-btn laby-settings-btn-warn"
+            @click="labyStuckTeleportToSpawn"
+          >
+            Застряг? Телепорт на спавн світу
+          </button>
+          <button type="button" class="laby-settings-btn laby-settings-btn-primary" @click="closeLabyHtmlSettings">
+            Готово
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div
+      v-show="labyInPlay && !labyHudBlocked"
+      ref="statsHostRef"
+      class="laby-stats"
+      aria-hidden="true"
+    />
+
+    <LabyMobileControls v-if="labyInPlay && !labyHudBlocked" :mc="gameMc" />
 
     <BlockWorldLabyInventoryModal
       v-model="showHotbarInventory"
+      :laby-engine-gui-open="labyHudBlocked"
       :uid="auth.profile?.id || ''"
       :profile="auth.profile"
       :shop-items="userStore.items"
@@ -836,22 +1791,112 @@ onBeforeUnmount(() => {
       @saved="syncHotbarToEngine"
     />
 
-    <div :id="hostId" class="laby-host" />
+    <div v-show="labyPlayStarted" :id="hostId" class="laby-host" />
+
+    <div
+      v-if="deathActive"
+      class="laby-death"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="laby-death-title"
+    >
+      <div class="laby-death-card" @pointerdown.stop @click.stop>
+        <div id="laby-death-title" class="laby-death-title">Ви загинули</div>
+        <div class="laby-death-killer">
+          Вас вбив: <strong>{{ deathKillerLabel || 'Невідомо' }}</strong>
+        </div>
+        <button
+          type="button"
+          class="laby-death-respawn"
+          :title="showDesktopKeyHint ? 'Відродитися (Space / Enter)' : ''"
+          @pointerdown.stop.prevent="respawnFromDeath"
+          @click.stop.prevent="respawnFromDeath"
+        >
+          <span>Відродитися</span>
+          <span v-if="showDesktopKeyHint" class="laby-death-respawn-key">Space</span>
+        </button>
+      </div>
+    </div>
   </div>
 </template>
 
 <style scoped>
+/* Lobby: in-flow under StudentLayout header + bottom nav. Play: fixed layer over the viewport. */
 .laby-page {
-  position: fixed;
-  inset: 0;
-  z-index: 60;
+  position: relative;
+  min-height: 0;
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
   background: #020617;
-  touch-action: none;
+  /* iOS: `manipulation` suppresses double-tap page zoom; `none` here was letting Safari zoom the page */
+  touch-action: manipulation;
   overscroll-behavior: none;
   user-select: none;
   -webkit-user-select: none;
   -webkit-touch-callout: none;
 }
+.laby-page--play {
+  position: fixed;
+  /* Below {@link StudentLayout} slim header; var set on layout when Laby is immersive. */
+  top: var(--fus-laby-chrome-top, 0px);
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 60;
+  flex: none;
+  height: auto;
+  min-height: 0;
+  max-height: none;
+  touch-action: manipulation;
+}
+/**
+ * iOS: when the browser has no usable Fullscreen API, we still cover the viewport (over the
+ * slim app chrome) so the game uses the full screen area; exit via the same settings button.
+ */
+.laby-page--play.laby-page--pseudo-fs {
+  top: 0 !important;
+  z-index: 100050;
+  padding-top: env(safe-area-inset-top, 0px);
+  min-height: 100dvh;
+  min-height: 100vh;
+  box-sizing: border-box;
+}
+
+.laby-lobby {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  min-height: 0;
+  pointer-events: auto;
+}
+.laby-play-gate-cta {
+  pointer-events: auto;
+  user-select: none;
+  -webkit-tap-highlight-color: rgba(255, 255, 255, 0.2);
+  touch-action: manipulation;
+  min-height: 52px;
+  padding: 0 24px;
+  border-radius: 14px;
+  font-size: 1rem;
+  font-weight: 800;
+  color: #0f172a;
+  background: linear-gradient(180deg, #a5b4fc, #6366f1);
+  border: 1px solid rgba(199, 210, 254, 0.9);
+  box-shadow: 0 4px 20px rgba(99, 102, 241, 0.5);
+  cursor: pointer;
+}
+.laby-play-gate-cta:hover {
+  filter: brightness(1.06);
+}
+.laby-play-gate-cta:active {
+  transform: scale(0.98);
+  filter: brightness(0.95);
+}
+
 .laby-stats {
   position: absolute;
   left: 8px;
@@ -919,12 +1964,57 @@ onBeforeUnmount(() => {
   box-shadow: 0 0 12px rgba(99, 102, 241, 0.45);
   transition: width 0.12s linear;
 }
-.laby-coords {
+/* Single tappable control above the canvas when the 2D engine menu is open (mobile). */
+.laby-engine-gui-chrome {
   position: absolute;
-  top: 48px;
+  top: max(6px, env(safe-area-inset-top, 0px));
+  right: max(8px, env(safe-area-inset-right, 0px));
+  z-index: 50;
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+}
+
+.laby-top-hud {
+  position: absolute;
+  top: max(6px, env(safe-area-inset-top, 0px));
+  left: max(8px, env(safe-area-inset-left, 0px));
+  right: max(8px, env(safe-area-inset-right, 0px));
+  z-index: 46;
+  display: flex;
+  flex-direction: row;
+  /* `flex-start`: when the right column stacks tall (portrait), do not vertically center the
+   * back button + coords in that column — that pushed them toward the middle of the screen. */
+  align-items: flex-start;
+  justify-content: space-between;
+  min-height: 44px;
+  pointer-events: none;
+  gap: 8px;
+}
+.laby-top-hud-left,
+.laby-top-hud-right {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: flex-start;
+  pointer-events: none;
+}
+.laby-top-hud-right {
+  flex-direction: row;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  /**
+   * Same as former `.laby-right-actions` — the mobile look-pad can overlap; keep buttons tappable.
+   */
+}
+.laby-top-hud-center {
+  position: absolute;
   left: 50%;
+  /* Match `.laby-back` vertical padding so coords line up with the back label, not the bar’s vertical center. */
+  top: 8px;
   transform: translateX(-50%);
-  z-index: 35;
+  max-width: min(50vw, 200px);
   pointer-events: none;
   font-size: 12px;
   font-weight: 600;
@@ -935,12 +2025,80 @@ onBeforeUnmount(() => {
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.65);
   white-space: nowrap;
 }
-.laby-bar {
+
+/* Portrait: stack action buttons on the top-right. */
+@media (orientation: portrait) {
+  .laby-top-hud-right {
+    flex-direction: column;
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    align-items: stretch;
+    margin-left: auto;
+  }
+}
+
+.laby-pvp-indicator {
   position: absolute;
-  top: 10px;
-  left: 10px;
-  z-index: 40;
+  top: 54px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 35;
   pointer-events: none;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(4px);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85);
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  animation: laby-pvp-pulse 1.8s ease-in-out infinite;
+}
+
+.laby-pvp-indicator.laby-pvp-red {
+  color: #fecaca;
+  box-shadow: 0 0 0 1px rgba(220, 38, 38, 0.8), 0 0 16px rgba(220, 38, 38, 0.4);
+}
+
+.laby-pvp-indicator.laby-pvp-purple {
+  color: #e9d5ff;
+  box-shadow: 0 0 0 1px rgba(179, 102, 255, 0.8), 0 0 14px rgba(179, 102, 255, 0.4);
+}
+
+.laby-pvp-karma {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.laby-pvp-icon {
+  font-size: 14px;
+  line-height: 1;
+}
+
+.laby-pvp-value {
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.laby-pvp-suffix {
+  font-size: 11px;
+  opacity: 0.8;
+  font-weight: 500;
+}
+
+@keyframes laby-pvp-pulse {
+  0%,
+  100% {
+    opacity: 0.95;
+  }
+  50% {
+    opacity: 0.65;
+  }
 }
 .laby-back {
   pointer-events: auto;
@@ -958,18 +2116,8 @@ onBeforeUnmount(() => {
 .laby-back:hover {
   background: rgba(30, 41, 59, 0.9);
 }
-.laby-right-actions {
-  position: absolute;
-  top: 10px;
-  right: 10px;
-  z-index: 40;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 8px;
-  pointer-events: none;
-}
 .laby-settings,
+.laby-inv-open,
 .laby-flag-place,
 .laby-flag-tp {
   pointer-events: auto;
@@ -1013,11 +2161,13 @@ onBeforeUnmount(() => {
   line-height: 1;
 }
 .laby-settings:hover,
+.laby-inv-open:hover,
 .laby-flag-place:hover,
 .laby-flag-tp:hover {
   background: rgba(30, 41, 59, 0.92);
 }
 .laby-settings:active,
+.laby-inv-open:active,
 .laby-flag-place:active,
 .laby-flag-tp:active {
   background: rgba(51, 65, 85, 0.95);
@@ -1091,5 +2241,210 @@ onBeforeUnmount(() => {
 }
 .laby-warn code {
   font-size: 10px;
+}
+/**
+ * Death overlay — full-viewport scrim above the canvas but below the system settings modal
+ * (z 55 puts us over .laby-right-actions at 40 and the HUD, under .laby-boot at 30? no: we
+ * use 70 so the dead state beats the boot spinner too if a death transition happens mid-load).
+ * Pointer-events are enabled so the "Відродитися" button captures taps even though the rest
+ * of the HUD has disabled input via the dead-freeze in fusDeathScreenInstall.
+ */
+.laby-death {
+  position: absolute;
+  inset: 0;
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(2, 6, 23, 0.72);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+  pointer-events: auto;
+  user-select: none;
+  -webkit-user-select: none;
+  animation: laby-death-in 220ms ease-out;
+}
+.laby-death-card {
+  min-width: 260px;
+  max-width: 380px;
+  padding: 22px 24px 20px;
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(30, 10, 10, 0.95), rgba(15, 23, 42, 0.95));
+  border: 1px solid rgba(248, 113, 113, 0.35);
+  box-shadow: 0 24px 48px rgba(127, 29, 29, 0.35), 0 0 0 1px rgba(0, 0, 0, 0.4) inset;
+  text-align: center;
+  color: #fecaca;
+}
+.laby-death-title {
+  font-size: 22px;
+  font-weight: 900;
+  letter-spacing: 0.5px;
+  color: #fca5a5;
+  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.6);
+  margin-bottom: 10px;
+}
+.laby-death-killer {
+  font-size: 14px;
+  font-weight: 600;
+  color: #e2e8f0;
+  margin-bottom: 18px;
+  word-break: break-word;
+}
+.laby-death-killer strong {
+  color: #fde68a;
+  font-weight: 800;
+}
+.laby-death-respawn {
+  appearance: none;
+  -webkit-appearance: none;
+  border: 0;
+  cursor: pointer;
+  width: 100%;
+  padding: 12px 18px;
+  border-radius: 12px;
+  font-size: 15px;
+  font-weight: 800;
+  color: #052e16;
+  background: linear-gradient(180deg, #86efac, #22c55e);
+  box-shadow: 0 4px 0 #166534, 0 8px 16px rgba(34, 197, 94, 0.35);
+  transition: transform 80ms ease, box-shadow 80ms ease;
+  touch-action: manipulation;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+.laby-death-respawn-key {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  color: #052e16;
+  background: rgba(255, 255, 255, 0.55);
+  border: 1px solid rgba(5, 46, 22, 0.25);
+  border-radius: 6px;
+  padding: 2px 8px;
+  line-height: 1;
+}
+.laby-death-respawn:hover {
+  filter: brightness(1.05);
+}
+.laby-death-respawn:active {
+  transform: translateY(2px);
+  box-shadow: 0 2px 0 #166534, 0 4px 10px rgba(34, 197, 94, 0.3);
+}
+@keyframes laby-death-in {
+  from { opacity: 0; transform: scale(0.98); }
+  to { opacity: 1; transform: scale(1); }
+}
+/**
+ * FUS: HTML нативне меню «Налаштування» (замінює canvas GuiOptions). z-index 60 — під екраном смерті (70).
+ */
+.laby-settings-html {
+  position: absolute;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: max(12px, env(safe-area-inset-top, 0px)) 16px 24px;
+  background: rgba(2, 6, 23, 0.78);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  pointer-events: auto;
+  -webkit-tap-highlight-color: transparent;
+  overflow: auto;
+}
+.laby-settings-html-card {
+  width: 100%;
+  max-width: 400px;
+  margin-top: 4vh;
+  padding: 20px 20px 18px;
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(30, 41, 59, 0.97), rgba(15, 23, 42, 0.98));
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.45);
+  color: #e2e8f0;
+  font-size: 14px;
+  line-height: 1.45;
+  touch-action: manipulation;
+}
+.laby-settings-html-title {
+  margin: 0 0 16px;
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  color: #f8fafc;
+  text-align: center;
+}
+.laby-settings-row {
+  margin-bottom: 14px;
+}
+.laby-settings-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+  user-select: none;
+}
+.laby-settings-check input {
+  margin-top: 3px;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  accent-color: #a78bfa;
+  cursor: pointer;
+}
+.laby-settings-label {
+  font-weight: 600;
+  color: #cbd5e1;
+  margin-bottom: 6px;
+  font-size: 13px;
+}
+.laby-settings-range {
+  width: 100%;
+  height: 28px;
+  accent-color: #a78bfa;
+  cursor: pointer;
+}
+.laby-settings-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 6px;
+  padding-top: 4px;
+}
+.laby-settings-btn {
+  appearance: none;
+  -webkit-appearance: none;
+  border: 0;
+  border-radius: 12px;
+  padding: 12px 14px;
+  font-size: 14px;
+  font-weight: 800;
+  cursor: pointer;
+  touch-action: manipulation;
+  width: 100%;
+  transition: filter 0.1s ease, transform 0.08s ease;
+}
+.laby-settings-btn:active {
+  transform: scale(0.98);
+}
+.laby-settings-btn-primary {
+  color: #0f172a;
+  background: linear-gradient(180deg, #e9d5ff, #c4b5fd);
+  box-shadow: 0 2px 0 #7c3aed;
+}
+.laby-settings-btn-secondary {
+  color: #e2e8f0;
+  background: rgba(51, 65, 85, 0.85);
+  border: 1px solid rgba(148, 163, 184, 0.3);
+}
+.laby-settings-btn-warn {
+  color: #fef3c7;
+  background: rgba(120, 53, 15, 0.5);
+  border: 1px solid rgba(251, 191, 36, 0.4);
+  font-size: 13px;
+  font-weight: 700;
 }
 </style>

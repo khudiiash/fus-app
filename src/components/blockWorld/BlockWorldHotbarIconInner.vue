@@ -21,13 +21,13 @@ function bgPos(vis) {
   return { posX, posY, cols, rows }
 }
 
-/** 16×16 terrain atlas: one index per 16px tile (see BlockRenderer.renderGuiItem). */
+/** Terrain macrotile index → CSS background % (16×16 grid; see `blockWorldShopVisuals`). */
 function terrainBgPos(vis) {
-  const t = (vis.textureSlot | 0) & 255
-  const col = t % 16
-  const row = Math.floor(t / 16)
+  const t = (vis.textureSlot | 0) >>> 0
   const cols = vis.cols <= 1 ? 16 : vis.cols
   const rows = vis.rows <= 1 ? 16 : vis.rows
+  const col = t % cols
+  const row = Math.floor(t / cols)
   const posX = cols <= 1 ? 0 : (col / (cols - 1)) * 100
   const posY = rows <= 1 ? 0 : (row / (rows - 1)) * 100
   return { posX, posY }
@@ -92,9 +92,13 @@ function terrainBgPos(vis) {
 .bw-hb-tool-sprite {
   width: 30px;
   height: 30px;
+  max-width: 100%;
+  max-height: 100%;
   background-repeat: no-repeat;
+  background-position: center;
   image-rendering: pixelated;
   pointer-events: none;
+  box-sizing: border-box;
 }
 .bw-hb-emoji {
   font-size: 1.35rem;

@@ -1,5 +1,7 @@
 import {
-  onValue,
+  onChildAdded,
+  onChildChanged,
+  onChildRemoved,
   ref as dbRef,
   serverTimestamp,
   set as dbSet,
@@ -11,10 +13,11 @@ import {
  *
  * Three modes:
  *   • **white**  – innocent / default. Killing a white player flips the attacker red (PK).
- *   • **purple** – flagged for PvP. Entered automatically on attacking another player and
- *     kept alive while we land more hits within {@link PURPLE_WINDOW_MS}. When the window
- *     lapses without a fresh hit, we fall back to white. Purple players can be killed
- *     without the killer gaining karma.
+ *   • **purple** – flagged for PvP. Entered only on **your** attacks (you deal damage);
+ *     being hit does **not** flag you — you must hit back or strike any player. Kept alive
+ *     while we land more hits within {@link PURPLE_WINDOW_MS}. When the window lapses without
+ *     a fresh hit, we fall back to white. Purple players can be killed without the killer
+ *     gaining karma.
  *   • **red**    – chaotic / PK. Entered by killing a white player. Stored as an integer
  *     `karma` counter: each PK adds 1, each player-death removes 1, and *time* decays
  *     1 point per {@link KARMA_POINT_MS}. A red player dropping to karma 0 reverts to
@@ -33,7 +36,8 @@ import {
  * expose {@code mc.fusPvpColorFor(uid)} for any avatar / nametag renderer to query.
  *
  * Public imperative API (the owner of combat code calls these):
- *   • {@code mc.fusPvp.onHitPlayer(targetUid)} — we dealt damage to someone (no kill).
+ *   • {@code mc.fusPvp.onHitPlayer(targetUid, targetPvpMode?)} — we dealt damage to someone
+ *     (no kill). Hitting a **red** (PK) target does not flag us — that fight is "legal".
  *   • {@code mc.fusPvp.onKillPlayer(targetUid, targetModeAtKill)} — we killed someone; if
  *     target was white, +1 karma and mode → red.
  *   • {@code mc.fusPvp.onDeath(killerUid, dropContext?)} — we died; karma -= 1 (if red),
@@ -113,16 +117,23 @@ export function installFusPvpKarma(mc, { worldId, uid, rtdb }) {
   reconcileMode()
   writeRemote()
 
-  const onHitPlayer = (targetUid) => {
+  const onHitPlayer = (targetUid, targetPvpMode) => {
     if (!targetUid || targetUid === uid) return
+    /** Hitting a PK (red) is a lawful act — do not mark the attacker as in PvP. */
+    if (targetPvpMode === 'red') return
     lastHitAtMs = Date.now()
     if (state.mode === 'red') {
-      /** Red stays red; but extend purple so post-red periods don't flap back to white mid-fight. */
+      /** Red stays red; but extend the PvP window for bookkeeping. */
       state.purpleExpiresAt = Math.max(state.purpleExpiresAt, lastHitAtMs + PURPLE_WINDOW_MS)
     } else {
+      /**
+       * Innocent (white) or purple: refresh the PvP window, then run {@link reconcileMode}
+       * so white→purple, karma+red→red, etc. Using {@code setMode('purple')} alone can miss
+       * edge cases where presence should match reconciled state after a full hit.
+       */
       state.purpleExpiresAt = lastHitAtMs + PURPLE_WINDOW_MS
-      setMode('purple')
     }
+    reconcileMode()
     state.lastUpdateAt = Date.now()
     writeLocal()
     writeRemote()
@@ -143,6 +154,11 @@ export function installFusPvpKarma(mc, { worldId, uid, rtdb }) {
     /** Always clear the purple window — you can't be "actively PvPing" mid-grave. */
     state.purpleExpiresAt = 0
     if (state.karma > 0) {
+      /** Snapshot karma BEFORE decrement so the drop-tier computation uses the value
+       *  the user expects: "For 1 karma, it can be up to 25 coins ... 2 karma up to 50
+       *  coins ...". Using `state.karma - 1` (post-decrement) would shift every tier
+       *  down by one and leave karma-1 deaths with zero loot. */
+      const karmaAtDeath = state.karma
       state.karma -= 1
       /** Red PKs drop coins + tools. The heavy lifting (item mutation, Firestore write) is
        *  view-side. We only provide the trigger + payload. */
@@ -152,6 +168,7 @@ export function installFusPvpKarma(mc, { worldId, uid, rtdb }) {
             worldId,
             uid,
             killerUid: killerUid || null,
+            karmaAtDeath,
             remainingKarma: state.karma,
             dropContext: dropContext || null,
           })
@@ -165,25 +182,35 @@ export function installFusPvpKarma(mc, { worldId, uid, rtdb }) {
     writeRemote()
   }
 
-  /** @type {import('firebase/database').Unsubscribe | null} */
-  let unsub = null
+  /** @type {import('firebase/database').Unsubscribe[]} */
+  const pvpUnsubs = []
   if (rtdb && worldId) {
-    /** Single-level onValue across all peers. Cheap (one socket) and gives us full refresh
-     *  on any peer's mode change so a late-joining client sees coloured nametags immediately. */
-    unsub = onValue(dbRef(rtdb, `worldPlayerPvp/${worldId}`), (snap) => {
-      remote.clear()
-      const val = snap.val() || {}
-      for (const k of Object.keys(val)) {
-        const row = val[k]
-        if (!row) continue
-        remote.set(k, {
-          mode: row.mode || 'white',
-          karma: Number(row.karma) || 0,
-          purpleExpiresAt: Number(row.purpleExpiresAt) || 0,
-          lastUpdateAt: Number(row.lastUpdateAt) || 0,
-        })
-      }
-    })
+    const pvpRef = dbRef(rtdb, `worldPlayerPvp/${worldId}`)
+    const applyPvpRow = (k, row) => {
+      if (!k || !row || typeof row !== 'object') return
+      remote.set(k, {
+        mode: row.mode || 'white',
+        karma: Number(row.karma) || 0,
+        purpleExpiresAt: Number(row.purpleExpiresAt) || 0,
+        lastUpdateAt: Number(row.lastUpdateAt) || 0,
+      })
+    }
+    pvpUnsubs.push(
+      onChildAdded(pvpRef, (snap) => {
+        applyPvpRow(snap.key, snap.val())
+      }),
+    )
+    pvpUnsubs.push(
+      onChildChanged(pvpRef, (snap) => {
+        applyPvpRow(snap.key, snap.val())
+      }),
+    )
+    pvpUnsubs.push(
+      onChildRemoved(pvpRef, (snap) => {
+        const k = snap.key
+        if (k) remote.delete(k)
+      }),
+    )
   }
 
   /**
@@ -223,7 +250,14 @@ export function installFusPvpKarma(mc, { worldId, uid, rtdb }) {
     if (disposed) return
     disposed = true
     window.clearInterval(decayIv)
-    unsub?.()
+    for (const u of pvpUnsubs) {
+      try {
+        u()
+      } catch {
+        /* ignore */
+      }
+    }
+    pvpUnsubs.length = 0
     /** Leave a "logout" marker so peers can gracefully stop colouring our nametag if we
      *  don't rejoin within a few minutes. We don't actually delete the doc — karma must
      *  persist across sessions. */

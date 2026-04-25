@@ -304,6 +304,17 @@ export default class PlayerEntity extends EntityLiving {
     }
 
     updateKeyboardInput() {
+        /** Flag teleport and other FUS flows set {@code mc.fusLabyChannelLockMove} — if we
+         *  keep reading {@link Keyboard} here, WASD overwrites the zeroed movement every tick
+         *  before the VFX frame runs (user could move on PC). Short-circuit before keys. */
+        if (this.minecraft.fusLabyChannelLockMove) {
+            this.moveForward = 0;
+            this.moveStrafing = 0;
+            this.jumping = false;
+            this.setSneaking(false);
+            return;
+        }
+
         let moveForward = 0.0;
         let moveStrafe = 0.0;
 

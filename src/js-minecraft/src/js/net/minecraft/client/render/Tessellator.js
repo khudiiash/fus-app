@@ -80,28 +80,47 @@ export default class Tessellator {
         }
     }
 
-    draw(group) {
+    /**
+     * @param {THREE.Object3D} group
+     * @param {string} [chunkPass] When {@code 'solid'} / {@code 'trans'} (FUS column merge), stored on the mesh.
+     */
+    draw(group, chunkPass) {
+        const verticesPerFace = 4;
+        if (this.addedVertices < verticesPerFace) {
+            return null;
+        }
+
+        const positionArray = new Float32Array(this.vertices);
+        const colorArray = new Float32Array(this.colors);
         let geometry = new THREE.BufferGeometry();
-        geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(this.vertices), 3));
-        geometry.setAttribute('color', new THREE.BufferAttribute(new Float32Array(this.colors), 4));
+        geometry.setAttribute('position', new THREE.BufferAttribute(positionArray, 3));
+        geometry.setAttribute('color', new THREE.BufferAttribute(colorArray, 4));
         if (this.uv.length > 0) {
             geometry.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(this.uv), 2));
         }
 
-        // Create index array
-        let index = [];
-        let verticesPerFace = 4;
-        for (let i = 0; i < this.addedVertices / verticesPerFace; i++) {
-            index.push(i * verticesPerFace + 0);
-            index.push(i * verticesPerFace + 2);
-            index.push(i * verticesPerFace + 1);
-            index.push(i * verticesPerFace + 0);
-            index.push(i * verticesPerFace + 3);
-            index.push(i * verticesPerFace + 2);
+        // Triangle index list for quads (4 verts each → 6 indices). Pre-sized typed array
+        // avoids the JS `push` hot path in chunk meshing.
+        const nFaces = this.addedVertices / verticesPerFace;
+        if (nFaces > 0) {
+            const index = new Uint32Array(nFaces * 6);
+            let w = 0;
+            for (let i = 0; i < nFaces; i++) {
+                const b = i * verticesPerFace;
+                index[w++] = b + 0;
+                index[w++] = b + 2;
+                index[w++] = b + 1;
+                index[w++] = b + 0;
+                index[w++] = b + 3;
+                index[w++] = b + 2;
+            }
+            geometry.setIndex(new THREE.BufferAttribute(index, 1));
         }
-        geometry.setIndex(new THREE.BufferAttribute(new Uint32Array(index), 1));
 
         let mesh = new THREE.Mesh(geometry, this.material);
+        if (chunkPass === "solid" || chunkPass === "trans") {
+            mesh.userData.fusChunkPass = chunkPass;
+        }
         group.matrixAutoUpdate = false;
         group.add(mesh);
         return mesh;

@@ -3,18 +3,6 @@ import EntityRenderer from "../EntityRenderer.js";
 import Block from "../../../world/block/Block.js";
 import * as THREE from "../../../../../../../../libraries/three.module.js";
 
-/** FUS parents GLTF under the FP arm bone; {@link PlayerRenderer.rebuild} must not hide that subtree. */
-function fusIsUnderFpToolPivot(o) {
-    let p = o.parent;
-    while (p) {
-        if (p.userData && p.userData.__fusLabyFpToolRoot) {
-            return true;
-        }
-        p = p.parent;
-    }
-    return false;
-}
-
 export default class PlayerRenderer extends EntityRenderer {
 
     constructor(worldRenderer) {
@@ -39,7 +27,17 @@ export default class PlayerRenderer extends EntityRenderer {
         let itemId = firstPerson && isSelf ? this.worldRenderer.itemToRender : entity.inventory.getItemInSelectedSlot();
         let hasItem = itemId !== 0;
 
-        if (firstPerson && hasItem && isSelf) {
+        // When a FUS tool is selected, the GLTF is rendered via {@code fusSyncFpToolIntoFirstPerson}.
+        // The engine's per-item FP path below would also add the vanilla block mesh (or the fist),
+        // leaving the user with *both* the fist/block and the tool on screen — user-reported
+        // "can see both the fist and the tool" bug. Routing FUS-tool rebuilds down the hand
+        // branch lets the existing `hideVanillaFpHand` traversal suppress the skin geometry,
+        // so only the GLTF tool ends up visible.
+        let hideVanillaFpHand = isSelf
+            && typeof this.worldRenderer.minecraft.fusHideVanillaFpHand === 'function'
+            && this.worldRenderer.minecraft.fusHideVanillaFpHand();
+
+        if (firstPerson && hasItem && isSelf && !hideVanillaFpHand) {
             super.rebuild(entity);
 
             // Create new item group and add it to the hand
@@ -68,24 +66,17 @@ export default class PlayerRenderer extends EntityRenderer {
 
             // Create first person right hand and attach it to the holder
             this.firstPersonGroup.clear();
-            let hideVanillaFpHand = typeof this.worldRenderer.minecraft.fusHideVanillaFpHand === 'function'
-                && this.worldRenderer.minecraft.fusHideVanillaFpHand();
             this.handModel = this.model.rightArm.clone();
             this.firstPersonGroup.add(this.handModel.bone);
 
             if (hideVanillaFpHand) {
-                // Keep the arm bone so {@link PlayerRenderer.renderRightHand} can run {@code copyTransformOf};
-                // hide skin geometry — FUS GLTF parents under this bone in {@code fusSyncFpToolIntoFirstPerson}.
-                this.handModel.bone.traverse((o) => {
-                    if (fusIsUnderFpToolPivot(o)) {
-                        return;
-                    }
-                    if (o.isMesh === true || o.isSkinnedMesh === true) {
-                        o.visible = false;
-                        o.material = o.material.clone();
-                        o.material.depthTest = false;
-                    }
-                });
+                // FUS GLTF tool is attached to the {@link firstPersonGroup} directly by
+                // {@link fusSyncFpToolIntoFirstPerson}, so we can safely hide the entire
+                // vanilla arm-bone subtree. Previous per-mesh visibility toggles missed
+                // nested outer-layer meshes on some skin model variants, which is why the
+                // fist stayed visible behind the GLTF tool. A single flag on the root is
+                // both faster and impossible to miss.
+                this.handModel.bone.visible = false;
             } else {
                 // Copy material and update depth test of the hand to render it always in front
                 let mesh = this.handModel.bone.children[0];
@@ -145,6 +136,25 @@ export default class PlayerRenderer extends EntityRenderer {
 
         meta.firstPerson = firstPerson;
         meta.itemInHand = firstPerson ? this.worldRenderer.itemToRender : entity.inventory.getItemInSelectedSlot();
+
+        // FUS: include the hotbar FUS-tool identity in the rebuild key so switching
+        // between fist and a tool (or between two different tools) re-runs `rebuild()`
+        // and flips {@link handModel.bone.visible} correctly. Without this, tools don't
+        // change the vanilla {@code itemInHand} (they are not block items), so the
+        // fist used to linger until a block was selected in between — user-reported
+        // "when from fist I select a tool, fist remains there, it disappears only if
+        // I choose a block first" bug.
+        let isSelf = entity === this.worldRenderer.minecraft.player;
+        if (isSelf) {
+            let mc = this.worldRenderer.minecraft;
+            let sel = entity && entity.inventory ? entity.inventory.selectedSlotIndex : -1;
+            let hotbarMeta = mc && mc.fusHotbarSlotMeta ? mc.fusHotbarSlotMeta[sel] : null;
+            meta.fusToolKey = hotbarMeta && hotbarMeta.kind === 'tool'
+                ? `tool:${hotbarMeta.toolMeshName || sel}`
+                : '';
+        } else {
+            meta.fusToolKey = '';
+        }
     }
 
 }

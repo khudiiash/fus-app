@@ -25,13 +25,17 @@ export default class World {
         this.chunkProvider = null;
 
         this.time = 0;
-        this.spawn = new Vector3(0, 0, 0);
+        this.spawn = new Vector3(0, 97, 0);
+        /** FUS: {@link #onTick} — must be initialised before first tick (avoids NaN in section lighting). */
+        this.skylightSubtracted = 0;
 
         // Update lights async (interval 0 hammers the main thread; FUS embed uses a sane cadence)
         let scope = this;
         const fusEmbed =
             typeof window !== "undefined" && window.__LABY_MC_FUS_EMBED__;
-        const lightTickMs = fusEmbed ? 20 : 0;
+        const staticDay = fusEmbed && minecraft.fusLabyStaticDayTime === true;
+        /** Laby static day: fewer async light drain passes (blocks still enqueue on edit). */
+        const lightTickMs = fusEmbed ? (staticDay ? 400 : 20) : 0;
         setInterval(function () {
             // Vanilla uses large batches; FUS caps work per timer tick to avoid long main-thread spikes.
             let i = fusEmbed
@@ -58,17 +62,27 @@ export default class World {
             this.entities[i].onUpdate();
         }
 
-        // Update skylight subtracted (To make the night dark)
-        let lightLevel = this.calculateSkylightSubtracted(1.0);
-        if (lightLevel !== this.skylightSubtracted) {
-            this.skylightSubtracted = lightLevel;
+        const staticDay =
+            typeof window !== "undefined" &&
+            window.__LABY_MC_FUS_EMBED__ &&
+            this.minecraft.fusLabyStaticDayTime === true;
+        if (staticDay) {
+            /** Noon: stable sun angle + no {@link #rebuildAll} from fake day/night sky-light drift. */
+            this.time = 6000;
+            this.skylightSubtracted = 0;
+        } else {
+            // Update skylight subtracted (To make the night dark)
+            let lightLevel = this.calculateSkylightSubtracted(1.0);
+            if (lightLevel !== this.skylightSubtracted) {
+                this.skylightSubtracted = lightLevel;
 
-            // Rebuild all chunks
-            this.minecraft.worldRenderer.rebuildAll();
+                // Rebuild all chunks
+                this.minecraft.worldRenderer.rebuildAll();
+            }
+
+            // Update world time
+            this.time++;
         }
-
-        // Update world time
-        this.time++;
     }
 
     getChunkAt(x, z) {
@@ -76,7 +90,17 @@ export default class World {
     }
 
     getChunkAtBlock(x, y, z) {
-        return this.getChunkAt(x >> 4, z >> 4).getSection(y >> 4);
+        const chunkX = x >> 4;
+        const chunkZ = z >> 4;
+        /**
+         * Do not call {@link #getChunkAt} for coordinates outside loaded chunks. Meshing
+         * (AO / face tests) samples neighbors; forcing {@link ChunkProvider#loadChunk} from
+         * the tessellation path blocks the main thread (populate + generator work).
+         */
+        if (!this.chunkExists(chunkX, chunkZ)) {
+            return null;
+        }
+        return this.getChunkAt(chunkX, chunkZ).getSection(y >> 4);
     }
 
     getCollisionBoxes(region) {

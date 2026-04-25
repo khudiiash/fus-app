@@ -9,6 +9,7 @@
  *   Anchored at chest / shoulder height so the bar stays in frame when the player walks up to
  *   melee range (the previous "above the head" anchor floated off-screen at close distance).
  * - {@code hpScale}: multiplies {@link fusMobMaxHpForLevel} result (default 1).
+ * - {@code nameTextColor}: hex canvas fill for 2D nametag (e.g. {@code #ef4444} for bosses).
  * - {@code animClipIndex}: when clip names are empty/wrong, 0-based GLB clip order per role
  *   (e.g. export order attack, idle, walk → {@code { attack: 0, idle: 1, walk: 2 }}).
  * - {@code aggroRadius}: acquire range — mob picks a target within this distance; chase persists until they exceed
@@ -40,11 +41,11 @@ export const FUS_MOB_TYPES = [
         id: "spider_mob",
         file: "spider_mob.glb",
         displayName: "Павук",
-        hpPerLevel: 8,
+        hpPerLevel: 7,
         modelScale: 0.6,
         nametagY: 1.4,
         dmgHalf: 1,
-        moveSpeed: 0.95,
+        moveSpeed: 0.98,
         aggroRadius: 10,
     },
     /** GOLEM — balanced melee. Steady pace, moderate damage. Good rank-and-file mid-world mob. */
@@ -52,12 +53,12 @@ export const FUS_MOB_TYPES = [
         id: "golem_mob",
         file: "golem_mob.glb",
         displayName: "Голем",
-        hpPerLevel: 16,
+        hpPerLevel: 18,
         modelScale: 1,
         dmgHalf: 2,
         aggroRadius: 8,
         nametagY: 2.0,
-        moveSpeed: 0.65,
+        moveSpeed: 0.58,
     },
     /** BOAR — short dash + recover. Lower aggro radius, high burst damage. */
     {
@@ -77,9 +78,9 @@ export const FUS_MOB_TYPES = [
         id: "mutant_iron_golem_mob",
         file: "mutant_iron_golem_mob.glb",
         displayName: "Залізний голем",
-        hpPerLevel: 22,
+        hpPerLevel: 24,
         modelScale: 1,
-        moveSpeed: 0.5,
+        moveSpeed: 0.46,
         dmgHalf: 4,
         aggroRadius: 8,
         animClipIndex: { attack: 5, idle: 2, walk: 6 },
@@ -96,29 +97,43 @@ export const FUS_MOB_TYPES = [
         dmgHalf: 2,
         aggroRadius: 9,
     },
+    /** CREEPER — short, stalks then hits hard (melee stand-in for “blast” threat). */
+    {
+        id: "creeper_mob",
+        file: "creeper_mob.glb",
+        displayName: "Кріпер",
+        hpPerLevel: 9,
+        modelScale: 0.55,
+        nametagY: 1.45,
+        moveSpeed: 0.7,
+        dmgHalf: 4,
+        aggroRadius: 9,
+    },
     /**
-     * WARDEN — boss-tier. Rare spawn, huge HP, crippling damage. 3-coin drop chance lives here.
-     * Slow step but large aggro radius so you feel hunted on sight.
+     * WARDEN — boss-tier. 5× HP/damage vs the previous tuning; very slow, red nametag, heavy loot.
      */
     {
         id: "gigant_warden_mob",
         file: "gigant_warden_mob.glb",
         displayName: "Варден",
-        hpPerLevel: 26,
+        hpPerLevel: 130,
+        /** Extra bulk so boss fights are not over in a few swings (see PvE tank factor). */
+        hpScale: 1.5,
         modelScale: 1,
-        moveSpeed: 0.55,
-        dmgHalf: 6,
+        moveSpeed: 0.42,
+        dmgHalf: 30,
         aggroRadius: 13,
+        nameTextColor: "#ef4444",
     },
     /** SCARAD — skittering pest. Very fast, very fragile, swarms in packs. */
     {
         id: "scarad_mob",
         file: "scarab_mob.glb",
         displayName: "Скарад",
-        hpPerLevel: 7,
+        hpPerLevel: 6,
         modelScale: 0.5,
         nametagY: 0.9,
-        moveSpeed: 1.0,
+        moveSpeed: 1.04,
         dmgHalf: 1,
         aggroRadius: 8,
     },
@@ -279,5 +294,44 @@ export function fusMobMaxHpForLevel(level, type) {
     if (typeof type.hpScale === "number" && Number.isFinite(type.hpScale) && type.hpScale > 0) {
         hp = Math.max(1, Math.round(hp * type.hpScale));
     }
-    return hp;
+    /** Laby: use the curve above as-is (was 2× here; halved effective HP — 2026-04 balance). */
+    return Math.max(1, Math.round(hp));
+}
+
+/**
+ * Large world cells (m) — each cell maps to a **primary** mob family so spawns are regional
+ * (warden hills, spider flats, etc.) instead of fully random. Still picks one type from the
+ * zone pool so two adjacent cells do not read as a single-species zoo.
+ *
+ * @param {number} x
+ * @param {number} z
+ * @returns {string} {@link FUS_MOB_TYPES} id
+ */
+export function fusMobTypeIdForLabyWorldXZ(x, z) {
+    const xw = Number(x) || 0;
+    const zw = Number(z) || 0;
+    /** @type {string[][]} */
+    const zones = [
+        ["gigant_warden_mob", "creeper_mob"],
+        ["spider_mob", "scarad_mob", "creeper_mob"],
+        ["golem_mob", "stone_golem_mob", "creeper_mob"],
+        ["wild_bore_mob", "fenmaw_mob", "creeper_mob"],
+        ["mutant_iron_golem_mob", "golem_mob", "stone_golem_mob", "creeper_mob"],
+    ];
+    /**
+     * **Regional** biomes: one primary family per large rectangle (~1.5 km). Neighbouring
+     * 420m spawn cells in the *same* region share {@code zoneIdx} (hash mixed types only
+     * *within* a cell — that looked "random" on the ground).
+     */
+    const REGION = 500;
+    const ox = xw + 20000;
+    const oz = zw + 20000;
+    const rx = Math.floor(ox / REGION);
+    const rz = Math.floor(oz / REGION);
+    const zoneIdx = Math.abs((rx * 92083) ^ (rz * 19349663) ^ (rx * rz * 7)) % zones.length;
+    const pool = zones[zoneIdx] || zones[0];
+    const cx = Math.floor(ox / 420);
+    const cz = Math.floor(oz / 420);
+    const j = Math.abs((Math.imul(cx, 73856093) ^ Math.imul(cz, 19349663)) | 0) % pool.length;
+    return pool[j] || FUS_MOB_TYPES[0].id;
 }

@@ -154,58 +154,94 @@ function createLabymcDevModuleQueryPlugin() {
 
 /** Dev: submodule edits are outside the Vue graph — force a full reload so the browser always re-fetches @labymc. */
 /**
- * Mob GLBs live in `src/js-minecraft/src/resources/models` (engine tree). The runtime loads them from
- * `/…/labyminecraft/src/resources/models/*.glb` (see {@link window.__LABY_MC_ASSET_BASE__}). This plugin
- * serves that path from the engine folder in dev and copies `.glb` files into `dist/labyminecraft/...` on build.
+ * Engine assets (see `window.__LABY_MC_ASSET_BASE__`):
+ * - Mob GLBs: `src/resources/models/*.glb`
+ * - Laby skybox: `src/resources/sky/{px,nx,py,ny,pz,nz}.png`
+ * Served from the live engine tree in dev; copied into `dist/labyminecraft/...` on build.
  */
-function labymcEngineMobModelsPlugin() {
+function labymcEngineRuntimeAssetsPlugin() {
   const modelsDir = join(labymcRoot, 'src', 'resources', 'models')
+  const skyDir = join(labymcRoot, 'src', 'resources', 'sky')
   return {
-    name: 'labymc-engine-mob-models',
+    name: 'labymc-engine-runtime-assets',
     configureServer(server) {
       server.middlewares.use((req, res, next) => {
         const pathname = (req.url || '').split('?')[0]
-        const m = pathname.match(/\/labyminecraft\/src\/resources\/models\/([^/]+\.glb)$/i)
-        if (!m) {
-          return next()
+        const mGlb = pathname.match(/\/labyminecraft\/src\/resources\/models\/([^/]+\.glb)$/i)
+        if (mGlb) {
+          const name = mGlb[1]
+          if (!name || /[\\/]/.test(name) || name.includes('..')) {
+            return next()
+          }
+          if (!existsSync(modelsDir)) {
+            return next()
+          }
+          const fp = join(modelsDir, name)
+          if (!existsSync(fp)) {
+            return next()
+          }
+          res.setHeader('Content-Type', 'model/gltf-binary')
+          res.setHeader('Cache-Control', 'no-store')
+          const stream = createReadStream(fp)
+          stream.on('error', () => next())
+          stream.pipe(res)
+          return
         }
-        const name = m[1]
-        if (!name || /[\\/]/.test(name) || name.includes('..')) {
-          return next()
+        const mPng = pathname.match(/\/labyminecraft\/src\/resources\/sky\/([^/]+\.png)$/i)
+        if (mPng) {
+          const name = mPng[1]
+          if (!name || /[\\/]/.test(name) || name.includes('..')) {
+            return next()
+          }
+          if (!existsSync(skyDir)) {
+            return next()
+          }
+          const fp = join(skyDir, name)
+          if (!existsSync(fp)) {
+            return next()
+          }
+          res.setHeader('Content-Type', 'image/png')
+          res.setHeader('Cache-Control', 'no-store')
+          const stream = createReadStream(fp)
+          stream.on('error', () => next())
+          stream.pipe(res)
+          return
         }
-        if (!existsSync(modelsDir)) {
-          return next()
-        }
-        const fp = join(modelsDir, name)
-        if (!existsSync(fp)) {
-          return next()
-        }
-        res.setHeader('Content-Type', 'model/gltf-binary')
-        res.setHeader('Cache-Control', 'no-store')
-        const stream = createReadStream(fp)
-        stream.on('error', () => next())
-        stream.pipe(res)
+        return next()
       })
     },
     closeBundle: {
       order: 'post',
       handler() {
-        if (!existsSync(modelsDir)) {
-          return
+        if (existsSync(modelsDir)) {
+          let files
+          try {
+            files = readdirSync(modelsDir).filter((f) => f.toLowerCase().endsWith('.glb'))
+          } catch {
+            files = []
+          }
+          if (files.length > 0) {
+            const outDir = resolve(__dirname, 'dist/labyminecraft/src/resources/models')
+            mkdirSync(outDir, { recursive: true })
+            for (const f of files) {
+              copyFileSync(join(modelsDir, f), join(outDir, f))
+            }
+          }
         }
-        let files
-        try {
-          files = readdirSync(modelsDir).filter((f) => f.toLowerCase().endsWith('.glb'))
-        } catch {
-          return
-        }
-        if (files.length === 0) {
-          return
-        }
-        const outDir = resolve(__dirname, 'dist/labyminecraft/src/resources/models')
-        mkdirSync(outDir, { recursive: true })
-        for (const f of files) {
-          copyFileSync(join(modelsDir, f), join(outDir, f))
+        if (existsSync(skyDir)) {
+          let files
+          try {
+            files = readdirSync(skyDir).filter((f) => f.toLowerCase().endsWith('.png'))
+          } catch {
+            files = []
+          }
+          if (files.length > 0) {
+            const outDir = resolve(__dirname, 'dist/labyminecraft/src/resources/sky')
+            mkdirSync(outDir, { recursive: true })
+            for (const f of files) {
+              copyFileSync(join(skyDir, f), join(outDir, f))
+            }
+          }
         }
       },
     },
@@ -299,7 +335,7 @@ export default defineConfig(({ mode, command }) => ({
     },
   },
   plugins: [
-    labymcEngineMobModelsPlugin(),
+    labymcEngineRuntimeAssetsPlugin(),
     ...(command === 'serve' ? [createLabymcDevModuleQueryPlugin(), labymcWatchFullReload()] : []),
     ...(useDevHttps ? [basicSsl()] : []),
     fcmBackgroundWorkerPlugin(mode),

@@ -4,9 +4,12 @@
 
 /** Hotbar / HUD: 6 tiers × 5 tool types (see `src/js-minecraft/src/resources/gui/tools.png`). */
 import toolsSheetUrl from '@labymc/src/resources/gui/tools.png'
-/** Block icons: 16×16 tiles (see {@link BlockRegistry} textureSlotId). */
+/** Block icons: 16×16 macrotiles in {@code terrain/terrain.png}. */
 import terrainSheetUrl from '@labymc/src/resources/terrain/terrain.png'
 import { FUS_CATALOG_TO_ENGINE_BLOCK_ID } from '@/lib/fusTerrainBlockIds'
+
+const TERRAIN_MACROTILES_X = 16
+const TERRAIN_MACROTILES_Y = 16
 
 export const TERRAIN_SPRITE_SHEET_URL = terrainSheetUrl
 /** js-minecraft engine block id → atlas index (same as {@link Block} textureSlotId). */
@@ -23,8 +26,10 @@ const ENGINE_BLOCK_ID_TO_TEXTURE_SLOT = {
   17: 4,
   18: 6,
   20: 12,
-  /** Indestructible: same atlas tile as bedrock (red tint is applied in-engine). */
-  21: 11,
+  /** Indestructible shop block — obsidian texture (tile 24). */
+  21: 24,
+  /** Gold ore (world); tile 15 + vertex tint in {@link BlockGoldOre}. */
+  51: 15,
 }
 
 /** Aligns with FUS terrain enum used in shop seeds (grass=0 … water=12). */
@@ -134,8 +139,8 @@ export function hotbarCellVisualForBwSlot(slot) {
         engineBlockId: eng,
         sheetSrc: terrainSheetUrl,
         textureSlot: tex,
-        cols: 16,
-        rows: 16,
+        cols: TERRAIN_MACROTILES_X,
+        rows: TERRAIN_MACROTILES_Y,
       }
     }
     const e = BLOCK_EMOJI[meta.blockType]
