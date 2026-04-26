@@ -90,14 +90,25 @@ export default class PlayerEntity extends EntityLiving {
             this.updateKeyboardInput();
         }
 
+        /**
+         * Creative-style flight is opt-in: {@code Minecraft#fusAllowFlying === true} (Laby sets
+         * this from Vite's dev flag). Without it, double-tap jump must not toggle fly — only
+         * normal {@link #jump} applies.
+         */
+        if (this === this.minecraft.player && this.minecraft.fusAllowFlying !== true && this.flying) {
+            this.flying = false;
+            this.updateFOVModifier();
+        }
+
         // Toggle jumping
         if (!prevJumping && this.jumping) {
             if (this.flyToggleTimer === 0) {
                 this.flyToggleTimer = 7;
             } else {
-                this.flying = !this.flying;
+                if (this.minecraft.fusAllowFlying === true) {
+                    this.flying = !this.flying;
+                }
                 this.flyToggleTimer = 0;
-
                 this.updateFOVModifier();
             }
         }

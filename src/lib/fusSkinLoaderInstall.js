@@ -1,4 +1,5 @@
 import * as THREE from '@labymc/libraries/three.module.js'
+import { generateFusAvatarSkinCanvasJsMinecraft } from '@/lib/fusAvatarSkinCanvas.js'
 
 /**
  * Install `mc.ensureFusSkinTexture(url, cb)` on the engine. Loads a Minecraft-style skin
@@ -25,19 +26,48 @@ export function installFusSkinLoader(mc) {
   /** @type {Map<string, THREE.CanvasTexture>} */
   const cache = new Map()
 
+  /** Procedural profile skins — shared per `skinId`; never dispose (see `applyTextureToLocalPlayer`). */
+  /** @type {Map<string, THREE.CanvasTexture>} */
+  const defaultSkinCache = new Map()
+
   const applyTextureToLocalPlayer = (texture) => {
     const renderer = mc.player?.renderer
     if (!renderer) return
     /** Dispose the previous skin texture to keep GPU memory bounded across skin swaps. */
     const prev = renderer.textureCharacter
     if (prev && prev !== texture && typeof prev.dispose === 'function') {
-      try {
-        prev.dispose()
-      } catch {
-        /* ignore */
+      if (prev.userData?.fusKeepAlive) {
+        /* shared cached texture */
+      } else {
+        try {
+          prev.dispose()
+        } catch {
+          /* ignore */
+        }
       }
     }
     renderer.textureCharacter = texture
+    /**
+     * Swapping {@code textureCharacter} alone does nothing visible: {@link PlayerRenderer#rebuild}
+     * binds the map onto the tessellator's shared materials, and FP clones the arm with
+     * {@link Mesh#material.clone} — those keep the old map until a rebuild. {@link EntityRenderer#prepareModel}
+     * skips rebuild when only the texture changed (buildMeta ignores skin), so we refresh
+     * the live materials and force the next {@code prepareModel} to rebuild (hand clone).
+     */
+    try {
+      if (typeof renderer.tessellator?.bindTexture === 'function') {
+        renderer.tessellator.bindTexture(texture)
+      }
+    } catch {
+      /* ignore */
+    }
+    try {
+      if (renderer.group && typeof renderer.group === 'object') {
+        delete renderer.group.buildMeta
+      }
+    } catch {
+      /* ignore */
+    }
   }
 
   mc.ensureFusSkinTexture = async function ensureFusSkinTexture(url, cb) {
@@ -67,6 +97,38 @@ export function installFusSkinLoader(mc) {
       }
     } catch (e) {
       console.warn('[fusSkinLoader] load failed', url, e)
+    }
+  }
+
+  /**
+   * Same procedural 64×64 skin as the profile / shop preview when there is no `skinUrl`.
+   * Textures are cached per `skinId` and marked `userData.fusKeepAlive` so swaps to/from
+   * URL skins do not dispose shared instances.
+   *
+   * @param {string} [skinId]
+   * @param {() => void} [cb]
+   */
+  mc.ensureFusDefaultProfileSkinTexture = function ensureFusDefaultProfileSkinTexture(skinId, cb) {
+    const id = typeof skinId === 'string' && skinId.length ? skinId : 'default'
+    let texture = defaultSkinCache.get(id)
+    if (!texture) {
+      const canvas = generateFusAvatarSkinCanvasJsMinecraft(id)
+      texture = new THREE.CanvasTexture(canvas)
+      texture.magFilter = THREE.NearestFilter
+      texture.minFilter = THREE.NearestFilter
+      texture.generateMipmaps = false
+      texture.colorSpace = THREE.NoColorSpace
+      texture.needsUpdate = true
+      texture.userData.fusKeepAlive = true
+      defaultSkinCache.set(id, texture)
+    }
+    applyTextureToLocalPlayer(texture)
+    if (typeof cb === 'function') {
+      try {
+        cb()
+      } catch (e) {
+        console.warn('[fusSkinLoader] default skin cb threw', e)
+      }
     }
   }
 }

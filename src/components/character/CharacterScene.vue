@@ -1,6 +1,7 @@
 <script setup>
 import '@/utils/enableThreeFileCache'
 import { loadRemoteSkinForViewer } from '@/utils/loadRemoteSkinForViewer'
+import { generateFusAvatarSkinCanvas } from '@/lib/fusAvatarSkinCanvas.js'
 import { ref, onMounted, onUnmounted, watch } from 'vue'
 import {
   MinecraftSkinHost,
@@ -161,49 +162,10 @@ function onTouchEnd(e) {
   if (e.touches.length < 2) _pinchDist = null
 }
 
-// ─── Skin color palette ───────────────────────────────────────────────────────
-const SKIN_PALETTES = {
-  /** One flat purple — procedural skin only drew front faces; backs used transparent → black in 3D. */
-  default:  { body: '#7c3aed', legs: '#7c3aed', arms: '#7c3aed', head: '#7c3aed' },
-  sigma:    { body: '#374151', legs: '#111827', arms: '#374151', head: '#1f2937' },
-  brainrot: { body: '#d946ef', legs: '#86198f', arms: '#d946ef', head: '#c026d3' },
-  ohio:     { body: '#15803d', legs: '#14532d', arms: '#15803d', head: '#166534' },
-  rizz:     { body: '#9333ea', legs: '#581c87', arms: '#a855f7', head: '#7e22ce' },
-  npc:      { body: '#9ca3af', legs: '#6b7280', arms: '#9ca3af', head: '#4b5563' },
-  brat:     { body: '#84cc16', legs: '#3f6212', arms: '#84cc16', head: '#65a30d' },
-  chillguy: { body: '#d97706', legs: '#92400e', arms: '#d97706', head: '#b45309' },
-  skibidi:  { body: '#38bdf8', legs: '#0369a1', arms: '#38bdf8', head: '#0ea5e9' },
-  galaxy:   { body: '#4338ca', legs: '#1e1b4b', arms: '#6366f1', head: '#3730a3' },
-  fire:     { body: '#ef4444', legs: '#7f1d1d', arms: '#f97316', head: '#dc2626' },
-}
-
 // Fixed room wall color — consistent dark navy look
 const ROOM_WALL_COLOR  = 0x0f0c24
 const ROOM_FLOOR_COLOR = 0x1a1008
 const ROOM_BG_COLOR    = 0x111111
-
-// ─── Generate 64×64 Minecraft skin texture from palette ─────────────────────
-// Returns an HTMLCanvasElement so loadSkin() treats it as a TextureSource
-// (synchronous, no Promise, no network request).
-function generateSkinCanvas(skinId) {
-  const p = SKIN_PALETTES[skinId] || SKIN_PALETTES.default
-  const c = document.createElement('canvas')
-  c.width = 64; c.height = 64
-  const ctx = c.getContext('2d')
-  // Solid base so every UV island has texels (uncleared canvas → black on back faces).
-  ctx.fillStyle = p.body
-  ctx.fillRect(0, 0, 64, 64)
-  ctx.fillStyle = p.head;  ctx.fillRect(8, 8, 8, 8)
-  ctx.fillStyle = p.body;  ctx.fillRect(20, 20, 8, 12)
-  ctx.fillStyle = p.arms;  ctx.fillRect(44, 20, 4, 12)
-  ctx.fillStyle = p.arms;  ctx.fillRect(36, 52, 4, 12)
-  ctx.fillStyle = p.legs;  ctx.fillRect(4, 20, 4, 12)
-  ctx.fillStyle = p.legs;  ctx.fillRect(20, 52, 4, 12)
-  ctx.fillStyle = '#ffffff'; ctx.fillRect(9, 10, 2, 2); ctx.fillRect(13, 10, 2, 2)
-  ctx.fillStyle = '#000000'; ctx.fillRect(10, 10, 1, 1); ctx.fillRect(14, 10, 1, 1)
-  ctx.fillStyle = '#000000'; ctx.fillRect(10, 13, 1, 1); ctx.fillRect(11, 14, 2, 1); ctx.fillRect(13, 13, 1, 1)
-  return c
-}
 
 // ─── Nearest-filter helper (Minecraft pixel-perfect textures) ─────────────────
 function applyNearestFilter(object) {
@@ -613,7 +575,7 @@ async function applyProfile() {
   const avatar = props.profile.avatar || {}
 
   // 1. Skin — skinOverrideUrl (tester) takes priority, then profile url, then palette fallback
-  const fallbackCanvas = generateSkinCanvas(avatar.skinId || 'default')
+  const fallbackCanvas = generateFusAvatarSkinCanvas(avatar.skinId || 'default')
   const skinUrl = props.skinOverrideUrl || avatar.skinUrl
   await loadRemoteSkinForViewer(viewer, skinUrl, fallbackCanvas)
   applyNearestFilterToSkin()
@@ -715,7 +677,7 @@ async function applyAccessories(accessoryItemIds) {
 async function applySkinOnly() {
   if (!viewer) return
   const avatar = props.profile?.avatar || {}
-  const fallback = generateSkinCanvas(avatar.skinId || 'default')
+  const fallback = generateFusAvatarSkinCanvas(avatar.skinId || 'default')
   const skinUrl = props.skinOverrideUrl || avatar.skinUrl
   await loadRemoteSkinForViewer(viewer, skinUrl, fallback)
   applyNearestFilterToSkin()

@@ -294,7 +294,7 @@ export default class BlockRenderer {
         this.tessellator.transformBrightness(brightness);
 
         // Create mesh
-        let mesh = this.tessellator.draw(group);
+        let mesh = this.tessellator.draw(group, "solid");
         mesh.geometry.center();
 
         // Relative position
@@ -321,7 +321,7 @@ export default class BlockRenderer {
         this.tessellator.transformBrightness(brightness);
 
         // Create mesh
-        let mesh = this.tessellator.draw(group);
+        let mesh = this.tessellator.draw(group, "solid");
         mesh.geometry.center();
 
         // Scale
@@ -352,7 +352,7 @@ export default class BlockRenderer {
         this.tessellator.transformBrightness(brightness);
 
         // Create mesh
-        let mesh = this.tessellator.draw(group);
+        let mesh = this.tessellator.draw(group, "solid");
         mesh.geometry.center();
 
         // Rotate block

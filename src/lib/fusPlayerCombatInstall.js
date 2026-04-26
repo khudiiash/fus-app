@@ -463,19 +463,15 @@ export function installFusPlayerCombat(mc, { worldId, uid, rtdb, displayName }) 
     } catch (e) {
       console.warn('[fusPlayerCombat] onDeath hook threw', e)
     }
-    /** Simple-PvP coin transfer (non-PK). User spec: "winner gets 1 coin from the
-     *  defeated account (loser loses one coin, winner gets 1 coin). If no coin on the
-     *  loser, no one gets anything." Red (PK) deaths are handled by the richer PK drop
-     *  hook below — here we only handle the purple / white case.
+    /** Simple-PvP coin transfer (non-PK). Winner gets **1–5** coins from the loser by
+     *  level gap (see {@link debitPvpCoinFromUser}); capped by loser's balance. Red (PK)
+     *  deaths use {@code __FUS_ON_PK_DEATH_DROPS__} instead.
      *
-     *  We defer the actual coin movement to the Vue layer via
-     *  `window.__FUS_ON_PVP_DEATH_DROP__` because it needs to read the loser's coin
-     *  balance from Firestore (we don't mirror that in RTDB for security reasons) and
-     *  then spawn a physical coin via {@link mc.fusDropCoinAt} tagged with the killer's
-     *  uid so no bystander can poach it. */
+     *  Deferred to Vue via `window.__FUS_ON_PVP_DEATH_DROP__` for Firestore debit +
+     *  {@link mc.fusDropCoinAt} tagged with the killer's uid. */
     /**
-     * 1-coin world drop + Firestore debit: only if the victim was in **purple** (flagged
-     * for PvP), not an innocent (white) or PK (red — PK uses {@code __FUS_ON_PK_DEATH_DROPS__}).
+     * World drop + Firestore debit: only if the victim was in **purple** (flagged for
+     * PvP), not white or PK (red uses {@code __FUS_ON_PK_DEATH_DROPS__}).
      */
     if (selfMode === 'purple' && killerUid && killerUid !== uid && deathPos) {
       if (

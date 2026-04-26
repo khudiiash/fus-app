@@ -1,7 +1,6 @@
 import Entity from "../../entity/Entity.js";
 import * as THREE from "../../../../../../../libraries/three.module.js";
 import Tessellator from "../Tessellator.js";
-import { readTerrainAtlasMetrics } from "../TerrainAtlasUV.js";
 
 export default class Particle extends Entity {
 
@@ -75,7 +74,7 @@ export default class Particle extends Entity {
         this.group.position.x = x;
         this.group.position.y = y;
         this.group.position.z = z;
-        /** World matrix is updated by the renderer ({@code matrixAutoUpdate} default). */
+        this.group.updateMatrix();
     }
 
     rebuild() {
@@ -84,18 +83,15 @@ export default class Particle extends Entity {
 
         let tessellator = new Tessellator();
         tessellator.bindTexture(this.minecraft.worldRenderer.textureTerrain);
-        const m = readTerrainAtlasMetrics(this.minecraft.worldRenderer.textureTerrain);
-        const ti = this.textureIndex | 0;
-        const j = this.randomX / 4;
-        const c = (ti % m.tilesX) + j;
-        const r0 = (ti / m.tilesX) | 0;
-        const r = r0 + j;
-        let minU = c / m.tilesX;
-        let maxU = minU + 1 / (4 * m.tilesX);
-        let minV0 = r / m.tilesY;
-        let maxV0 = minV0 + 1 / (4 * m.tilesY);
-        let minV = 1 - maxV0;
-        let maxV = 1 - minV0;
+
+        let minU = ((this.textureIndex % 16) + this.randomX / 4) / 16.0;
+        let maxU = minU + (16 / 256 / 4);
+        let minV = (Math.floor(this.textureIndex / 16) + this.randomX / 4) / 16.0;
+        let maxV = minV + (16 / 256 / 4);
+
+        // Flip V
+        minV = 1 - minV;
+        maxV = 1 - maxV;
 
         let red = (this.color >> 16 & 255) / 255.0;
         let green = (this.color >> 8 & 255) / 255.0;

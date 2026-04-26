@@ -107,8 +107,8 @@ export default class PlayerRenderer extends EntityRenderer {
         // Make sure the model is created
         this.prepareModel(player);
 
-        // Make the group visible
-        this.firstPersonGroup.visible = true;
+        /** Visibility is set only in {@link WorldRenderer#renderHand} (incl. spawn-invuln
+         *  blink). Forcing `true` here overwrote the blink every frame. */
     }
 
     renderRightHand(player, partialTicks) {

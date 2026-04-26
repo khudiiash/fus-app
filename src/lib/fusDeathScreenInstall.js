@@ -212,7 +212,9 @@ export function installFusDeathScreen(mc, opts = {}) {
 
   /**
    * Settings / escape hatch: move to the world's default {@link World#getSpawn} (not the
-   * planted flag), same position math as a death respawn without the flag. No HP change.
+   * planted flag), same target as a death respawn without the flag. When Laby's channel
+   * teleport is installed, uses the same ~15 s channeled TP + VFX as the flag / Key R path;
+   * otherwise an instant move. No HP change.
    */
   mc.fusTeleportToDefaultSpawn = () => {
     const pl = mc.player
@@ -226,6 +228,14 @@ export function installFusDeathScreen(mc, opts = {}) {
         ? fixed
         : pl.world.getSpawn()
     if (!s || !Number.isFinite(s.x) || !Number.isFinite(s.y) || !Number.isFinite(s.z)) {
+      return
+    }
+    if (typeof mc.fusLabyStartTeleportToBlockPosChannel === 'function') {
+      try {
+        mc.fusLabyStartTeleportToBlockPosChannel({ x: s.x, y: s.y, z: s.z })
+      } catch (e) {
+        console.warn('[fusDeathScreen] channeled default-spawn TP failed', e)
+      }
       return
     }
     try {

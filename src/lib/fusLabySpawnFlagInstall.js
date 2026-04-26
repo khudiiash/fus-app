@@ -3,7 +3,10 @@ import { ref as dbRef, set as dbSet } from 'firebase/database'
 import { FUS_LABY_FLAG_CHANNEL_MS } from '@labymc/src/js/net/minecraft/client/fus/FusLabyFlagChannel.js'
 import Keyboard from '@labymc/src/js/net/minecraft/util/Keyboard.js'
 import { fusLabyEntityInTerrainDrawWindow } from './fusLabyEntityTerrainWindow.js'
-import { fusLabyFeetYAtColumn } from '@/lib/fusLabySpawnFeet'
+import { fusLabyFeetYAtColumn, fusLabyResolvePeerTeleportPosition } from '@/lib/fusLabySpawnFeet'
+
+/** Extra world-units on Y after resolving peer teleport (feet still clipped low for some builds). */
+const FUS_LABY_PEER_TP_Y_LIFT_BLOCKS = 3
 
 /**
  * Spawn-flag + channelled teleport — with a *visible* in-world marker and a dramatic
@@ -39,6 +42,12 @@ import { fusLabyFeetYAtColumn } from '@/lib/fusLabySpawnFeet'
  */
 export function installFusLabySpawnFlag(mc, { worldId, uid, rtdb }) {
   if (!mc) return
+  if (mc.fusLabyPresenceTpChEndAt == null) {
+    mc.fusLabyPresenceTpChEndAt = 0
+  }
+  if (mc.fusLabyPresenceTpChStartAt == null) {
+    mc.fusLabyPresenceTpChStartAt = 0
+  }
 
   /* ─────────────────────────────── Marker ──────────────────────────────── */
 
@@ -256,6 +265,10 @@ export function installFusLabySpawnFlag(mc, { worldId, uid, rtdb }) {
   const buildVfx = () => {
     const scene = mc.worldRenderer?.scene
     if (!scene) return
+    if (vfxGroup) return
+    innerHelix = []
+    outerRing = []
+    burst = null
     vfxGroup = new THREE.Group()
 
     /** Shared materials so all 40+ meshes only hit the GPU as two draw calls. The
@@ -266,6 +279,8 @@ export function installFusLabySpawnFlag(mc, { worldId, uid, rtdb }) {
       transparent: true,
       opacity: 0.95,
       depthWrite: false,
+      depthTest: false,
+      toneMapped: false,
       blending: THREE.AdditiveBlending,
     })
     for (let i = 0; i < 16; i++) {
@@ -284,6 +299,8 @@ export function installFusLabySpawnFlag(mc, { worldId, uid, rtdb }) {
       transparent: true,
       opacity: 0.8,
       depthWrite: false,
+      depthTest: false,
+      toneMapped: false,
       blending: THREE.AdditiveBlending,
     })
     for (let i = 0; i < 24; i++) {
@@ -302,6 +319,8 @@ export function installFusLabySpawnFlag(mc, { worldId, uid, rtdb }) {
       transparent: true,
       opacity: 0,
       depthWrite: false,
+      depthTest: false,
+      toneMapped: false,
       blending: THREE.AdditiveBlending,
     })
     burst = new THREE.Mesh(burstGeom, burstMat)
@@ -316,6 +335,8 @@ export function installFusLabySpawnFlag(mc, { worldId, uid, rtdb }) {
       transparent: true,
       opacity: 0.9,
       depthWrite: false,
+      depthTest: false,
+      toneMapped: false,
       blending: THREE.AdditiveBlending,
     })
 
@@ -488,6 +509,16 @@ export function installFusLabySpawnFlag(mc, { worldId, uid, rtdb }) {
     }
   }
 
+  const clearPresenceTpCh = () => {
+    try {
+      mc.fusLabyPresenceTpChEndAt = 0
+      mc.fusLabyPresenceTpChStartAt = 0
+      void mc.fusForcePresenceWrite?.()
+    } catch {
+      /* ignore */
+    }
+  }
+
   const cancelChannel = () => {
     if (channelRafId) {
       cancelAnimationFrame(channelRafId)
@@ -498,79 +529,171 @@ export function installFusLabySpawnFlag(mc, { worldId, uid, rtdb }) {
     mc.fusLabyChannelLockMove = false
     clearChannelInputKeys()
     clearVfx()
+    clearPresenceTpCh()
   }
 
-  mc.fusLabyStartFlagTeleportChannel = function startFusLabyFlagTeleport() {
-    const pos = mc.fusSpawnFlagPos
+  /**
+   * Same ~15s channel + VFX as the spawn flag; completion position depends on {@code pos}:
+   *   • Default: block column + {@link fusLabyFeetYAtColumn} (spawn flag / block rt coords).
+   *   • {@code usePresenceEntityPos: true}: peer teleport — at **completion** time, re-read
+   *     {@code peerUid} via {@code mc.fusLabyReadPeerPos} (so the target is not ~15s stale),
+   *     then {@link fusLabyResolvePeerTeleportPosition} for a safe stand near that feet Y.
+   *
+   * @param {{ x: number, y: number, z: number, usePresenceEntityPos?: boolean, peerUid?: string }} pos
+   */
+  function startTeleportChannelToBlockPos(pos) {
     if (!pos) return
+    const px = Number(pos.x)
+    const py = Number(pos.y)
+    const pz = Number(pos.z)
+    if (![px, py, pz].every((n) => Number.isFinite(n))) {
+      return
+    }
+    const peerUid = typeof pos.peerUid === 'string' ? pos.peerUid : ''
+    const usePresence = pos.usePresenceEntityPos === true
     const pl = mc.player
     if (!pl) return
     /** Already channelling — ignore re-trigger. */
     if (channelEndAt && Date.now() < channelEndAt) return
 
     channelStartHealth = typeof pl.health === 'number' ? pl.health : 0
-    channelEndAt = Date.now() + FUS_LABY_FLAG_CHANNEL_MS
-    mc.fusLabyFlagChannelEndAt = channelEndAt
+    const startT = Date.now()
+    const nextEnd = startT + FUS_LABY_FLAG_CHANNEL_MS
+    try {
+      buildVfx()
+    } catch (e) {
+      console.warn('[fusLabySpawnFlag] buildVfx failed', e)
+      return
+    }
+    if (!vfxGroup) {
+      return
+    }
+    channelEndAt = nextEnd
+    mc.fusLabyFlagChannelEndAt = nextEnd
     mc.fusLabyChannelLockMove = true
+    try {
+      mc.fusLabyPresenceTpChStartAt = startT
+      mc.fusLabyPresenceTpChEndAt = nextEnd
+      void mc.fusForcePresenceWrite?.()
+    } catch {
+      /* ignore */
+    }
     clearChannelInputKeys()
-    buildVfx()
+
+    const chPeerUid = peerUid
 
     const tick = () => {
-      channelRafId = 0
-      const curEndAt = channelEndAt
-      if (!curEndAt) return
-      const now = Date.now()
-      const curPl = mc.player
-      if (!curPl) {
-        cancelChannel()
-        return
-      }
-      if (mc.currentScreen) {
-        cancelChannel()
-        return
-      }
-      if (
-        typeof curPl.health === 'number' &&
-        (curPl.health <= 0 || curPl.health + 0.001 < channelStartHealth)
-      ) {
-        cancelChannel()
-        return
-      }
-
-      /**
-       * Hard-freeze horizontal input each frame. We zero the engine's input fields
-       * rather than yanking the keyboard state so desktop users can still mash WASD —
-       * it simply does nothing. Saves a re-sync dance when the channel ends.
-       */
-      curPl.moveForward = 0
-      curPl.moveStrafing = 0
-      curPl.jumping = false
-      if (typeof curPl.motionX === 'number') curPl.motionX *= 0.5
-      if (typeof curPl.motionZ === 'number') curPl.motionZ *= 0.5
-
-      const t = 1 - (curEndAt - now) / FUS_LABY_FLAG_CHANNEL_MS
-      updateVfx(curPl, Math.max(0, Math.min(1, t)), performance.now())
-
-      if (now >= curEndAt) {
-        channelEndAt = 0
-        mc.fusLabyFlagChannelEndAt = 0
-        mc.fusLabyChannelLockMove = false
-        clearChannelInputKeys()
-        clearVfx()
-        try {
-          const feetY = fusLabyFeetYAtColumn(mc?.world, pos.x, pos.z, pos.y)
-          curPl.setPosition?.(pos.x + 0.5, feetY, pos.z + 0.5)
-          if (typeof curPl.motionX === 'number') curPl.motionX = 0
-          if (typeof curPl.motionY === 'number') curPl.motionY = 0
-          if (typeof curPl.motionZ === 'number') curPl.motionZ = 0
-        } catch (e) {
-          console.warn('[fusLabySpawnFlag] teleport failed', e)
+      try {
+        channelRafId = 0
+        const curEndAt = channelEndAt
+        if (!curEndAt) return
+        const now = Date.now()
+        const curPl = mc.player
+        if (!curPl) {
+          cancelChannel()
+          return
         }
-        return
+        if (mc.currentScreen) {
+          cancelChannel()
+          return
+        }
+        if (
+          typeof curPl.health === 'number' &&
+          (curPl.health <= 0 || curPl.health + 0.001 < channelStartHealth)
+        ) {
+          cancelChannel()
+          return
+        }
+
+        if (!vfxGroup) {
+          buildVfx()
+        }
+
+        /**
+         * Hard-freeze horizontal input each frame. We zero the engine's input fields
+         * rather than yanking the keyboard state so desktop users can still mash WASD —
+         * it simply does nothing. Saves a re-sync dance when the channel ends.
+         */
+        curPl.moveForward = 0
+        curPl.moveStrafing = 0
+        curPl.jumping = false
+        if (typeof curPl.motionX === 'number') curPl.motionX *= 0.5
+        if (typeof curPl.motionZ === 'number') curPl.motionZ *= 0.5
+
+        const t = 1 - (curEndAt - now) / FUS_LABY_FLAG_CHANNEL_MS
+        updateVfx(curPl, Math.max(0, Math.min(1, t)), performance.now())
+
+        if (now >= curEndAt) {
+          channelEndAt = 0
+          mc.fusLabyFlagChannelEndAt = 0
+          mc.fusLabyChannelLockMove = false
+          clearChannelInputKeys()
+          clearVfx()
+          clearPresenceTpCh()
+          try {
+            if (usePresence) {
+              let tx = px
+              let ty = py
+              let tz = pz
+              if (chPeerUid && typeof mc.fusLabyReadPeerPos === 'function') {
+                const cur = mc.fusLabyReadPeerPos(chPeerUid)
+                if (cur && [cur.x, cur.y, cur.z].every((n) => Number.isFinite(Number(n)))) {
+                  tx = Number(cur.x)
+                  ty = Number(cur.y)
+                  tz = Number(cur.z)
+                }
+              }
+              const res = fusLabyResolvePeerTeleportPosition(mc?.world, tx, tz, ty)
+              const x = res.x
+              const y = res.y + FUS_LABY_PEER_TP_Y_LIFT_BLOCKS
+              const z = res.z
+              if ([x, y, z].every((n) => Number.isFinite(n))) {
+                curPl.setPosition?.(x, y, z)
+              } else {
+                console.warn('[fusLabySpawnFlag] peer teleport resolved non-finite', res)
+              }
+            } else {
+              const bx = Math.floor(px)
+              const by = Math.floor(py)
+              const bz = Math.floor(pz)
+              const feetY = fusLabyFeetYAtColumn(mc?.world, bx, bz, by)
+              curPl.setPosition?.(bx + 0.5, feetY, bz + 0.5)
+            }
+            if (typeof curPl.motionX === 'number') curPl.motionX = 0
+            if (typeof curPl.motionY === 'number') curPl.motionY = 0
+            if (typeof curPl.motionZ === 'number') curPl.motionZ = 0
+            try {
+              mc.fusRefreshSpawnInvuln?.()
+            } catch {
+              /* ignore */
+            }
+          } catch (e) {
+            console.warn('[fusLabySpawnFlag] teleport failed', e)
+          }
+          return
+        }
+        channelRafId = requestAnimationFrame(tick)
+      } catch (err) {
+        console.error('[fusLabySpawnFlag] channel tick', err)
+        try {
+          cancelChannel()
+        } catch {
+          /* ignore */
+        }
+        clearPresenceTpCh()
       }
-      channelRafId = requestAnimationFrame(tick)
     }
     channelRafId = requestAnimationFrame(tick)
+  }
+
+  mc.fusLabyStartFlagTeleportChannel = function startFusLabyFlagTeleport() {
+    const pos = mc.fusSpawnFlagPos
+    if (!pos) return
+    startTeleportChannelToBlockPos(pos)
+  }
+
+  mc.fusLabyStartTeleportToBlockPosChannel = function (pos) {
+    startTeleportChannelToBlockPos(pos)
   }
 
   /** Disposer — safe to call on view unmount even when no channel is active. */

@@ -18,7 +18,9 @@
     "functions:install": "npm install --prefix functions",
     "storage:cors": "node scripts/apply-storage-cors.mjs",
     "reverse:mob-coins": "node scripts/reverse-block-world-mob-coins.mjs",
-    "reverse:mob-coins:dry": "node scripts/reverse-block-world-mob-coins.mjs --dry-run"
+    "reverse:mob-coins:dry": "node scripts/reverse-block-world-mob-coins.mjs --dry-run",
+    "laby:reset-world": "node scripts/reset-laby-shared-world.mjs",
+    "laby:reset-world:dry": "node scripts/reset-laby-shared-world.mjs --dry-run"
   },
   "dependencies": {
     "@vueuse/core": "^14.2.1",

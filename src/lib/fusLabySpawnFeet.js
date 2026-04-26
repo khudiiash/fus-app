@@ -105,3 +105,131 @@ export function fusLabyFeetYAtColumn(world, ix, iz, fallbackY) {
   }
   return terrainFeet
 }
+
+/**
+ * In a single (ix, iz) column, find a valid standing feet Y whose value is **closest** to
+ * {@code hintEntityFeetY}. Avoids {@link fusLabyFeetYAtColumn}’s “first clear from below”
+ * rule that can pick a cave / gap under a platform.
+ *
+ * @param {any} world
+ * @param {number} ix
+ * @param {number} iz
+ * @param {number} hintEntityFeetY
+ * @returns {number | null} feet Y, or null if no candidate
+ */
+function nearestClearFeetYInOneColumn(world, ix, iz, hintEntityFeetY) {
+  if (!world || typeof world.getBlockAt !== 'function' || !Number.isFinite(hintEntityFeetY)) {
+    return null
+  }
+  const h = Number(hintEntityFeetY)
+  const lo = Math.max(0, Math.floor(h) - 3)
+  const hi = Math.min(600, Math.floor(h) + 10)
+  let bestY = null
+  let bestScore = Infinity
+  for (let yB = lo; yB <= hi; yB++) {
+    if (!columnClearForPlayer(world, ix, yB, iz)) continue
+    const feetY = yB + FEET_LIFT
+    const score = Math.abs(feetY - h)
+    if (score < bestScore) {
+      bestScore = score
+      bestY = feetY
+    }
+  }
+  return bestY
+}
+
+/**
+ * Feet Y in column {@code (ix, iz)} near {@code hint}, or null if no valid stand.
+ * @param {any} world
+ * @param {number} ix
+ * @param {number} iz
+ * @param {number} hint
+ * @returns {number | null}
+ */
+function feetYInColumnForPeer(world, ix, iz, hint) {
+  let fy = nearestClearFeetYInOneColumn(world, ix, iz, hint)
+  if (fy == null) {
+    try {
+      fy = fusLabyFeetYAtColumn(world, ix, iz, hint)
+    } catch {
+      fy = null
+    }
+  }
+  if (fy == null || !Number.isFinite(fy)) return null
+  return fy
+}
+
+/**
+ * Picks the best cell among offsets (lowest |feetY − hint|), or null if none are standable.
+ * @param {any} world
+ * @param {number} bix
+ * @param {number} biz
+ * @param {number} hint
+ * @param {number[][]} offsets  Array of [ox, oz] in block space from the peer’s column.
+ * @returns {{ x: number, y: number, z: number } | null}
+ */
+function bestPeerTeleportAmongOffsets(world, bix, biz, hint, offsets) {
+  let bestX = 0
+  let bestZ = 0
+  let bestY = 0
+  let bestS = Infinity
+  for (const pair of offsets) {
+    const ox = pair[0]
+    const oz = pair[1]
+    const ix = bix + ox
+    const iz = biz + oz
+    const fy = feetYInColumnForPeer(world, ix, iz, hint)
+    if (fy == null) continue
+    const sc = Math.abs(fy - hint)
+    if (sc < bestS) {
+      bestS = sc
+      bestX = ix + 0.5
+      bestZ = iz + 0.5
+      bestY = fy
+    }
+  }
+  return bestS < Infinity ? { x: bestX, y: bestY, z: bestZ } : null
+}
+
+/**
+ * Resolves a safe teleport point near a **live** {@code worldPresence} (x, y, z) feet
+ * target. Prefers a **1-block diagonal** offset from the peer’s column (so you don’t land
+ * inside their hitbox), then other neighbors, and only then the same cell.
+ *
+ * @param {any} world
+ * @param {number} px  peer feet x (entity coords)
+ * @param {number} pz  peer feet z
+ * @param {number} hintEntityFeetY  peer feet y
+ * @returns {{ x: number, y: number, z: number }}
+ */
+export function fusLabyResolvePeerTeleportPosition(world, px, pz, hintEntityFeetY) {
+  if (!Number.isFinite(px) || !Number.isFinite(pz) || !Number.isFinite(hintEntityFeetY)) {
+    return { x: px, y: hintEntityFeetY, z: pz }
+  }
+  if (!world || typeof world.getBlockAt !== 'function') {
+    return { x: px, y: hintEntityFeetY, z: pz }
+  }
+  const bix = Math.floor(Number(px)) || 0
+  const biz = Math.floor(Number(pz)) || 0
+  const hint = Number(hintEntityFeetY)
+  /** One block diagonally only — try all four before cardinals. */
+  const diagonals = [
+    [1, 1],
+    [1, -1],
+    [-1, 1],
+    [-1, -1],
+  ]
+  const cardinals = [
+    [1, 0],
+    [-1, 0],
+    [0, 1],
+    [0, -1],
+  ]
+  const d = bestPeerTeleportAmongOffsets(world, bix, biz, hint, diagonals)
+  if (d) return d
+  const c = bestPeerTeleportAmongOffsets(world, bix, biz, hint, cardinals)
+  if (c) return c
+  const s = bestPeerTeleportAmongOffsets(world, bix, biz, hint, [[0, 0]])
+  if (s) return s
+  return { x: px, y: hint, z: pz }
+}

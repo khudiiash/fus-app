@@ -730,7 +730,8 @@ function finishBreak(mc, state) {
  *  64-particle burst used on final break). `count` defaults to 4 for desktop; callers should
  *  pass a smaller value on low-tier mobile where the particle-renderer pool is tighter. */
 function spawnHitDust(mc, x, y, z, typeId, count = 4) {
-  const block = Block.getById(typeId)
+  let block = Block.getById(typeId)
+  if (!block) block = Block.getById(1)
   if (!block) return
   for (let i = 0; i < count; i++) {
     const px = x + Math.random()

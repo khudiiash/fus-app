@@ -17,6 +17,7 @@ import MysteryBoxRevealModal from '@/components/shop/MysteryBoxRevealModal.vue'
 import { useShopStore } from '@/stores/shop'
 import { useToast } from '@/composables/useToast'
 import { useHaptic } from '@/composables/useHaptic'
+import { mergeItemMetaById } from '@/lib/fusShopItemMetaMerge.js'
 import { getSubjectIcon } from '@/composables/useSubjectIcon'
 import { enrichStudentFeedTransactions } from '@/composables/useTransactionFeed'
 import {
@@ -255,11 +256,7 @@ watch(revealOpen, (v) => {
 })
 
 function resolveItemMeta(id) {
-  return (
-    shop.items.find((i) => i.id === id) ||
-    userStore.items?.find((i) => i.id === id) ||
-    { id, name: id }
-  )
+  return mergeItemMetaById(shop.items, userStore.items, id)
 }
 
 async function openOwnedBox(boxItem) {

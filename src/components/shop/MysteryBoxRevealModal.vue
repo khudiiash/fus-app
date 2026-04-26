@@ -1,10 +1,21 @@
 <script setup>
 import { ref, watch, nextTick, computed } from 'vue'
 import gsap from 'gsap'
+import { useShopStore } from '@/stores/shop'
+import { useUserStore } from '@/stores/user'
+import { mergeItemMetaById } from '@/lib/fusShopItemMetaMerge.js'
 import AppModal from '@/components/ui/AppModal.vue'
 import CoinDisplay from '@/components/gamification/CoinDisplay.vue'
 import MysteryBoxSprite from '@/components/shop/MysteryBoxSprite.vue'
 import ItemModelThumb from '@/components/character/ItemModelThumb.vue'
+
+const shop = useShopStore()
+const userStore = useUserStore()
+
+function enrichRollItem(row) {
+  if (!row || typeof row.id !== 'string') return row
+  return mergeItemMetaById(shop.items, userStore.items, row.id)
+}
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
@@ -45,7 +56,7 @@ function delay(ms) {
 
 const itemsList = computed(() => props.revealed?.items || [])
 const itemCount = computed(() => itemsList.value.length)
-const currentItem = computed(() => itemsList.value[itemStep.value] || null)
+const currentItem = computed(() => enrichRollItem(itemsList.value[itemStep.value] || null))
 const coinAmount = computed(() => Math.max(0, Number(props.revealed?.coins) || 0))
 
 async function waitForRefs(attempts = 12) {
@@ -206,7 +217,7 @@ watch(
     if (coins > 0) {
       finalView.value = { type: 'coins', amount: coins }
     } else if (items.length) {
-      finalView.value = { type: 'item', item: items[items.length - 1] }
+      finalView.value = { type: 'item', item: enrichRollItem(items[items.length - 1]) }
     } else {
       finalView.value = { type: 'empty' }
     }

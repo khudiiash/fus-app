@@ -84,6 +84,10 @@ export function installFusPresenceWriter(mc, { worldId, uid, rtdb, displayName, 
     walkAccum: 0,
     lastSwingObserved: -1,
     lastInvUntil: -1,
+    /** Throttle full presence flushes while spawn invuln is active so every peer gets {@code invUntil} + a timely {@code 0} even if the player stands still. */
+    lastInvPushedAt: 0,
+    /** {@code labyChEndAt:labyChStartAt} so start/end clears still emit. */
+    lastLabyChSnapshot: '',
   }
 
   /**
@@ -252,6 +256,22 @@ export function installFusPresenceWriter(mc, { worldId, uid, rtdb, displayName, 
     const { mode, karma } = getPvp()
     const invUntil = Number.isFinite(mc.fusSpawnInvulnUntilMs) ? Math.floor(mc.fusSpawnInvulnUntilMs) : 0
 
+    let labyChEndNum = 0
+    let labyChStartNum = 0
+    try {
+      const ch0 = Number(mc.fusLabyPresenceTpChEndAt)
+      if (Number.isFinite(ch0) && ch0 > now - 1_000) {
+        labyChEndNum = ch0
+        const st0 = Number(mc.fusLabyPresenceTpChStartAt)
+        labyChStartNum = Number.isFinite(st0) && st0 > 0 && st0 < ch0 + 60_000 ? st0 : 0
+      }
+    } catch {
+      labyChEndNum = 0
+      labyChStartNum = 0
+    }
+    const labyChSnapshot = `${labyChEndNum}:${labyChStartNum}`
+    const labyChChanged = labyChSnapshot !== state.lastLabyChSnapshot
+
     const moved =
       Math.abs(x - state.lastX) > MOVE_EPS ||
       Math.abs(y - state.lastY) > MOVE_EPS ||
@@ -273,11 +293,11 @@ export function installFusPresenceWriter(mc, { worldId, uid, rtdb, displayName, 
      *  immediately, not on the next spacing tick. */
     const hpCrossed = hp !== state.lastHp || maxHp !== state.lastMax
 
-    if (!forceImmediate && !moved && !stateChanged && !idleTimeUp) return
+    if (!forceImmediate && !moved && !stateChanged && !idleTimeUp && !labyChChanged) return
     /** Throttle *position* spam only. Previously this gate ran for every `writeRow` call, so
      *  a walk→idle flip with no micro-move (common when releasing keys) was dropped until the
      *  next window — remotes saw running for seconds after a stop. */
-    if (!forceImmediate && !hpCrossed && now - state.lastWriteMs < PRESENCE_WRITE_MS && !stateChanged) {
+    if (!forceImmediate && !hpCrossed && now - state.lastWriteMs < PRESENCE_WRITE_MS && !stateChanged && !labyChChanged) {
       return
     }
 
@@ -295,6 +315,10 @@ export function installFusPresenceWriter(mc, { worldId, uid, rtdb, displayName, 
     state.lastKarma = karma
     state.lastInvUntil = invUntil
     state.lastWriteMs = now
+
+    /** Laby: channel window for remote TP VFX (numeric so RTDB clears; see {@link installFusLabySpawnFlag}). */
+    const labyChEndAt = labyChEndNum
+    const labyChStartAt = labyChStartNum
 
     const payload = {
       name: state.name,
@@ -318,10 +342,13 @@ export function installFusPresenceWriter(mc, { worldId, uid, rtdb, displayName, 
       clientMs: now,
       at: serverTimestamp(),
       invUntil,
+      labyChEndAt,
+      labyChStartAt,
     }
     try {
       await dbUpdate(presRef, payload)
       lastSentSwingSerial = swingSerial
+      state.lastLabyChSnapshot = labyChSnapshot
     } catch (e) {
       /** Don't spam on transient failures — RTDB writes will resume on their own. */
       if (!state.lastWriteWarn || Date.now() - state.lastWriteWarn > 30_000) {
@@ -348,6 +375,17 @@ export function installFusPresenceWriter(mc, { worldId, uid, rtdb, displayName, 
     if (disposed) return
     rafId = requestAnimationFrame(tick)
     if (!mc.player) return
+    const now = Date.now()
+    const iu = mc.fusSpawnInvulnUntilMs
+    if (Number.isFinite(iu) && iu > now) {
+      if (now - state.lastInvPushedAt > 800) {
+        state.lastInvPushedAt = now
+        void writeRowInner(true)
+        return
+      }
+    } else {
+      state.lastInvPushedAt = 0
+    }
     void writeRow(false)
   }
   rafId = requestAnimationFrame(tick)

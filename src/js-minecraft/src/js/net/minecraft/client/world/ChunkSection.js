@@ -119,7 +119,7 @@ export default class ChunkSection {
             }
             br.renderBlock(world, block, ambientOcclusion, ax, ay, az);
         });
-        tessellator.draw(this.group);
+        tessellator.draw(this.group, isTranslucentRenderPhase ? "trans" : "solid");
     }
 
     /**

@@ -1975,6 +1975,10 @@ export function installFusSimpleMobs(mc, opts = {}) {
         }
       }
     }
+    if (renderTimeMs < buf[0].ts) {
+      const h = buf[0]
+      return { x: h.x, y: h.y, z: h.z, ry: h.ry, state: h.state, moving: false }
+    }
     const tail = buf[buf.length - 1]
     return { x: tail.x, y: tail.y, z: tail.z, ry: tail.ry, state: tail.state, moving: false }
   }

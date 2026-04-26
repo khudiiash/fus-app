@@ -182,6 +182,30 @@ export default class WorldRenderer {
     }
 
     /**
+     * FUS: `Chunk.unload()` only flips a flag; without removing the chunk from the provider map,
+     * `getChunks()` grows forever as the player explores and the first pass of {@link #renderChunks}
+     * devolves into O(loaded) work every frame (minutes-long sessions → single-digit FPS).
+     * Also eject any pending section rebuild queue entries for this chunk.
+     * @param {import("../world/Chunk.js").default} chunk
+     * @param {import("../world/World.js").default} world
+     * @param {import("../world/provider/ChunkProvider.js").default} provider
+     */
+    _fusUnsubscribeChunkFromScene(chunk, world, provider) {
+        if (!chunk) return;
+        for (const sec of chunk.sections) {
+            if (sec) {
+                this._fusChunkInUpdateQueue.delete(sec);
+            }
+        }
+        try {
+            world.group.remove(chunk.group);
+        } catch {
+            /* already detached */
+        }
+        provider.unloadChunk(chunk.x, chunk.z);
+    }
+
+    /**
      * Laby: re-run {@link GameWindow#updateWindowSize} after `fusIosSafari` / `fusLowTierMobile`
      * are set on `minecraft`, so WebGL `pixelRatio` (see GameWindow) matches the real device
      * tier. Safe to call multiple times.
@@ -881,6 +905,7 @@ export default class WorldRenderer {
          * the (2·rd−1)² *near* cells (≤81 when rd=5) and may skip 16 section tests with one column
          * frustum reject.
          */
+        const toPurge = [];
         for (const [, cFar] of provider.getChunks()) {
             const distanceX = Math.abs(cameraChunkX - cFar.x);
             const distanceZ = Math.abs(cameraChunkZ - cFar.z);
@@ -890,6 +915,14 @@ export default class WorldRenderer {
             cFar.group.visible = false;
             if (cFar.loaded) {
                 cFar.unload();
+                toPurge.push(cFar);
+            }
+        }
+        if (toPurge.length) {
+            const s = new Set(toPurge);
+            this.chunkSectionUpdateQueue = this.chunkSectionUpdateQueue.filter((q) => !q || !s.has(q.chunk));
+            for (const cFar of toPurge) {
+                this._fusUnsubscribeChunkFromScene(cFar, world, provider);
             }
         }
 

@@ -12,6 +12,13 @@ import {
   set as dbSet,
   runTransaction,
 } from 'firebase/database'
+import { FUS_GAME_COIN_PICKUP_MAX, resolveBwSeedKeyWorldDropVisual } from '@/firebase/collections'
+import {
+  resolveFusToolsGltfObjectForFp,
+  cloneToolForFirstPerson,
+  applyFusTpToolMaterialPolicy,
+  disposeFusFpToolSubtree,
+} from '@/js-minecraft/src/js/net/minecraft/client/fus/FusToolsGltfFirstPerson.js'
 import { fusLabyIsWithinAnimProcessRangeXz, fusLabyIsWithinPlayerInterestXz } from './fusLabyEntityTerrainWindow.js'
 
 /**
@@ -27,7 +34,7 @@ import { fusLabyIsWithinAnimProcessRangeXz, fusLabyIsWithinPlayerInterestXz } fr
  *   {
  *     type: 'coin' | 'item',
  *     subtype?: 'tool' | 'skin' | 'block' | 'accessory',  // item-only
- *     coins?: number,                                      // coin-only (always 1 for now)
+ *     coins?: number,                                      // coin stack 1..FUS_GAME_COIN_PICKUP_MAX
  *     payload?: object,                                    // { bwSeedKey?, skinId?, ... }
  *     x: number, y: number, z: number,
  *     droppedAt: number,        // Date.now() when created
@@ -234,6 +241,28 @@ export function installFusWorldDrops(mc, { worldId, uid, rtdb }) {
     return mesh
   }
 
+  /**
+   * Scale/orient a cloned tools.glb subtree for a ground drop (~½ block footprint).
+   * @param {THREE.Object3D} toolRoot
+   */
+  const fitToolMeshForWorldDrop = (toolRoot) => {
+    applyFusTpToolMaterialPolicy(toolRoot)
+    const box = new THREE.Box3().setFromObject(toolRoot)
+    const size = new THREE.Vector3()
+    box.getSize(size)
+    const maxDim = Math.max(size.x, size.y, size.z, 1e-4)
+    const target = 0.48
+    toolRoot.scale.multiplyScalar(target / maxDim)
+    const b = new THREE.Box3().setFromObject(toolRoot)
+    const cx = (b.min.x + b.max.x) / 2
+    const cz = (b.min.z + b.max.z) / 2
+    toolRoot.position.set(-cx, -b.min.y, -cz)
+    const g = new THREE.Group()
+    g.userData.fusWorldDropTool = true
+    g.add(toolRoot)
+    return g
+  }
+
   const blockIdToDropColor = (id) => {
     const KNOWN = {
       1: 0x808080,
@@ -265,6 +294,24 @@ export function installFusWorldDrops(mc, { worldId, uid, rtdb }) {
     return KNOWN[id] ?? 0xb0bec5
   }
   const buildItemMesh = (subtype, row) => {
+    if (subtype === 'tool') {
+      const meshName =
+        typeof row?.payload?.toolMeshName === 'string' && row.payload.toolMeshName.trim()
+          ? row.payload.toolMeshName.trim()
+          : ''
+      const tpl = mc.fusToolsGltfTemplate
+      if (meshName && tpl) {
+        try {
+          const src = resolveFusToolsGltfObjectForFp(tpl, meshName)
+          if (src) {
+            const clone = cloneToolForFirstPerson(src)
+            return fitToolMeshForWorldDrop(clone)
+          }
+        } catch (e) {
+          console.warn('[fusWorldDrops] tool mesh failed', meshName, e)
+        }
+      }
+    }
     if (subtype === 'block') {
       const bid = Math.floor(Number(row?.payload?.blockId))
       if (Number.isFinite(bid) && bid > 0) {
@@ -440,6 +487,59 @@ export function installFusWorldDrops(mc, { worldId, uid, rtdb }) {
       claiming: false,
       gone: false,
     })
+    /** Mob drops often only carry {@code bwSeedKey} — resolve Firestore once for real block/tool meshes. */
+    if (row.type === 'item') {
+      const p = row.payload || {}
+      const hasBlock = Number.isFinite(Number(p.blockId)) && Number(p.blockId) > 0
+      const hasTool = typeof p.toolMeshName === 'string' && p.toolMeshName.trim().length > 0
+      if (typeof p.bwSeedKey === 'string' && p.bwSeedKey && !hasBlock && !hasTool) {
+        void resolveBwSeedKeyWorldDropVisual(p.bwSeedKey).then((hints) => {
+          const d = drops.get(dropId)
+          if (!d || d.gone || !d.spinGroup || !hints) return
+          if (!hints.blockId && !hints.toolMeshName) return
+          const mergedSubtype =
+            hints.subtype === 'tool' || hints.subtype === 'block' ? hints.subtype : row.subtype || 'item'
+          const mergedPayload = {
+            ...p,
+            ...(hints?.blockId ? { blockId: hints.blockId } : {}),
+            ...(hints?.toolMeshName ? { toolMeshName: hints.toolMeshName } : {}),
+          }
+          const mergedRow = { ...row, subtype: mergedSubtype, payload: mergedPayload }
+          const sg = d.spinGroup
+          const disposeSpinChild = (c) => {
+            if (c.userData?.fusWorldDropTool) {
+              try {
+                disposeFusFpToolSubtree(c)
+              } catch {
+                /* ignore */
+              }
+              return
+            }
+            c.traverse((o) => {
+              if (o.isMesh || o.isSkinnedMesh) {
+                o.geometry?.dispose?.()
+                const mats = Array.isArray(o.material) ? o.material : [o.material]
+                for (const m of mats) {
+                  m?.map?.dispose?.()
+                  m?.dispose?.()
+                }
+              }
+            })
+          }
+          for (const c of [...sg.children]) {
+            disposeSpinChild(c)
+            sg.remove(c)
+          }
+          try {
+            sg.add(buildItemMesh(mergedSubtype, mergedRow))
+          } catch (e) {
+            console.warn('[fusWorldDrops] enriched item mesh failed', e)
+            sg.add(buildItemMesh(row.subtype || 'item', row))
+          }
+          d.row = mergedRow
+        })
+      }
+    }
   }
 
   /** Remove a drop from the local scene + state. Safe no-op if unknown. */
@@ -451,8 +551,21 @@ export function installFusWorldDrops(mc, { worldId, uid, rtdb }) {
     drops.delete(dropId)
     try {
       scene.remove(d.group)
+      const sg = d.spinGroup
+      if (sg && d.row?.type === 'item') {
+        for (const c of [...sg.children]) {
+          if (c.userData?.fusWorldDropTool) {
+            try {
+              disposeFusFpToolSubtree(c)
+            } catch {
+              /* ignore */
+            }
+            sg.remove(c)
+          }
+        }
+      }
       d.group.traverse((o) => {
-        if (o.isMesh) {
+        if (o.isMesh || o.isSkinnedMesh) {
           o.geometry?.dispose?.()
           if (o.material) {
             const mats = Array.isArray(o.material) ? o.material : [o.material]
@@ -504,7 +617,7 @@ export function installFusWorldDrops(mc, { worldId, uid, rtdb }) {
             const source = committed.source || (committed.winnerUid ? 'pk' : 'mob')
             const grantCoins = Math.max(
               1,
-              Math.min(20, Math.floor(Number(committed.coins) || 1)),
+              Math.min(FUS_GAME_COIN_PICKUP_MAX, Math.floor(Number(committed.coins) || 1)),
             )
             await awaitMaybe(
               grantFn({
@@ -669,7 +782,7 @@ export function installFusWorldDrops(mc, { worldId, uid, rtdb }) {
    */
   const dropCoinAt = (x, y, z, opts = {}) => {
     /** One world mesh, but the RTDB row can represent 1..N coins on pickup (mob/ore procs). */
-    const coins = Math.max(1, Math.min(20, Math.floor(Number(opts.coins) || 1)))
+    const coins = Math.max(1, Math.min(FUS_GAME_COIN_PICKUP_MAX, Math.floor(Number(opts.coins) || 1)))
     const now = Date.now()
     const row = {
       type: 'coin',

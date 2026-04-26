@@ -3,6 +3,7 @@ import { ref, onMounted, onUnmounted, watch } from 'vue'
 import { MinecraftSkinHost } from '@/character/minecraftSkinHost.js'
 import * as THREE from 'three'
 import { loadRemoteSkinForViewer } from '@/utils/loadRemoteSkinForViewer'
+import { generateFusAvatarSkinCanvas } from '@/lib/fusAvatarSkinCanvas.js'
 
 const props = defineProps({
   skinUrl: { type: String, default: null },
@@ -12,49 +13,6 @@ const props = defineProps({
   /** No panel fill — WebGL clear alpha 0 (e.g. shop modal over game background). */
   transparentBackground: { type: Boolean, default: false },
 })
-
-// ─── Canvas-based fallback skin generation ───────────────────────────────────
-// Returns an HTMLCanvasElement so loadSkin() can use it synchronously (no Promise).
-const SKIN_PALETTES = {
-  default:  { body: '#7c3aed', legs: '#7c3aed', head: '#7c3aed' },
-  sigma:    { body: '#374151', legs: '#111827', head: '#1f2937' },
-  brainrot: { body: '#d946ef', legs: '#86198f', head: '#c026d3' },
-  ohio:     { body: '#15803d', legs: '#14532d', head: '#166534' },
-  rizz:     { body: '#9333ea', legs: '#581c87', head: '#7e22ce' },
-  npc:      { body: '#9ca3af', legs: '#6b7280', head: '#4b5563' },
-  brat:     { body: '#84cc16', legs: '#3f6212', head: '#65a30d' },
-  chillguy: { body: '#d97706', legs: '#92400e', head: '#b45309' },
-  skibidi:  { body: '#38bdf8', legs: '#0369a1', head: '#0ea5e9' },
-  galaxy:   { body: '#4338ca', legs: '#1e1b4b', head: '#3730a3' },
-  fire:     { body: '#ef4444', legs: '#7f1d1d', head: '#dc2626' },
-}
-
-function generateSkinCanvas(skinId) {
-  const p = SKIN_PALETTES[skinId] || SKIN_PALETTES.default
-  const c = document.createElement('canvas')
-  c.width = 64; c.height = 64
-  const ctx = c.getContext('2d')
-  ctx.fillStyle = p.body
-  ctx.fillRect(0, 0, 64, 64)
-  // Head
-  ctx.fillStyle = p.head;  ctx.fillRect(8, 8, 8, 8)
-  // Body
-  ctx.fillStyle = p.body;  ctx.fillRect(20, 20, 8, 12)
-  // Right arm
-  ctx.fillStyle = p.body;  ctx.fillRect(44, 20, 4, 12)
-  // Left arm
-  ctx.fillStyle = p.body;  ctx.fillRect(36, 52, 4, 12)
-  // Right leg
-  ctx.fillStyle = p.legs;  ctx.fillRect(4, 20, 4, 12)
-  // Left leg
-  ctx.fillStyle = p.legs;  ctx.fillRect(20, 52, 4, 12)
-  // Eyes
-  ctx.fillStyle = '#ffffff'; ctx.fillRect(9, 10, 2, 2); ctx.fillRect(13, 10, 2, 2)
-  ctx.fillStyle = '#000000'; ctx.fillRect(10, 10, 1, 1); ctx.fillRect(14, 10, 1, 1)
-  // Smile
-  ctx.fillStyle = '#000000'; ctx.fillRect(10, 13, 1, 1); ctx.fillRect(11, 14, 2, 1); ctx.fillRect(13, 13, 1, 1)
-  return c
-}
 
 const canvasRef = ref(null)
 let viewer = null
@@ -134,7 +92,7 @@ async function loadAndRender() {
   if (!viewer) return
   applyViewerBackground()
 
-  const fallbackCanvas = generateSkinCanvas(props.skinId || 'default')
+  const fallbackCanvas = generateFusAvatarSkinCanvas(props.skinId || 'default')
   await loadRemoteSkinForViewer(viewer, props.skinUrl, fallbackCanvas)
 
   // Pixel-perfect Minecraft look

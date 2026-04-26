@@ -22,6 +22,40 @@ import {
   fusLabyIsWithinAnimProcessRangeXz,
   fusLabyIsWithinPlayerInterestXz,
 } from './fusLabyEntityTerrainWindow.js'
+import { FUS_LABY_FLAG_CHANNEL_MS } from '@labymc/src/js/net/minecraft/client/fus/FusLabyFlagChannel.js'
+import { FUS_SPAWN_INVULN_MS } from './fusSpawnInvulnInstall.js'
+import { fusCreateRemoteHeldBlockMesh, fusDisposeRemoteHeldBlockMesh } from './fusRemoteHeldBlockMesh.js'
+import { processFusAvatarSkinCanvasForSkinviewRig } from '@/lib/fusAvatarSkinCanvas.js'
+
+/**
+ * Shared procedural skin when presence has no `skinUrl` (or URL load fails).
+ * Uses {@link processFusAvatarSkinCanvasForSkinviewRig}: {@link generateFusAvatarSkinCanvas}
+ * plus the same {@code loadSkinToCanvas} pass as successful HTTP skins in {@link #loadSkin}.
+ * {@code colorSpace} is {@link THREE.NoColorSpace}: {@link WorldRenderer} disables color
+ * management and {@link Minecraft#getThreeTexture} uses the same — {@code SRGBColorSpace}
+ * here skews solid purple toward blue on the Laby canvas.
+ */
+/** @type {THREE.CanvasTexture | null} */
+let _fusRemoteDefaultSkinTex = null
+const FUS_REMOTE_DEFAULT_SKIN_TEX_REV = 4
+function fusRemoteDefaultSkinTexture() {
+  if (_fusRemoteDefaultSkinTex?.userData?.fusRev === FUS_REMOTE_DEFAULT_SKIN_TEX_REV) {
+    return _fusRemoteDefaultSkinTex
+  }
+  /** Do not dispose the previous singleton — other live avatars may still reference it. */
+  _fusRemoteDefaultSkinTex = null
+  const canvas = processFusAvatarSkinCanvasForSkinviewRig('default')
+  const texture = new THREE.CanvasTexture(canvas)
+  texture.magFilter = THREE.NearestFilter
+  texture.minFilter = THREE.NearestFilter
+  texture.generateMipmaps = false
+  texture.colorSpace = THREE.NoColorSpace
+  texture.needsUpdate = true
+  texture.userData.fusKeepAlive = true
+  texture.userData.fusRev = FUS_REMOTE_DEFAULT_SKIN_TEX_REV
+  _fusRemoteDefaultSkinTex = texture
+  return _fusRemoteDefaultSkinTex
+}
 
 /**
  * Remote-player system for the shared Laby world. Subscribes to
@@ -165,6 +199,8 @@ export function installFusRemoteAvatars(mc, { worldId, uid, rtdb }) {
       this._nameBillboardWp = new THREE.Vector3()
       this.name = ''
       this.skinUrl = null
+      /** First {@link #ingestRow} must run {@link #loadSkin} even when URL stays null (procedural default). */
+      this._fusSkinSyncedOnce = false
       this.slim = false
       this.pvpMode = 'white'
       this.hp = 20
@@ -201,6 +237,249 @@ export function installFusRemoteAvatars(mc, { worldId, uid, rtdb }) {
        *  higher-hp presence rows that RTDB reorders behind the real kill, or the model
        *  “comes back standing”. */
       this._deathPresenceRefMs = null
+      /** EMA of {@code (row.at - local Date.now())} at ingest so invuln end + blink use time closer to server / writer. */
+      this._fusPresenceTimeOff = 0
+      /** Wall time (ms) when a teleport channel should end, from {@code labyChEndAt} in RTDB. */
+      this.labyChEndAt = 0
+      /** Optional channel start; with {@code labyChEndAt} gives real progress when the window != fixed length. */
+      this.labyChStartAt = 0
+      /** @type {THREE.Group | null} */
+      this._labyTpVfxGroup = null
+      /** @type {THREE.Mesh[] | null} */
+      this._labyTpVfxOrbitMeshes = null
+      /** @type {THREE.Mesh[] | null} */
+      this._labyTpVfxRingMeshes = null
+      /** @type {THREE.Mesh | null} */
+      this._labyTpVfxPillar = null
+      /** Default atlas immediately — RTDB can lag; async URL loads can fail (then we fall back). */
+      this._fusLoadSkinSerial = 0
+      this.applySkin(fusRemoteDefaultSkinTexture(), false)
+    }
+
+    _clearLabyTpVfx() {
+      const g = this._labyTpVfxGroup
+      this._labyTpVfxGroup = null
+      this._labyTpVfxOrbitMeshes = null
+      this._labyTpVfxRingMeshes = null
+      this._labyTpVfxPillar = null
+      if (!g) return
+      if (g.parent) g.parent.remove(g)
+      const seenGeom = new Set()
+      const seenMat = new Set()
+      g.traverse((o) => {
+        if (o.isMesh) {
+          const geo = o.geometry
+          if (geo && !seenGeom.has(geo)) {
+            seenGeom.add(geo)
+            try {
+              geo.dispose()
+            } catch {
+              /* ignore */
+            }
+          }
+          const mats = o.material
+          if (mats) {
+            const ar = Array.isArray(mats) ? mats : [mats]
+            for (const m of ar) {
+              if (m && !seenMat.has(m)) {
+                seenMat.add(m)
+                try {
+                  m.dispose()
+                } catch {
+                  /* ignore */
+                }
+              }
+            }
+          }
+        }
+      })
+    }
+
+    _buildLabyTpVfx() {
+      if (this._labyTpVfxGroup) return
+      const g = new THREE.Group()
+      g.position.set(0, 0, 0)
+      /** One scale on the root so the full effect (rings, column, motes) reads at world size. */
+      g.scale.setScalar(15)
+      g.renderOrder = 2000
+      const baseMatOpts = (color, opacity) => ({
+        color,
+        transparent: true,
+        opacity,
+        // depthTest: false,
+        // depthWrite: false,
+        fog: false,
+        blending: THREE.AdditiveBlending,
+        toneMapped: false,
+      })
+      const matA = new THREE.MeshBasicMaterial(baseMatOpts(0x44aaff, 0.5))
+      const matB = new THREE.MeshBasicMaterial(baseMatOpts(0x6ae0ff, 0.45))
+      const matM = new THREE.MeshBasicMaterial(baseMatOpts(0xb8f0ff, 0.32))
+      const matRingO = new THREE.MeshBasicMaterial(baseMatOpts(0x5ecfff, 0.38))
+      const matRingI = new THREE.MeshBasicMaterial(baseMatOpts(0x88aaff, 0.3))
+      const matPil = new THREE.MeshBasicMaterial({
+        ...baseMatOpts(0x6ec8ff, 0.14),
+        side: THREE.DoubleSide,
+      })
+      const geomS = new THREE.IcosahedronGeometry(0.1, 0)
+      const geomM = new THREE.IcosahedronGeometry(0.06, 0)
+      const orbit = []
+      const nA = 20
+      for (let i = 0; i < nA; i++) {
+        const m = new THREE.Mesh(geomS, matA)
+        m.userData.layer = 'a'
+        m.userData.ix = i
+        m.userData.n = nA
+        m.renderOrder = 2000
+        m.frustumCulled = false
+        g.add(m)
+        orbit.push(m)
+      }
+      const nB = 18
+      for (let i = 0; i < nB; i++) {
+        const m = new THREE.Mesh(geomS, matB)
+        m.userData.layer = 'b'
+        m.userData.ix = i
+        m.userData.n = nB
+        m.renderOrder = 2000
+        m.frustumCulled = false
+        g.add(m)
+        orbit.push(m)
+      }
+      const nM = 22
+      for (let i = 0; i < nM; i++) {
+        const m = new THREE.Mesh(geomM, matM)
+        m.userData.layer = 'mote'
+        m.userData.ix = i
+        m.userData.n = nM
+        m.userData.s0 = ((i * 37) % 1000) * 0.00073
+        m.userData.s1 = ((i * 91) % 1000) * 0.00051
+        m.renderOrder = 2000
+        m.frustumCulled = false
+        g.add(m)
+        orbit.push(m)
+      }
+      const ringGeomO = new THREE.TorusGeometry(0.55, 0.026, 4, 28)
+      const ringGeomI = new THREE.TorusGeometry(0.36, 0.02, 4, 20)
+      const ringO = new THREE.Mesh(ringGeomO, matRingO)
+      const ringI = new THREE.Mesh(ringGeomI, matRingI)
+      for (const r of [ringO, ringI]) {
+        r.rotation.x = Math.PI / 2
+        r.renderOrder = 2000
+        r.frustumCulled = false
+        r.position.y = 0.03
+        g.add(r)
+      }
+      const pillarGeom = new THREE.CylinderGeometry(0.28, 0.32, 2.35, 9, 1, true)
+      const pillar = new THREE.Mesh(pillarGeom, matPil)
+      pillar.renderOrder = 2000
+      pillar.frustumCulled = false
+      pillar.position.y = 1.12
+      g.add(pillar)
+      this._labyTpVfxOrbitMeshes = orbit
+      this._labyTpVfxRingMeshes = [ringI, ringO]
+      this._labyTpVfxPillar = pillar
+      this._labyTpVfxGroup = g
+      this.root.add(g)
+    }
+
+    /**
+     * Orbit a light helix on this remote avatar when their `labyChEndAt` is in the future
+     * (local player’s teleport channel, mirrored via RTDB). Progress uses
+     * `labyChStartAt`…`labyChEndAt` when both are set.
+     */
+    updateLabyTpVfx(wallTimeMs) {
+      const end = this.labyChEndAt
+      const start = this.labyChStartAt
+      const wallSync = wallTimeMs + (this._fusPresenceTimeOff || 0)
+      if (this.deathFired) {
+        this._clearLabyTpVfx()
+        return
+      }
+      if (!Number.isFinite(end) || end <= 0) {
+        this._clearLabyTpVfx()
+        return
+      }
+      if (wallSync >= end) {
+        this._clearLabyTpVfx()
+        return
+      }
+      if (!this._labyTpVfxGroup) {
+        this._buildLabyTpVfx()
+      }
+      if (!this._labyTpVfxGroup || !this._labyTpVfxOrbitMeshes) return
+      this._labyTpVfxGroup.visible = this.root?.visible === true
+      let t
+      if (Number.isFinite(start) && start > 0 && end > start) {
+        t = (wallSync - start) / (end - start)
+      } else {
+        t = 1 - (end - wallSync) / FUS_LABY_FLAG_CHANNEL_MS
+      }
+      const channelT = Math.max(0, Math.min(1, t))
+      const w0 = wallSync * 0.00088
+      const w1 = wallSync * -0.00115
+      const gPulse = 0.85 + 0.15 * channelT
+      for (const mesh of this._labyTpVfxOrbitMeshes) {
+        const layer = mesh.userData.layer
+        if (layer === 'a' || layer === 'b') {
+          const n = mesh.userData.n
+          const i = mesh.userData.ix
+          const tAng = (i / n) * Math.PI * 2
+          if (layer === 'a') {
+            const a = tAng + w0 * 2.35
+            const r = (0.36 + 0.22 * channelT) * gPulse
+            const h = 0.12 + (i / Math.max(1, n - 1)) * 1.4
+            mesh.position.set(Math.cos(a) * r, h, Math.sin(a) * r)
+            mesh.scale.setScalar(0.9 + 0.12 * Math.sin(w0 * 2 + tAng))
+            mesh.material?.color?.setRGB(0.25 + 0.45 * channelT, 0.5 + 0.28 * channelT, 0.98)
+          } else {
+            const a = tAng + 0.35 + w1 * 2.65
+            const r = (0.28 + 0.16 * channelT) * gPulse
+            const h = 0.1 + (i / Math.max(1, n - 1)) * 1.25
+            mesh.position.set(Math.cos(a) * r, h, Math.sin(a) * r)
+            mesh.scale.setScalar(0.88 + 0.1 * Math.sin(w1 * 2.3 - tAng))
+            mesh.material?.color?.setRGB(0.28 + 0.4 * channelT, 0.75 + 0.2 * channelT, 0.95)
+          }
+        } else if (layer === 'mote') {
+          const n = mesh.userData.n
+          const i = mesh.userData.ix
+          const s0 = mesh.userData.s0
+          const s1 = mesh.userData.s1
+          const u = (i * 0.618) % 1
+          const r0 = 0.22 + 0.5 * u
+          const h = 0.22 + 1.05 * u
+          const ang = u * Math.PI * 2.8 + s0 * wallSync
+          const bob = 0.08 * Math.sin(s1 * wallSync * 0.0018 + i)
+          mesh.position.set(
+            Math.cos(ang) * (r0 + 0.08 * channelT) + 0.05 * Math.sin(s0 * wallSync * 0.0014),
+            h + bob,
+            Math.sin(ang) * (r0 + 0.08 * channelT) + 0.05 * Math.cos(s1 * wallSync * 0.0013),
+          )
+          mesh.scale.setScalar(0.7 + 0.35 * (0.5 + 0.5 * Math.sin(0.0021 * wallSync + i)))
+        }
+      }
+      const rings = this._labyTpVfxRingMeshes
+      if (rings) {
+        rings[0].rotation.y = w0 * 1.1
+        rings[1].rotation.y = w1 * 0.9
+        const sRing = 1.02 + 0.1 * channelT
+        rings[0].scale.set(sRing, sRing, sRing)
+        rings[1].scale.set(1.08 * sRing, 1.08 * sRing, 1.08 * sRing)
+        rings[0].material && (rings[0].material.opacity = 0.32 + 0.14 * channelT)
+        rings[1].material && (rings[1].material.opacity = 0.25 + 0.12 * channelT)
+      }
+      const col = this._labyTpVfxPillar
+      if (col) {
+        const py = 1.02 + 0.12 * channelT
+        const ph = 2.15 + 0.4 * channelT
+        const rP = 0.88 + 0.2 * channelT
+        col.position.y = py
+        col.scale.set(rP, ph / 2.35, rP)
+        const m = col.material
+        if (m) {
+          m.opacity = 0.1 + 0.1 * channelT + 0.04 * (0.5 + 0.5 * Math.sin(0.0025 * wallSync))
+        }
+      }
     }
 
     ingestRow(row) {
@@ -294,28 +573,64 @@ export function installFusRemoteAvatars(mc, { worldId, uid, rtdb }) {
       if (mode !== this.pvpMode) this.pvpMode = mode
       if (typeof row.name === 'string' && row.name !== this.name) this.name = row.name
       const nextSlim = row.slim === true
-      if (typeof row.skinUrl === 'string' && (row.skinUrl !== this.skinUrl || nextSlim !== this.slim)) {
-        this.skinUrl = row.skinUrl
+      const nextSkinUrl = typeof row.skinUrl === 'string' && row.skinUrl.length > 0 ? row.skinUrl : null
+      if (nextSkinUrl !== this.skinUrl || nextSlim !== this.slim || !this._fusSkinSyncedOnce) {
+        this._fusSkinSyncedOnce = true
+        this.skinUrl = nextSkinUrl
         this.slim = nextSlim
         void this.loadSkin()
-      } else if (this.skinUrl === null && nextSlim !== this.slim) {
-        this.slim = nextSlim
-        this.player.skin.modelType = this.slim ? 'slim' : 'default'
       }
-      const iu = Number(row.invUntil)
-      this.invUntil = Number.isFinite(iu) && iu > 0 ? iu : 0
+      if (row.at != null) {
+        const atN = Number(row.at)
+        if (Number.isFinite(atN) && atN > 0) {
+          this._fusPresenceTimeOff = (this._fusPresenceTimeOff || 0) * 0.9 + (atN - now) * 0.1
+        }
+      }
+      if (row.invUntil !== undefined && row.invUntil !== null) {
+        const iu = Number(row.invUntil)
+        let set = Number.isFinite(iu) && iu > 0 ? iu : 0
+        if (set > 0) {
+          const cap = now + FUS_SPAWN_INVULN_MS + 2000
+          if (set > cap) {
+            set = 0
+          }
+        }
+        this.invUntil = set
+      }
+      if (row.labyChEndAt != null) {
+        const ch = Number(row.labyChEndAt)
+        this.labyChEndAt = Number.isFinite(ch) && ch > 0 ? ch : 0
+      } else {
+        this.labyChEndAt = 0
+      }
+      if (row.labyChStartAt != null) {
+        const st = Number(row.labyChStartAt)
+        this.labyChStartAt = Number.isFinite(st) && st > 0 ? st : 0
+      } else {
+        this.labyChStartAt = 0
+      }
     }
 
     async loadSkin() {
+      const serial = ++this._fusLoadSkinSerial
       const url = this.skinUrl
-      if (!url) return
+      const applyDefaultIfCurrent = () => {
+        if (serial !== this._fusLoadSkinSerial) return
+        this.applySkin(fusRemoteDefaultSkinTexture(), false)
+      }
+      if (!url) {
+        applyDefaultIfCurrent()
+        return
+      }
       const cached = skinCache.get(url)
       if (cached) {
+        if (serial !== this._fusLoadSkinSerial) return
         this.applySkin(cached.texture, cached.slim)
         return
       }
       try {
         const img = await loadImage(url)
+        if (serial !== this._fusLoadSkinSerial) return
         const canvas = document.createElement('canvas')
         loadSkinToCanvas(canvas, img)
         const modelType = inferModelType(canvas)
@@ -323,18 +638,32 @@ export function installFusRemoteAvatars(mc, { worldId, uid, rtdb }) {
         texture.magFilter = THREE.NearestFilter
         texture.minFilter = THREE.NearestFilter
         texture.generateMipmaps = false
-        texture.colorSpace = THREE.SRGBColorSpace
+        texture.colorSpace = THREE.NoColorSpace
         texture.needsUpdate = true
         const entry = { texture, slim: modelType === 'slim' }
         skinCache.set(url, entry)
+        if (serial !== this._fusLoadSkinSerial) return
         this.applySkin(texture, entry.slim)
       } catch (e) {
         console.warn('[fusRemoteAvatars] skin load failed', url, e)
+        applyDefaultIfCurrent()
       }
     }
 
     applySkin(texture, slim) {
+      if (!texture) return
+      if (this.flashUntilMs) {
+        this.flashUntilMs = 0
+        this.clearFlash()
+      }
       this.player.skin.map = texture
+      const s = this.player.skin
+      for (const m of [s.layer1Material, s.layer1MaterialBiased, s.layer2Material, s.layer2MaterialBiased]) {
+        if (m) {
+          if (m.color) m.color.setRGB(1, 1, 1)
+          m.needsUpdate = true
+        }
+      }
       const explicit = this.slim
       this.player.skin.modelType = explicit || slim ? 'slim' : 'default'
     }
@@ -377,6 +706,17 @@ export function installFusRemoteAvatars(mc, { worldId, uid, rtdb }) {
           o.anim = b.anim
           return o
         }
+      }
+      if (renderTimeMs < buf[0].ts) {
+        const h = buf[0]
+        o.moving = h.anim === 'attack' ? false : h.anim === 'walk' || h.anim === 'run'
+        o.x = h.x
+        o.y = h.y
+        o.z = h.z
+        o.ry = h.ry
+        o.rp = h.rp
+        o.anim = h.anim
+        return o
       }
       /** Render time is past the newest sample — hold the tail and let interp catch up. */
       const tail = buf[buf.length - 1]
@@ -579,11 +919,17 @@ export function installFusRemoteAvatars(mc, { worldId, uid, rtdb }) {
       }
       this._tpHeldGroup = null
       if (this.heldId > 0) {
-        const cube = new THREE.Mesh(
-          new THREE.BoxGeometry(5, 5, 5),
-          new THREE.MeshBasicMaterial({ color: heldIdToColor(this.heldId) }),
-        )
-        this.heldRoot.add(cube)
+        const tex = mc.worldRenderer?.textureTerrain
+        const blockMesh = fusCreateRemoteHeldBlockMesh(this.heldId, tex)
+        if (blockMesh) {
+          this.heldRoot.add(blockMesh)
+        } else {
+          const cube = new THREE.Mesh(
+            new THREE.BoxGeometry(5, 5, 5),
+            new THREE.MeshBasicMaterial({ color: heldIdToColor(this.heldId) }),
+          )
+          this.heldRoot.add(cube)
+        }
       }
     }
 
@@ -592,7 +938,11 @@ export function installFusRemoteAvatars(mc, { worldId, uid, rtdb }) {
       while (this.heldRoot.children.length > 0) {
         const c = this.heldRoot.children[0]
         this.heldRoot.remove(c)
-        disposeFusFpToolSubtree(c)
+        if (c.userData?.fusRemoteHeldBlock) {
+          fusDisposeRemoteHeldBlockMesh(c)
+        } else {
+          disposeFusFpToolSubtree(c)
+        }
       }
     }
 
@@ -678,6 +1028,7 @@ export function installFusRemoteAvatars(mc, { worldId, uid, rtdb }) {
     }
 
     dispose() {
+      this._clearLabyTpVfx()
       scene.remove(this.root)
       this.clearHeld()
       this.nameMesh.material.dispose?.()
@@ -832,15 +1183,18 @@ export function installFusRemoteAvatars(mc, { worldId, uid, rtdb }) {
         }
       }
       if (!av.deathFired) {
-        if (av.invUntil > wall) {
-          av.player.visible = (Math.floor(wall / 150) & 1) === 0
+        const wallSync = wall + (av._fusPresenceTimeOff || 0)
+        if (av.invUntil > 0 && wallSync < av.invUntil) {
+          av.player.visible = (Math.floor(wallSync / 150) & 1) === 0
         } else {
+          if (av.invUntil > 0) av.invUntil = 0
           av.player.visible = true
         }
       }
       const nearAnim =
         pose && fusLabyIsWithinAnimProcessRangeXz(mc, pose.x, pose.z)
       av.animate(dt, pose)
+      av.updateLabyTpVfx(wall)
       if (nearAnim) {
         av.updateHeld()
         if (av._tpHeldGroup) {
@@ -927,25 +1281,43 @@ function convertSkinToBasic(skin) {
   const newL1 = new THREE.MeshBasicMaterial({
     map: oldL1.map || null,
     side: THREE.FrontSide,
+    transparent: false,
+    depthTest: true,
+    depthWrite: true,
+    toneMapped: false,
   })
   const newL1B = new THREE.MeshBasicMaterial({
     map: oldL1B.map || null,
     side: THREE.FrontSide,
+    transparent: false,
+    depthTest: true,
+    depthWrite: true,
+    toneMapped: false,
     polygonOffset: true,
     polygonOffsetFactor: 1,
     polygonOffsetUnits: 1,
   })
+  /**
+   * Outer "slim" layer: treat as **cutout** (not blended transparency) + depth write so
+   * terrain in the transparent pass does not draw over the avatar from behind.
+   */
   const newL2 = new THREE.MeshBasicMaterial({
     map: oldL2.map || null,
     side: THREE.DoubleSide,
-    transparent: true,
-    alphaTest: 1e-5,
+    transparent: false,
+    alphaTest: 0.12,
+    depthTest: true,
+    depthWrite: true,
+    toneMapped: false,
   })
   const newL2B = new THREE.MeshBasicMaterial({
     map: oldL2B.map || null,
     side: THREE.DoubleSide,
-    transparent: true,
-    alphaTest: 1e-5,
+    transparent: false,
+    alphaTest: 0.12,
+    depthTest: true,
+    depthWrite: true,
+    toneMapped: false,
     polygonOffset: true,
     polygonOffsetFactor: 1,
     polygonOffsetUnits: 1,

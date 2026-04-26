@@ -16,6 +16,7 @@ import BlockWorldShopThumb from '@/components/shop/BlockWorldShopThumb.vue'
 import MysteryBoxSprite from '@/components/shop/MysteryBoxSprite.vue'
 import MysteryBoxRevealModal from '@/components/shop/MysteryBoxRevealModal.vue'
 import { ShoppingBag, Sparkles, Palette, ChefHat, Home, Package, CheckCircle2, Clock, Medal, PawPrint, Gift } from 'lucide-vue-next'
+import { mergeItemMetaById } from '@/lib/fusShopItemMetaMerge.js'
 
 const shop      = useShopStore()
 const auth      = useAuthStore()
@@ -148,11 +149,7 @@ async function buyItem() {
  *   3. {@link MysteryBoxRevealModal} animates and finally commits.
  */
 function resolveItemMeta(id) {
-  const fromShop = shop.items.find((i) => i.id === id)
-  if (fromShop) return fromShop
-  const fromAll = userStore.items?.find((i) => i.id === id)
-  if (fromAll) return fromAll
-  return { id, name: id }
+  return mergeItemMetaById(shop.items, userStore.items, id)
 }
 
 async function openMysteryBoxAction() {

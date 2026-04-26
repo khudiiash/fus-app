@@ -229,7 +229,9 @@ export default class ModelRenderer {
                 polygon.render(tessellator);
             }
         }
-        tessellator.draw(this.bone);
+        /** Opaque pass so body parts depth-test against solid terrain; default tessellator mat is
+         *  `transparent: true` and painter-sorted with world geometry (faces drew through the player). */
+        tessellator.draw(this.bone, "solid");
 
         // Draw children
         for (let i = 0; i < this.children.length; i++) {

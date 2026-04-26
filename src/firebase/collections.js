@@ -12,6 +12,8 @@ import {
   rollMysteryBox,
   canGrantShopItemFromBox,
 } from '@/lib/mysteryBoxRng'
+import { parseBlockWorldItem } from '@/lib/blockWorldShopVisuals'
+import { FUS_CATALOG_TO_ENGINE_BLOCK_ID } from '@/lib/fusTerrainBlockIds'
 
 // ─── Collection refs ──────────────────────────────────────────────────────────
 export const usersCol    = () => collection(db, 'users')
@@ -825,11 +827,14 @@ export async function awardCoins({ fromUid, toUid, amount, note = '', subjectNam
 }
 
 /**
- * Grant coins + XP to a student from in-app world mechanics (e.g. block-world mob coin pickups).
+ * Grant coins + XP to a student from in-app world mechanics (e.g. block-world mob coin pickups,
+ * PvP/PK world-drop pickups). Capped so one pickup cannot move absurd balances.
  * No teacher budget; logs one journal entry like a self-award.
  */
+export const FUS_GAME_COIN_PICKUP_MAX = 1_000_000
+
 export async function grantStudentCoinsFromGame(uid, amount, note = 'Блок-світ') {
-  const amt = Math.max(0, Math.min(5000, Math.round(Number(amount) || 0)))
+  const amt = Math.max(0, Math.min(FUS_GAME_COIN_PICKUP_MAX, Math.round(Number(amount) || 0)))
   if (amt === 0 || !uid) return
   await runTransaction(db, async (tx) => {
     const uRef = doc(db, 'users', uid)
@@ -996,6 +1001,41 @@ export async function grantLabyMobKillPayout(
 /**
  * Grant one shop row by {@code bwSeedKey} (block_world items). No-op if unknown.
  */
+/**
+ * Resolve a shop `items` row by {@code bwSeedKey} so world drops can render block/tool meshes
+ * without embedding full metadata in RTDB.
+ *
+ * @param {string} bwSeedKey
+ * @returns {Promise<{ subtype: 'tool' | 'block' | 'item', blockId?: number, toolMeshName?: string } | null>}
+ */
+export async function resolveBwSeedKeyWorldDropVisual(bwSeedKey) {
+  const key = String(bwSeedKey || '').trim()
+  if (!key) return null
+  try {
+    const q = query(itemsCol(), where('bwSeedKey', '==', key), limit(1))
+    const snaps = await getDocs(q)
+    if (snaps.empty) return null
+    const data = snaps.docs[0].data()
+    if (data.active === false) return null
+    const bw = parseBlockWorldItem(data)
+    if (bw?.kind === 'tool') {
+      const mesh = typeof bw.toolMeshName === 'string' && bw.toolMeshName ? bw.toolMeshName : 'Iron_Pickaxe'
+      return { subtype: 'tool', toolMeshName: mesh }
+    }
+    if (bw?.kind === 'block') {
+      const cat = bw.blockType | 0
+      const eng =
+        cat >= 0 && cat < FUS_CATALOG_TO_ENGINE_BLOCK_ID.length ? FUS_CATALOG_TO_ENGINE_BLOCK_ID[cat] : NaN
+      if (Number.isFinite(eng) && eng > 0) {
+        return { subtype: 'block', blockId: eng }
+      }
+    }
+    return { subtype: 'item' }
+  } catch {
+    return null
+  }
+}
+
 export async function grantShopItemByBwSeedKey(uid, bwSeedKey) {
   const key = String(bwSeedKey || '').trim()
   if (!uid || !key) return false
@@ -1058,34 +1098,68 @@ export async function grantShopSkinBySkinId(uid, skinId) {
 }
 
 /**
- * PvP-loss: atomically debit 1 coin from the user's profile. Returns `{ debited: 1 }` on
- * success, `{ debited: 0 }` if the user had no coins (user spec: "If no coin on the
- * loser, no one gets anything"). Caller only spawns a physical coin drop when
- * `debited > 0`.
+ * PvP-loss (purple PvP death): debits a **small fixed** coin count from the loser (capped
+ * by balance). Winner XP/coin abuse is avoided — no percentage of wallet.
  *
- * @param {string} uid
- * @returns {Promise<{ debited: 0 | 1 }>}
+ * Winner payout size (same number debited from loser, spawned for winner):
+ *   • Winner level **above** loser → **1** coin
+ *   • Same level → **2** or **3** coins (random)
+ *   • Winner level **below** loser (upset) → **5** coins
+ *
+ * @param {string} uid Loser's Firestore uid
+ * @param {{ winnerUid?: string }} [opts] Killer's uid for level comparison
+ * @returns {Promise<{ debited: number }>}
  */
-export async function debitPvpCoinFromUser(uid) {
+export async function debitPvpCoinFromUser(uid, opts = {}) {
   if (!uid) return { debited: 0 }
+  const winnerUid = typeof opts.winnerUid === 'string' ? opts.winnerUid.trim() : ''
+  const loserRef = doc(db, 'users', uid)
+  const loserSnap = await getDoc(loserRef)
+  if (!loserSnap.exists()) return { debited: 0 }
+  const loserData = loserSnap.data()
+  const coins0 = Math.max(0, Math.floor(Number(loserData.coins) || 0))
+  if (coins0 < 1) return { debited: 0 }
+  const L = Math.max(0, Math.floor(Number(loserData.level) || 0))
+
+  let takeTarget = 2
+  if (winnerUid && winnerUid !== uid) {
+    const winnerSnap = await getDoc(doc(db, 'users', winnerUid))
+    if (winnerSnap.exists()) {
+      const W = Math.max(0, Math.floor(Number(winnerSnap.data().level) || 0))
+      if (W > L) {
+        takeTarget = 1
+      } else if (W === L) {
+        takeTarget = 2 + Math.floor(Math.random() * 2)
+      } else {
+        takeTarget = 5
+      }
+    } else {
+      takeTarget = 2 + Math.floor(Math.random() * 2)
+    }
+  } else {
+    takeTarget = 2 + Math.floor(Math.random() * 2)
+  }
+  takeTarget = Math.min(5, Math.max(1, takeTarget))
+  takeTarget = Math.min(takeTarget, coins0)
+
   let debited = 0
   await runTransaction(db, async (tx) => {
     const uRef = doc(db, 'users', uid)
     const snap = await tx.get(uRef)
     if (!snap.exists()) return
-    const u = snap.data()
-    const coins = Number(u.coins) || 0
+    const coins = Math.max(0, Math.floor(Number(snap.data().coins) || 0))
     if (coins < 1) return
-    debited = 1
-    tx.update(uRef, { coins: coins - 1 })
+    const take = Math.min(coins, takeTarget)
+    debited = take
+    tx.update(uRef, { coins: coins - take })
   })
   if (debited > 0) {
     await logTransaction({
       type: 'award',
       fromUid: uid,
       toUid: uid,
-      amount: -1,
-      note: 'PvP — програш (−1 монета)',
+      amount: -debited,
+      note: `PvP — програш (−${debited} монет)`,
     }).catch(() => {})
   }
   return { debited }
@@ -1095,21 +1169,12 @@ export async function debitPvpCoinFromUser(uid) {
  * PK-death: debit coins + random items from the fallen PK's profile. Returns the
  * metadata the world-drops installer needs to spawn one physical drop per loot unit.
  *
- * User spec (2026-04, tightened):
- *   • Karma 1: **1–3** coins (plus 0–1 common item only, see below).
- *   • Karma 2: **2–5** coins; higher karma → wider range and higher caps, up to **50** coins
- *     at the top end (victim’s balance still caps what actually drops).
- *   • "All must drop around the killed PK physically" (world drops, caller side).
- *
- * Implementation notes (coins):
- *   • k=1: uniform 1..3. k≥2: `lo` grows from 2@k=2 to ~26@k=50, `hi` from 5@k=2 to 50@k=50
- *     (integers, inclusive random).
- *   • Item count = random int in `[k-1, k]` (clamped to what's in inventory). So karma 1
- *     drops 0–1 item, karma 2 drops 1–2, …
- *   • Rarity gate: karma 1 only drops `rarity === 'common'` items; karma ≥ 2 unlocks
- *     any non-mystery-box rarity. This matches the "common / rare" tiering in the spec.
- *   • Mystery boxes and non-existent item docs are skipped — they would break the
- *     physical drop (no stable bwSeedKey / skinId for the grant side to consume).
+ * Coin loss (red PK):
+ *   • Random integer **1 … min(50, k)** coins (k = karma clamped 1..50); higher karma raises
+ *     the ceiling. Capped by the victim's balance (never more than they have).
+ * Item drops (unchanged):
+ *   • Item count = random int in `[k-1, k]` (clamped to inventory). Karma 1: common only;
+ *     karma ≥2: any non-mystery rarity.
  *
  * Debits happen in a single Firestore transaction so a PK that dies with exactly N
  * coins and M items never over-drops (e.g. reading inventory, then racing the shop).
@@ -1120,17 +1185,6 @@ export async function debitPvpCoinFromUser(uid) {
  */
 export async function debitPkLootFromUser(uid, { karma }) {
   const k = Math.max(1, Math.min(50, Math.floor(Number(karma) || 1)))
-  /** PK coin drop count — *before* capping to `coinsHave` in the transaction. */
-  const coinTarget =
-    k === 1
-      ? 1 + Math.floor(Math.random() * 3)
-      : (() => {
-          const lo = 2 + Math.floor(((k - 2) * 24) / 48)
-          const hi = Math.min(50, 5 + Math.floor(((k - 2) * 45) / 48))
-          const a = Math.min(lo, hi)
-          const b = Math.max(lo, hi)
-          return a + Math.floor(Math.random() * (b - a + 1))
-        })()
   const itemMin = Math.max(0, k - 1)
   const itemMax = k
   const itemTarget = Math.floor(Math.random() * (itemMax - itemMin + 1)) + itemMin
@@ -1138,7 +1192,11 @@ export async function debitPkLootFromUser(uid, { karma }) {
   const uSnap = await getDoc(doc(db, 'users', uid))
   if (!uSnap.exists()) return { coinsDropped: 0, items: [] }
   const u0 = uSnap.data()
-  const coinsHave = Number(u0.coins) || 0
+  const coinsHave = Math.max(0, Math.floor(Number(u0.coins) || 0))
+  /** At least 1 coin; upper bound grows with karma, max 50. */
+  const kCap = Math.min(50, Math.max(1, k))
+  let coinTarget = 1 + Math.floor(Math.random() * kCap)
+  coinTarget = Math.min(coinTarget, coinsHave)
   const inv0 = Array.isArray(u0.inventory) ? u0.inventory : []
 
   /** Limit fan-out — 50 reads is already generous for a single drop event. An inventory
@@ -1167,6 +1225,7 @@ export async function debitPkLootFromUser(uid, { karma }) {
   const picked = eligible.slice(0, itemTarget)
 
   const coinsToDrop = Math.min(coinsHave, coinTarget)
+  let actualCoinsDropped = 0
 
   /** Single atomic debit so a PK that dies at exactly N coins never drops N+1. */
   await runTransaction(db, async (tx) => {
@@ -1176,36 +1235,54 @@ export async function debitPkLootFromUser(uid, { karma }) {
     const user = snap.data()
     let newInv = Array.isArray(user.inventory) ? [...user.inventory] : []
     let newCounts = { ...(user.inventoryCounts || {}) }
+    /** @type {string[]} */
+    const removedItemIds = []
     for (const { itemId } of picked) {
       const r = consumeOneFromInventory(newInv, newCounts, itemId)
       if (!r) continue
+      removedItemIds.push(itemId)
       newInv = r.inventory
       newCounts = r.inventoryCounts
     }
-    const coinsNow = Number(user.coins) || 0
+    const itemMeta = {}
+    for (const id of removedItemIds) {
+      const ent = picked.find((p) => p.itemId === id)
+      if (ent) itemMeta[id] = ent.data
+    }
+    const avatarNext = avatarAfterLosingTradedItems(user.avatar || {}, removedItemIds, itemMeta)
+    const coinsNow = Math.max(0, Math.floor(Number(user.coins) || 0))
     const actualCoinDebit = Math.min(coinsNow, coinsToDrop)
-    tx.update(uRef, {
+    actualCoinsDropped = actualCoinDebit
+    const patch = {
       coins: coinsNow - actualCoinDebit,
       inventory: newInv,
       inventoryCounts: newCounts,
-    })
+    }
+    if (!avatarEquipVisualEquals(user.avatar || {}, avatarNext)) {
+      patch.avatar = avatarNext
+    }
+    tx.update(uRef, patch)
   })
 
   const items = picked.map(({ itemId, data }) => {
     const cat = data.category || 'item'
-    /** Map to visual subtype used by `fusWorldDropsInstall`. We only ship `skin` and a
-     *  generic `item` cube today — future tool/block/accessory subtypes will wire up
-     *  dedicated colour palettes automatically. */
-    const subtype =
+    const bwParsed = parseBlockWorldItem(data)
+    /** Visual subtype for world drops / grant. `block_world` rows need {@link parseBlockWorldItem}. */
+    let subtype =
       cat === 'skin'
         ? 'skin'
         : cat === 'tool'
           ? 'tool'
-          : cat === 'block' || cat === 'blockWorld' || cat === 'block_world'
-            ? 'block'
-            : cat === 'accessory' || cat === 'cosmetic'
-              ? 'accessory'
-              : 'item'
+          : cat === 'accessory' || cat === 'cosmetic'
+            ? 'accessory'
+            : 'item'
+    if (bwParsed?.kind === 'tool') {
+      subtype = 'tool'
+    } else if (bwParsed?.kind === 'block') {
+      subtype = 'block'
+    } else if (cat === 'block' || cat === 'blockWorld' || cat === 'block_world') {
+      subtype = 'block'
+    }
     /** Payload that `__FUS_GRANT_LOOT__` consumes on pickup. We prefer `skinId` when it's
      *  a skin (so the grant helper wires it into the avatar), fall back to `bwSeedKey`
      *  for everything else. */
@@ -1221,7 +1298,17 @@ export async function debitPkLootFromUser(uid, { karma }) {
       )
       if (Number.isFinite(bid) && bid > 0) {
         payload.blockId = Math.floor(bid)
+      } else if (bwParsed?.kind === 'block') {
+        const c0 = bwParsed.blockType | 0
+        const eng =
+          c0 >= 0 && c0 < FUS_CATALOG_TO_ENGINE_BLOCK_ID.length ? FUS_CATALOG_TO_ENGINE_BLOCK_ID[c0] : NaN
+        if (Number.isFinite(eng) && eng > 0) {
+          payload.blockId = eng
+        }
       }
+    }
+    if (subtype === 'tool' && bwParsed?.kind === 'tool' && typeof bwParsed.toolMeshName === 'string' && bwParsed.toolMeshName) {
+      payload.toolMeshName = bwParsed.toolMeshName
     }
     return {
       subtype,
@@ -1231,18 +1318,18 @@ export async function debitPkLootFromUser(uid, { karma }) {
     }
   })
 
-  if (coinsToDrop > 0 || items.length > 0) {
+  if (actualCoinsDropped > 0 || items.length > 0) {
     await logTransaction({
       type: 'award',
       fromUid: uid,
       toUid: uid,
-      amount: -coinsToDrop,
+      amount: -actualCoinsDropped,
       itemIds: items.map((i) => i.itemId),
-      note: `PK-смерть: карма ${k}, монети −${coinsToDrop}, предмети −${items.length}`,
+      note: `PK-смерть: карма ${k}, монети −${actualCoinsDropped}, предмети −${items.length}`,
     }).catch(() => {})
   }
 
-  return { coinsDropped: coinsToDrop, items }
+  return { coinsDropped: actualCoinsDropped, items }
 }
 
 /**
@@ -1747,8 +1834,8 @@ export async function fineStudent({ fromUid, toUid, amount, reason = '' }) {
   return { deducted: fineDeduction }
 }
 
-/** Unequip room/pet/accessory/skin that are no longer owned after a trade. */
-function avatarAfterLosingTradedItems(avatar, lostItemIds, itemMeta) {
+/** Unequip room/pet/accessory/skin that are no longer owned (trade, PK loot, etc.). */
+export function avatarAfterLosingTradedItems(avatar, lostItemIds, itemMeta) {
   const next = { ...(avatar || {}) }
   const lost = new Set(lostItemIds || [])
 
@@ -1764,6 +1851,9 @@ function avatarAfterLosingTradedItems(avatar, lostItemIds, itemMeta) {
       (next.skinUrl && item.skinUrl && next.skinUrl === item.skinUrl)
       || (!(next.skinUrl || item.skinUrl)
         && (next.skinId || 'default') === (item.skinId || 'default'))
+      || (typeof item.skinId === 'string'
+        && item.skinId.length > 0
+        && (next.skinId || 'default') === item.skinId)
     if (skinMatch) {
       next.skinId = 'default'
       next.skinUrl = null
@@ -1773,7 +1863,7 @@ function avatarAfterLosingTradedItems(avatar, lostItemIds, itemMeta) {
   return next
 }
 
-function avatarEquipVisualEquals(a, b) {
+export function avatarEquipVisualEquals(a, b) {
   a = a || {}
   b = b || {}
   return (

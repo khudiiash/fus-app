@@ -3,12 +3,27 @@ import * as THREE from "../../../../../../libraries/three.module.js";
 export default class Tessellator {
 
     constructor() {
-        this.material = new THREE.MeshBasicMaterial({
+        /**
+         * Two materials: solid chunk faces must use `transparent: false` so the renderer
+         * puts them in the **opaque** pass, writes depth, and does not painter-sort them with
+         * players. A single `transparent: true` material (classic fork) made whole sections
+         * sort as one transparent object — blocks drew through entities when the camera moved.
+         */
+        this.materialSolid = new THREE.MeshBasicMaterial({
+            side: THREE.FrontSide,
+            transparent: false,
+            depthTest: true,
+            depthWrite: true,
+            vertexColors: true,
+        });
+        this.materialTrans = new THREE.MeshBasicMaterial({
             side: THREE.FrontSide,
             transparent: true,
             depthTest: true,
-            vertexColors: true
+            depthWrite: false,
+            vertexColors: true,
         });
+        this.material = this.materialTrans;
 
         this.red = 0;
         this.green = 0;
@@ -17,6 +32,8 @@ export default class Tessellator {
     }
 
     bindTexture(texture) {
+        this.materialSolid.map = texture;
+        this.materialTrans.map = texture;
         this.material.map = texture;
     }
 
@@ -82,7 +99,8 @@ export default class Tessellator {
 
     /**
      * @param {THREE.Object3D} group
-     * @param {string} [chunkPass] When {@code 'solid'} / {@code 'trans'} (FUS column merge), stored on the mesh.
+     * @param {string} [chunkPass] {@code 'solid'} — opaque / depth-write; {@code 'trans'} —
+     *  translucent; omit — use translucent (sky, models, first-person item meshes).
      */
     draw(group, chunkPass) {
         const verticesPerFace = 4;
@@ -117,7 +135,8 @@ export default class Tessellator {
             geometry.setIndex(new THREE.BufferAttribute(index, 1));
         }
 
-        let mesh = new THREE.Mesh(geometry, this.material);
+        const mat = chunkPass === "solid" ? this.materialSolid : this.materialTrans;
+        let mesh = new THREE.Mesh(geometry, mat);
         if (chunkPass === "solid" || chunkPass === "trans") {
             mesh.userData.fusChunkPass = chunkPass;
         }
