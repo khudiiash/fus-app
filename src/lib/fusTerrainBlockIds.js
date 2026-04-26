@@ -22,6 +22,7 @@ export const FUS_CATALOG_TO_ENGINE_BLOCK_ID = [
   7, // 11 — unused in seeds; bedrock fallback
   9, // 12 water
   21, // 13 indestructible obsidian (shop — engine id 21, see {@link BlockRegistry#INDESTRUCTIBLE_OBSIDIAN})
+  50, // 14 torch (BlockRegistry.TORCH; default Laby hotbar slot 8)
 ]
 
 /**
@@ -84,6 +85,7 @@ export const ENGINE_BLOCK_ID_TO_BW_SEED_KEY = Object.freeze({
   18: 'fus_bw_block_leaf',
   20: 'fus_bw_block_glass',
   21: 'fus_bw_block_indestructible',
+  50: 'fus_laby_block_torch',
 })
 
 /**

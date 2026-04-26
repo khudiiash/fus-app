@@ -243,6 +243,9 @@ export function installFusWorldDrops(mc, { worldId, uid, rtdb }) {
 
   /**
    * Scale/orient a cloned tools.glb subtree for a ground drop (~½ block footprint).
+   * Models are authored lying on the XZ “floor” in Blender; {@link spinGroup} only spins
+   * on world Y, so we wrap in {@code stand} with +90° on X so the tool stands upright and
+   * the idle rotation reads as a natural tumble.
    * @param {THREE.Object3D} toolRoot
    */
   const fitToolMeshForWorldDrop = (toolRoot) => {
@@ -257,9 +260,12 @@ export function installFusWorldDrops(mc, { worldId, uid, rtdb }) {
     const cx = (b.min.x + b.max.x) / 2
     const cz = (b.min.z + b.max.z) / 2
     toolRoot.position.set(-cx, -b.min.y, -cz)
+    const stand = new THREE.Group()
+    stand.rotation.x = Math.PI / 2
+    stand.add(toolRoot)
     const g = new THREE.Group()
     g.userData.fusWorldDropTool = true
-    g.add(toolRoot)
+    g.add(stand)
     return g
   }
 

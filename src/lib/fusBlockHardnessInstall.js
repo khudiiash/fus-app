@@ -468,7 +468,13 @@ export function installFusBlockHardness(mc) {
       }
     }
     const bf = blockFamily(typeId)
-    const swingBump = bf === 'dirt' || bf === 'leave' ? 0.22 : 0.12
+    const torchId = BlockRegistry.TORCH.getId()
+    const swingBump =
+      typeId === torchId
+        ? 1
+        : bf === 'dirt' || bf === 'leave'
+          ? 0.22
+          : 0.12
     cur.progress = Math.min(1, cur.progress + swingBump)
     syncBreakOverlay(hit.x, hit.y, hit.z, cur.progress, typeId)
     /** Taps and short clicks never keep `wantBreak` true long enough for the RAF path to
@@ -597,8 +603,13 @@ export function installFusBlockHardness(mc) {
      *  and ores keep a higher floor so tap-spam cannot trivialize hard blocks. */
     const rawEff = baseSeconds / Math.max(0.05, mult)
     const bf = blockFamily(typeId)
-    const effSeconds =
-      bf === 'dirt' || bf === 'leave' ? Math.max(0.08, rawEff) : Math.max(0.15, rawEff)
+    const torchId = BlockRegistry.TORCH.getId()
+    const isTorch = typeId === torchId
+    const effSeconds = isTorch
+      ? 0.001
+      : bf === 'dirt' || bf === 'leave'
+        ? Math.max(0.08, rawEff)
+        : Math.max(0.15, rawEff)
     cur.progress = Math.min(1, cur.progress + dt / effSeconds)
 
     /** Crack overlay: procedural strip (or atlas if {@code mc.fusUseAtlasDestroyOverlay}). */
@@ -772,7 +783,7 @@ const BLOCK_BASE_BREAK_SECONDS = {
   17: 1.8, // LOG
   18: 0.25, // LEAVE
   20: 0.4, // GLASS
-  50: 0.1, // TORCH
+  50: 0.0, // TORCH — one swing / one held frame; see {@link #bumpProgressOnSwing} + `frame` torch branch
   51: 2.8, // GOLD_ORE
 }
 const DEFAULT_BREAK_SECONDS = 1.4
@@ -813,6 +824,8 @@ function blockFamily(typeId) {
       return 'leave'
     case 20:
       return 'glass'
+    case 50: // torch — not “stone” for break-speed math; one-hit handled in click / frame
+      return 'torch'
     default:
       return 'stone'
   }

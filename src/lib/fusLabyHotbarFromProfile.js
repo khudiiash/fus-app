@@ -9,6 +9,20 @@ import { FUS_CATALOG_TO_ENGINE_BLOCK_ID } from '@/lib/fusTerrainBlockIds'
  * @typedef {{ kind: 'tool', toolMeshName: string, itemId?: string } | { kind: 'block', catalogType: number, itemId?: string }} FusHotbarSlotMeta
  */
 
+/** Engine id for {@code BlockRegistry.TORCH}; always Laby hotbar slot 8. */
+export const FUS_LABY_HOTBAR_TORCH_ENGINE_ID = 50
+/** {@link FUS_CATALOG_TO_ENGINE_BLOCK_ID} index for the default torch slot. */
+export const FUS_LABY_HOTBAR_TORCH_CATALOG = 14
+
+/**
+ * @param {number[]} engineSlots
+ * @param {(FusHotbarSlotMeta | null)[]} slotMeta
+ */
+export function applyLabyDefaultTorchSlot(engineSlots, slotMeta) {
+  engineSlots[8] = FUS_LABY_HOTBAR_TORCH_ENGINE_ID
+  slotMeta[8] = { kind: 'block', catalogType: FUS_LABY_HOTBAR_TORCH_CATALOG, itemId: undefined }
+}
+
 /**
  * @param {Record<string, unknown> | null | undefined} profile Auth user doc (inventory, inventoryCounts)
  * @param {unknown[]} shopItems From userStore.items
@@ -39,8 +53,9 @@ export function buildFusLabyHotbarFromProfile(profile, shopItems) {
     slotMeta.push(null)
   }
 
-  // Slot 0 stays empty (fist). Fill slots 1–8 from owned items (max eight).
-  const maxFill = Math.min(8, rows.length)
+  // Slot 0 stays empty (fist). Fill slots 1–7 from owned items; slot 8 is always the torch
+  // (original Laby). At most seven shop cells so the last slot stays free for it.
+  const maxFill = Math.min(7, rows.length)
   for (let i = 0; i < maxFill; i++) {
     const slotIndex = i + 1
     const { it, bw } = rows[i]
@@ -68,6 +83,8 @@ export function buildFusLabyHotbarFromProfile(profile, shopItems) {
       }
     }
   }
+
+  applyLabyDefaultTorchSlot(engineSlots, slotMeta)
 
   return { engineSlots, slotMeta }
 }

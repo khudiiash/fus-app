@@ -4,7 +4,7 @@
  */
 import { parseBlockWorldItem } from '@/lib/blockWorldShopVisuals'
 import { FUS_CATALOG_TO_ENGINE_BLOCK_ID } from '@/lib/fusTerrainBlockIds'
-import { buildFusLabyHotbarFromProfile } from '@/lib/fusLabyHotbarFromProfile'
+import { applyLabyDefaultTorchSlot, buildFusLabyHotbarFromProfile } from '@/lib/fusLabyHotbarFromProfile'
 
 /** @typedef {{ kind: 'tool', toolMeshName: string, itemId?: string } | { kind: 'block', catalogType: number } | null} FusHotbarSlotMeta */
 
@@ -115,6 +115,8 @@ export function buildEngineHotbarFromSavedSlots(slotItemIds, profile, shopItems)
       }
     }
   }
+
+  applyLabyDefaultTorchSlot(engineSlots, slotMeta)
 
   return { engineSlots, slotMeta }
 }

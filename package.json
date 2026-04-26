@@ -21,6 +21,10 @@
     "reverse:mob-coins:dry": "node scripts/reverse-block-world-mob-coins.mjs --dry-run",
     "laby:reset-world": "node scripts/reset-laby-shared-world.mjs",
     "laby:reset-world:dry": "node scripts/reset-laby-shared-world.mjs --dry-run",
+    "laby:clear-loot": "node scripts/clear-world-loot.mjs",
+    "laby:clear-loot:dry": "node scripts/clear-world-loot.mjs --dry-run",
+    "laby:clear-terrain": "node scripts/clear-world-terrain-custom-blocks.mjs",
+    "laby:clear-terrain:dry": "node scripts/clear-world-terrain-custom-blocks.mjs --dry-run",
     "shop:update-subject-badges": "node scripts/update-subject-badges.mjs",
     "shop:update-subject-badges:dry": "node scripts/update-subject-badges.mjs --dry-run"
   },

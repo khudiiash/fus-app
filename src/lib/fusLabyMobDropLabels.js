@@ -19,6 +19,8 @@ const LABEL_UK = Object.freeze({
   fus_bw_tool_Iron_Pickaxe: 'Залізне кайло',
   fus_bw_tool_Wooden_Sword: 'Дерев’яний меч',
   fus_bw_tool_Stone_Sword: 'Кам’яний меч',
+  /** Default Laby hotbar slot 8 (not a shop row). */
+  fus_laby_block_torch: 'Факел',
 })
 
 /**

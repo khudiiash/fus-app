@@ -80,11 +80,11 @@ export default class WorldGenerator extends Generator {
             treeGenerator.generateAtBlock(totalX, totalY, totalZ);
         }
 
-        // Scatter a few gold-ore cells inside existing stone, biased toward air-adjacent
-        // (cave walls / overhangs) so mining feels like prospecting, not random surface noise.
+        // Scatter gold ore inside stone: prefer air-adjacent cells (cave walls), plus a few
+        // rarer replacements deep in solid stone so prospecting near stone massifs pays off.
         let stone = BlockRegistry.STONE.getId();
         let gold = BlockRegistry.GOLD_ORE.getId();
-        for (let t = 0; t < 10; t++) {
+        for (let t = 0; t < 52; t++) {
             let tx = absoluteX + this.random.nextInt(16);
             let tz = absoluteY + this.random.nextInt(16);
             for (let y = 8; y < 100; y++) {
@@ -98,10 +98,11 @@ export default class WorldGenerator extends Generator {
                     this.world.getBlockAt(tx, y - 1, tz) === 0 ||
                     this.world.getBlockAt(tx, y, tz + 1) === 0 ||
                     this.world.getBlockAt(tx, y, tz - 1) === 0;
-                if (!airN) {
-                    continue;
-                }
-                if (this.random.nextFloat() < 0.18) {
+                if (airN) {
+                    if (this.random.nextFloat() < 0.42) {
+                        this.world.setBlockAt(tx, y, tz, gold);
+                    }
+                } else if (this.random.nextFloat() < 0.12) {
                     this.world.setBlockAt(tx, y, tz, gold);
                 }
                 break;

@@ -206,19 +206,38 @@ export default class ChunkSection {
     }
 
     getTotalLightAt(x, y, z) {
-        let index = y << 8 | z << 4 | x;
-        let skyLight = (index in this.skyLight ? this.skyLight[index] : (this.empty ? 15 : 14)) - this.world.skylightSubtracted;
+        const index = y << 8 | z << 4 | x;
+        const sub = this.world.skylightSubtracted | 0;
+        /**
+         * Missing sky: empty section = open air. Non-empty without a key: legacy fill **14** (many
+         * column paths never write a key for every subcell); **0** made the whole overworld read as
+         * pitch dark. After `skylightSubtracted` (e.g. 15 at night) we **clamp** so
+         * {@link BlockRenderer} never sees a negative “level” (which broke torch/night visuals).
+         */
+        const rawSky = index in this.skyLight
+            ? this.skyLight[index]
+            : (this.empty ? 15 : 14);
+        let skyLight = rawSky - sub;
+        if (skyLight < 0) skyLight = 0;
+        if (skyLight > 15) skyLight = 15;
         let blockLight = index in this.blockLight ? this.blockLight[index] : 0;
+        if (blockLight < 0) blockLight = 0;
+        if (blockLight > 15) blockLight = 15;
         if (blockLight > skyLight) {
             skyLight = blockLight;
         }
+        if (skyLight < 0) return 0;
+        if (skyLight > 15) return 15;
         return skyLight;
     }
 
     getLightAt(sourceType, x, y, z) {
         let index = y << 8 | z << 4 | x;
         if (sourceType === EnumSkyBlock.SKY) {
-            return index in this.skyLight ? this.skyLight[index] : (this.empty ? 15 : 14);
+            if (index in this.skyLight) {
+                return this.skyLight[index];
+            }
+            return this.empty ? 15 : 14;
         }
         if (sourceType === EnumSkyBlock.BLOCK) {
             return index in this.blockLight ? this.blockLight[index] : 0;

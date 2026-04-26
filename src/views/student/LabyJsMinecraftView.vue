@@ -262,11 +262,42 @@ function closeLabyHtmlSettings() {
   labyHtmlSettingsOpen.value = false
   if (mc?.settings) {
     try {
+      /** Sliders may not have fired `change` yet — sync latest UI values before save. */
+      mc.settings.fov = labySetFov.value
+      mc.settings.viewDistance = labySetViewDistance.value
       mc.settings.save()
     } catch {
       /* ignore */
     }
   }
+  const w = mc?.window
+  if (w) {
+    /**
+     * After HTML settings, the browser may still be in a pointer-lock retry cooldown, or
+     * `mouseInsideWindow` may be false until the user moves (game won’t re-request lock).
+     * Unblock the next canvas click and finish any {@code REQUEST_EXIT} → {@code EXITTED} transition.
+     */
+    if (typeof w._fusPlRetryNotBefore === 'number') {
+      w._fusPlRetryNotBefore = 0
+    }
+    w.mouseInsideWindow = true
+    if (w.focusState === FocusStateType.REQUEST_EXIT) {
+      try {
+        w.updateFocusState(FocusStateType.EXITTED)
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+  void nextTick(() => {
+    if (w && typeof w.requestCursorUpdate === 'function') {
+      try {
+        w.requestCursorUpdate()
+      } catch {
+        /* ignore */
+      }
+    }
+  })
 }
 
 /** Pointer-lock captures the mouse on desktop, so HTML buttons in the shell (place-flag,
@@ -296,6 +327,30 @@ function releaseDesktopPointerLock(mc) {
   }
 }
 
+/** Wait until the browser has released pointer lock (needed before showing HTML range sliders on PC). */
+function waitForPointerLockRelease() {
+  if (typeof document === 'undefined') return Promise.resolve()
+  if (!document.pointerLockElement) return Promise.resolve()
+  return new Promise((resolve) => {
+    const maxMs = 800
+    function cleanup() {
+      clearTimeout(tid)
+      document.removeEventListener('pointerlockchange', onPlc)
+    }
+    function onPlc() {
+      if (!document.pointerLockElement) {
+        cleanup()
+        resolve()
+      }
+    }
+    const tid = window.setTimeout(() => {
+      cleanup()
+      resolve()
+    }, maxMs)
+    document.addEventListener('pointerlockchange', onPlc)
+  })
+}
+
 /** Toggles the Vue block-world inventory; assigned to `window.__FUS_LABY_TOGGLE_INVENTORY__` so
  *  `Minecraft.onKeyPressed` (default KeyE) opens the same UI instead of the canvas
  *  `GuiContainerCreative` (which bypassed modal layout/CSS). */
@@ -306,15 +361,12 @@ function toggleLabyBlockInventory() {
 }
 
 /**
- * Desktop (pointer lock): F — прапор, E/I/0 — інвентар (у грі E за замовчуванням
- *  відкриває Vue-модалку, не канвасний креатив), R — телепорт до прапора,
- *  Esc / K — меню налаштувань (кнопка «⚙» схована на ПК, щоб не клацати в обхід
- *  pointer lock; Esc і так виходить із захоплення курсора). (T залишено під чат; Space/Enter — респавн.)
+ * Desktop: **K** відкриває HTML-налаштування (після зняття pointer lock). **Esc** тільки знімає
+ * захоплення курсора / закриває оверлеї, без відкриття меню (раніше Esc+другий клік плодив баги).
+ * (F прапор, R телепорт, I/0 інвентар, T чат, Space/Enter респавн.)
  */
 function onLabyInventoryKeydown(e) {
   if (e.repeat) return
-  const el = /** @type {HTMLElement | null} */ (e.target)
-  if (el?.closest?.('input, textarea, select, [contenteditable="true"]')) return
   const mc = gameMc.value
   if (!labyPlayStarted.value) {
     e.preventDefault()
@@ -324,10 +376,12 @@ function onLabyInventoryKeydown(e) {
     }
     return
   }
+
+  /** Close overlays on Esc first (incl. when focus is inside a range / checkbox in those modals). */
   if (e.code === 'Escape') {
     if (showHotbarInventory.value) {
       e.preventDefault()
-      e.stopPropagation()
+      e.stopImmediatePropagation()
       showHotbarInventory.value = false
       return
     }
@@ -337,16 +391,22 @@ function onLabyInventoryKeydown(e) {
       closeLabyHtmlSettings()
       return
     }
+  }
+
+  const el = /** @type {HTMLElement | null} */ (e.target)
+  if (el?.closest?.('input, textarea, select, [contenteditable="true"]')) return
+
+  if (e.code === 'Escape') {
     if (mc && mc.currentScreen !== null) {
       e.preventDefault()
       e.stopImmediatePropagation()
       mc.displayScreen(null)
       return
     }
-    if (mc && mc.currentScreen === null) {
+    if (mc) {
       e.preventDefault()
       e.stopImmediatePropagation()
-      void openLabySettings()
+      releaseDesktopPointerLock(mc)
     }
     return
   }
@@ -379,8 +439,9 @@ function onLabyInventoryKeydown(e) {
   }
   if (e.code === 'KeyK' && mc && mc.currentScreen === null) {
     e.preventDefault()
-    e.stopPropagation()
+    e.stopImmediatePropagation()
     void openLabySettings()
+    return
   }
   if (e.code === 'F7') {
     /** Developer hotkey for the FP tool tuning dat.gui panel. The panel mutates
@@ -635,7 +696,7 @@ function _labyBtnCooldown(key) {
   return false
 }
 
-function openLabySettings() {
+async function openLabySettings() {
   const mc = gameMc.value
   if (!mc) return
   /**
@@ -654,6 +715,8 @@ function openLabySettings() {
   releaseDesktopPointerLock(mc)
   showHotbarInventory.value = false
   syncLabySettingsFormFromMc()
+  await waitForPointerLockRelease()
+  await nextTick()
   labyHtmlSettingsOpen.value = true
 }
 
@@ -663,10 +726,16 @@ function onLabySetAmbientOcclusion(e) {
   const mc = gameMc.value
   if (mc?.settings) {
     mc.settings.ambientOcclusion = v
-    try {
-      mc.worldRenderer?.rebuildAll?.()
-    } catch {
-      /* ignore */
+    /** Defer mesh invalidation so the checkbox handler returns immediately (PC jank guard). */
+    const wr = mc.worldRenderer
+    if (wr && typeof wr.rebuildAll === 'function') {
+      queueMicrotask(() => {
+        try {
+          wr.rebuildAll()
+        } catch {
+          /* ignore */
+        }
+      })
     }
   }
 }
@@ -681,6 +750,10 @@ function onLabySetViewBobbing(e) {
 function onLabySetFovInput(e) {
   const n = Math.round(Number(e?.target?.value))
   labySetFov.value = Math.max(50, Math.min(100, Number.isFinite(n) ? n : 70))
+  /** Do not write `mc.settings` every input tick — sync on `@change` only (PC: avoids main-thread stalls). */
+}
+
+function onLabySetFovCommit() {
   const mc = gameMc.value
   if (mc?.settings) mc.settings.fov = labySetFov.value
 }
@@ -691,6 +764,9 @@ function onLabySetViewDistanceInput(e) {
     FUS_LABY_VIEW_MIN,
     Math.min(FUS_LABY_VIEW_MAX, Number.isFinite(n) ? n : FUS_LABY_VIEW_MIN),
   )
+}
+
+function onLabySetViewDistanceCommit() {
   const mc = gameMc.value
   if (mc?.settings) mc.settings.viewDistance = labySetViewDistance.value
 }
@@ -1852,7 +1928,7 @@ onBeforeUnmount(() => {
     </div>
 
     <!-- Mobile: top HUD is hidden while налаштування (HTML) or canvas GUI is open — keep one
-         control so the same "gear" can dismiss. Desktop uses Esc / K. -->
+         control so the same "gear" can dismiss. Desktop: K opens settings; Esc only unlocks / closes overlays. -->
     <div
       v-if="labyInPlay && labyHudBlocked && !showDesktopKeyHint"
       class="laby-engine-gui-chrome"
@@ -1878,7 +1954,7 @@ onBeforeUnmount(() => {
       <span>I / 0 — інвентар</span>
       <span>R — телепорт до прапора</span>
       <span v-if="!noRtdb">P — гравці онлайн</span>
-      <span>Esc / K — налаштування</span>
+      <span>K — налаштування</span>
     </div>
 
     <div
@@ -1942,6 +2018,33 @@ onBeforeUnmount(() => {
     </div>
 
     <div
+      v-show="isLabyDev && labyInPlay && !labyHudBlocked"
+      ref="statsHostRef"
+      class="laby-stats"
+      aria-hidden="true"
+    />
+
+    <LabyMobileControls v-if="labyInPlay && !labyHudBlocked" :mc="gameMc" />
+
+    <BlockWorldLabyInventoryModal
+      v-model="showHotbarInventory"
+      :laby-engine-gui-open="labyHudBlocked"
+      :uid="auth.profile?.id || ''"
+      :profile="auth.profile"
+      :shop-items="userStore.items"
+      :live-hotbar-item-ids="liveLabyHotbarItemIds"
+      :game-mc="gameMc"
+      @saved="syncHotbarToEngine"
+    />
+
+    <div
+      v-show="labyPlayStarted"
+      :id="hostId"
+      class="laby-host"
+      :class="{ 'laby-host--no-pointer': labyHtmlSettingsOpen }"
+    />
+
+    <div
       v-if="labyInPlay && labyHtmlSettingsOpen"
       class="laby-settings-html"
       role="dialog"
@@ -1976,6 +2079,7 @@ onBeforeUnmount(() => {
             step="1"
             :value="labySetFov"
             @input="onLabySetFovInput"
+            @change="onLabySetFovCommit"
           />
         </div>
 
@@ -1989,6 +2093,7 @@ onBeforeUnmount(() => {
             step="1"
             :value="labySetViewDistance"
             @input="onLabySetViewDistanceInput"
+            @change="onLabySetViewDistanceCommit"
           />
         </div>
 
@@ -2010,28 +2115,6 @@ onBeforeUnmount(() => {
         </div>
       </div>
     </div>
-
-    <div
-      v-show="isLabyDev && labyInPlay && !labyHudBlocked"
-      ref="statsHostRef"
-      class="laby-stats"
-      aria-hidden="true"
-    />
-
-    <LabyMobileControls v-if="labyInPlay && !labyHudBlocked" :mc="gameMc" />
-
-    <BlockWorldLabyInventoryModal
-      v-model="showHotbarInventory"
-      :laby-engine-gui-open="labyHudBlocked"
-      :uid="auth.profile?.id || ''"
-      :profile="auth.profile"
-      :shop-items="userStore.items"
-      :live-hotbar-item-ids="liveLabyHotbarItemIds"
-      :game-mc="gameMc"
-      @saved="syncHotbarToEngine"
-    />
-
-    <div v-show="labyPlayStarted" :id="hostId" class="laby-host" />
 
     <div
       v-if="deathActive"
@@ -2166,6 +2249,16 @@ onBeforeUnmount(() => {
   user-select: none;
   -webkit-user-select: none;
   -webkit-touch-callout: none;
+}
+/**
+ * While HTML settings are open, the WebGL host must not receive pointer events.
+ * `pointer-events: none` on a parent does **not** disable the canvas: descendants keep
+ * the default `auto` and still win hit-testing, so range sliders on the overlay never
+ * receive drags. Force the whole embed subtree (canvas + any injected nodes) inert.
+ */
+.laby-host--no-pointer,
+.laby-host--no-pointer * {
+  pointer-events: none;
 }
 .laby-key-hint {
   position: absolute;
@@ -2719,6 +2812,8 @@ onBeforeUnmount(() => {
 }
 /**
  * FUS: HTML нативне меню «Налаштування» (замінює canvas GuiOptions). z-index 60 — під екраном смерті (70).
+ * No backdrop-filter: full-viewport blur + range slider updates repainted the whole scrim every
+ * frame on some desktops and looked like a hard freeze (no JS errors).
  */
 .laby-settings-html {
   position: absolute;
@@ -2728,12 +2823,12 @@ onBeforeUnmount(() => {
   align-items: flex-start;
   justify-content: center;
   padding: max(12px, env(safe-area-inset-top, 0px)) 16px 24px;
-  background: rgba(2, 6, 23, 0.78);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
+  background: rgba(2, 6, 23, 0.88);
   pointer-events: auto;
   -webkit-tap-highlight-color: transparent;
   overflow: auto;
+  user-select: auto;
+  -webkit-user-select: auto;
 }
 .laby-settings-html-card {
   width: 100%;
@@ -2748,6 +2843,8 @@ onBeforeUnmount(() => {
   font-size: 14px;
   line-height: 1.45;
   touch-action: manipulation;
+  user-select: auto;
+  -webkit-user-select: auto;
 }
 .laby-settings-html-title {
   margin: 0 0 16px;
@@ -2782,10 +2879,14 @@ onBeforeUnmount(() => {
   font-size: 13px;
 }
 .laby-settings-range {
+  position: relative;
+  z-index: 2;
   width: 100%;
   height: 28px;
   accent-color: #a78bfa;
   cursor: pointer;
+  pointer-events: auto;
+  touch-action: none;
 }
 .laby-settings-actions {
   display: flex;

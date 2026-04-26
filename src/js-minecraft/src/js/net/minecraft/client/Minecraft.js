@@ -259,7 +259,7 @@ export default class Minecraft {
             {
                 let n = 0;
                 const cap =
-                    typeof window !== "undefined" && window.__LABY_MC_FUS_EMBED__ ? 8 : 200;
+                    typeof window !== "undefined" && window.__LABY_MC_FUS_EMBED__ ? 32 : 200;
                 while (n < cap && this.world.updateLights()) {
                     n++;
                 }
@@ -267,7 +267,15 @@ export default class Minecraft {
 
             // Render the game (FUS: keep 3D visible while a tool-tuning dat.gui is open, even
             // in singleplayer after pointer lock was released by clicking the panel)
-            if (this.isInGame() && (!this.isPaused() || (this.fusToolTuningGuiRefCount | 0) > 0)) {
+            // FUS Laby: Vue host releases pointer lock (ESC/K); without this branch `isPaused()` is
+            // true and the world never renders — looks like a hard freeze even though the loop runs.
+            const fusLabyKeepWorldVisible =
+                typeof window !== "undefined" &&
+                window.__LABY_MC_FUS_EMBED__ &&
+                this.isInGame() &&
+                this.isPaused() &&
+                this.currentScreen === null;
+            if (this.isInGame() && (!this.isPaused() || fusLabyKeepWorldVisible || (this.fusToolTuningGuiRefCount | 0) > 0)) {
                 this.worldRenderer.render(partialTicks);
             }
         }

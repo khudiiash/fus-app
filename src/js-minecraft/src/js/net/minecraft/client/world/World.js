@@ -127,19 +127,17 @@ export default class World {
 
     updateLights() {
         let scope = this;
-
-        if (this.lightUpdateQueue.length < 10) {
-            // Update lights in queue
-            let i = 10;
-            while (scope.lightUpdateQueue.length > 0) {
-                if (i <= 0) {
-                    return true;
-                }
-
-                let meta = scope.lightUpdateQueue.shift();
-                meta.updateBlockLightning(scope);
-                i--;
+        // Always take a bounded number from the queue. The old `length < 10` guard skipped the main-thread
+        // path whenever the queue had 10+ jobs—only the interval drained, so lighting lagged in bursts.
+        const batch = 10;
+        let i = batch;
+        while (scope.lightUpdateQueue.length > 0) {
+            if (i <= 0) {
+                return true;
             }
+            let meta = scope.lightUpdateQueue.shift();
+            meta.updateBlockLightning(scope);
+            i--;
         }
         return false;
     }

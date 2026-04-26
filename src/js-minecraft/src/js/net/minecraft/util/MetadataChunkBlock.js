@@ -23,6 +23,9 @@ export default class MetadataChunkBlock {
             return;
         }
 
+        /** One sweep order is order-dependent; 2 passes help torches without 4× queue backlog (FUS Laby). */
+        const numPasses = this.type === EnumSkyBlock.BLOCK ? 2 : 1;
+        for (let pass = 0; pass < numPasses; pass++) {
         for (let x = this.x1; x <= this.x2; x++) {
             for (let z = this.z1; z <= this.z2; z++) {
                 if (!world.blockExists(x, 0, z)) {
@@ -119,6 +122,7 @@ export default class MetadataChunkBlock {
                     }
                 }
             }
+        }
         }
     }
 

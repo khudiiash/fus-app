@@ -35,6 +35,15 @@ export default class BlockTorch extends Block {
         return true;
     }
 
+    /**
+     * Inherits {@link Block#getOpacity} = 1.0 otherwise, which made {@link MetadataChunkBlock}
+     * treat the cell as almost opaque: {@code newLevel -= 255} killed propagation from the
+     * touch’s {@link #getLightValue} in neighbours — caves stayed black (FUS Laby, 2026-04).
+     */
+    getOpacity() {
+        return 0.0;
+    }
+
     getRenderType() {
         return BlockRenderType.TORCH;
     }

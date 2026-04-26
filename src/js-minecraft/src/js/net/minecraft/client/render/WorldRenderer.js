@@ -934,9 +934,14 @@ export default class WorldRenderer {
                 }
                 const nx = cameraChunkX + ddx;
                 const nz = cameraChunkZ + ddz;
-                if (!provider.chunkExists(nx, nz)) {
-                    continue;
-                }
+                /**
+                 * Must call {@link ChunkProvider#getChunkAt} even when the column is not in the
+                 * map yet — that is what runs {@link ChunkProvider#loadChunk} and terrain
+                 * generation. Skipping when {@link ChunkProvider#chunkExists} is false was a
+                 * mistaken micro-optimisation: it disabled streaming, so only chunks created
+                 * during the boot loader (or by rare block queries) ever existed — a vertical
+                 * void “wall” at the edge of that set (see FUS Laby, 2026-04).
+                 */
                 const chunk = provider.getChunkAt(nx, nz);
                 chunk.group.visible = true;
                 chunk.loaded = true;

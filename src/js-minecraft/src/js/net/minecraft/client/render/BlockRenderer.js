@@ -6,6 +6,19 @@ import Block from "../world/block/Block.js";
 import { readTerrainAtlasMetrics, tileUvsForLinearIndex, subTilePixelUvs } from "./TerrainAtlasUV.js";
 
 export default class BlockRenderer {
+    /**
+     * Block **vertex / face** brightness from sky+block level (0–15). Tweak for contrast:
+     * - Lower {@link BlockRenderer#LIGHT_FLOOR} → **darker** shadows in lit areas (higher “contrast” feel).
+     * - {@link BlockRenderer#LIGHT_PER_LEVEL} × 15 + floor should land near **1.0** for full bright.
+     * This path is the **non-**`ambientOcclusion` (flat face) branch; see {@link setAverageBrightness} for AO.
+     * Directional self-shadow: {@link EnumBlockFace#getShading} (0.6 / 0.8 / 1.0 by axis).
+     */
+    static LIGHT_FLOOR = 0.001;
+    static LIGHT_PER_LEVEL = 0.999 / 15.0;
+
+    _lightToBrightness(level) {
+        return BlockRenderer.LIGHT_PER_LEVEL * level + BlockRenderer.LIGHT_FLOOR;
+    }
 
     constructor(worldRenderer) {
         this.worldRenderer = worldRenderer;
@@ -89,7 +102,7 @@ export default class BlockRenderer {
         // Classic lightning
         if (!ambientOcclusion) {
             let level = world === null ? 15 : world.getTotalLightAt(minX + face.x, minY + face.y, minZ + face.z);
-            let brightness = 0.9 / 15.0 * level + 0.1;
+            let brightness = this._lightToBrightness(level);
             let shade = brightness * face.getShading();
             this.tessellator.setColor(red * shade, green * shade, blue * shade);
         }
@@ -153,12 +166,34 @@ export default class BlockRenderer {
         // Get the average light level of all 4 blocks at this corner
         let lightLevelAtThisCorner = this.getAverageLightLevelAt(world, x, y, z);
 
-        // Convert light level from [0 - 15] to [0.1 - 1.0]
-        let brightness = 0.9 / 15.0 * lightLevelAtThisCorner + 0.1;
-        let shading = brightness * face.getShading();
+        let brightness = this._lightToBrightness(lightLevelAtThisCorner);
 
-        // Transform brightness of edge
-        this.tessellator.setColor(red * shading, green * shading, blue * shading);
+        // Make sun effect more dramatic: use a power curve for higher contrast
+        // Exponent > 1: higher contrast, tweak as needed
+        let highContrastBrightness = Math.pow(brightness, 1.5);
+
+        // Still apply face shading
+        let shading = highContrastBrightness * face.getShading();
+
+        // More sun-bleach: further boost if brightness is near max
+        if (brightness > 0.93) shading *= 1.18;
+
+        // Clamp and apply color scaling
+        let r = Math.max(0, Math.min(1, red * shading));
+        let g = Math.max(0, Math.min(1, green * shading));
+        let b = Math.max(0, Math.min(1, blue * shading));
+
+        // Increase actual color *contrast* for more pop: move each component further from 0.5
+        // (if above 0.5, increase; if below, decrease; exactly 0.5, unchanged)
+        const contrastAmount = 0.1; // 0.0 = no change, 1.0 = max contrast (all values 0 or 1)
+        function boostContrast(c) {
+            return Math.max(0, Math.min(1, 0.5 + (c - 0.5) * (1 + contrastAmount)));
+        }
+        r = boostContrast(r);
+        g = boostContrast(g);
+        b = boostContrast(b);
+
+        this.tessellator.setColor(r, g, b);
     }
 
     getAverageLightLevelAt(world, x, y, z) {
@@ -245,6 +280,17 @@ export default class BlockRenderer {
         let textureIndex = block.getTextureForFace(EnumBlockFace.NORTH);
         const m = this._terrainMetrics();
         let { minU, maxU, minV, maxV } = subTilePixelUvs(textureIndex, m.w, m.h, m.tilesX, 7, 6, 9, 16);
+        /**
+         * {@link subTilePixelUvs} + NORTH/… corner wiring map atlas “down” in file space to
+         * world +Y, so the flame (top of the pixel strip) ends up on the **bottom** of the
+         * model — torch appears upside down in world, hand, and hotbar (FUS, 2026-04).
+         * Swap V so the tall +Y side of the mesh uses the top of the strip.
+         */
+        {
+            const t = minV;
+            minV = maxV;
+            maxV = t;
+        }
 
         // Set color with shading
         this.tessellator.setColor(1, 1, 1);
@@ -305,9 +351,11 @@ export default class BlockRenderer {
         // Rotation
         mesh.rotation.y = Math.PI / 4;
 
-        // Scale
+        // Scale: -Y is legacy for solid block icons; a torch is already V-correct in
+        // {@link #renderTorch} — another flip here made it look upside down in 3P.
+        const flipY = block.getRenderType() === BlockRenderType.TORCH ? 1 : -1;
         mesh.scale.x = 6;
-        mesh.scale.y = -6;
+        mesh.scale.y = 6 * flipY;
         mesh.scale.z = 6;
     }
 
@@ -343,6 +391,9 @@ export default class BlockRenderer {
                 this.renderFace(null, block, boundingBox, EnumBlockFace.NORTH, false, 0, 0, 0);
                 this.renderFace(null, block, boundingBox, EnumBlockFace.EAST, false, 0, 0, 0);
                 break;
+            case BlockRenderType.TORCH:
+                this.renderTorch(null, block, 0, 0, 0);
+                break;
             default:
                 this.renderGuiItem(block);
                 break;
@@ -360,6 +411,11 @@ export default class BlockRenderer {
             case BlockRenderType.BLOCK:
                 mesh.rotation.x = MathHelper.toRadians(45 / 1.5);
                 mesh.rotation.y = -MathHelper.toRadians(45 + 90);
+                break;
+            case BlockRenderType.TORCH:
+                mesh.rotation.x = 0;
+                mesh.rotation.y = 0;
+                size += 5;
                 break;
             default:
                 mesh.rotation.y = MathHelper.toRadians(180);

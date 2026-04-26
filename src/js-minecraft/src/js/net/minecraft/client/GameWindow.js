@@ -45,6 +45,8 @@ export default class GameWindow {
         this.mouseDownInterval = null;
         this.focusState = FocusStateType.EXITED;
         this.lastIngameSwitchTime = 0;
+        /** FUS: after {@code exitPointerLock} browsers reject {@code requestPointerLock} for a short window — suppress rapid retries. */
+        this._fusPlRetryNotBefore = 0;
 
         this.mobileDevice = this.detectTouchDevice();
 
@@ -169,7 +171,12 @@ export default class GameWindow {
             let isLockIntent = intentState === FocusStateType.LOCKED; // Check if we want to lock the cursor
 
             let lastSwitchDuration = Date.now() - this.lastIngameSwitchTime;
-            if (this.focusState === FocusStateType.LOCKED && !isCursorLocked && lastSwitchDuration < 200) {
+            if (
+                !(typeof window !== "undefined" && window.__LABY_MC_FUS_EMBED__) &&
+                this.focusState === FocusStateType.LOCKED &&
+                !isCursorLocked &&
+                lastSwitchDuration < 200
+            ) {
                 // If the user exists the inventory by using the escape key, the cursor unlocks from the canvas,
                 // so we have to prevent that by switching immediately to the request state
                 this.focusState = FocusStateType.REQUEST_LOCK;
@@ -217,6 +224,11 @@ export default class GameWindow {
 
             // Handle escape press if focus is still in requesting state
             if (event.key === 'Escape' && this.minecraft.currentScreen === null) {
+                // FUS Laby: Vue (capture) owns Esc for pointer unlock / overlay close. Running this too
+                // double-toggles focus and desyncs pointer lock vs. HTML settings (sliders dead, freeze on close).
+                if (typeof window !== "undefined" && window.__LABY_MC_FUS_EMBED__) {
+                    return;
+                }
                 this.updateFocusState(FocusStateType.REQUEST_EXIT);
                 return;
             }
@@ -614,6 +626,18 @@ export default class GameWindow {
         ) {
             return true;
         }
+        // FUS Laby desktop: use the real pointer-lock element, not {@code FocusStateType.REQUEST_LOCK}.
+        // Otherwise the legacy pointerlockchange “re-request lock” path leaves the game thinking
+        // the cursor is still locked (WASD + look active) and spams requestPointerLock → SecurityError.
+        if (
+            typeof window !== "undefined" &&
+            window.__LABY_MC_FUS_EMBED__ &&
+            !this.mobileDevice &&
+            this.minecraft.isInGame() &&
+            this.minecraft.currentScreen === null
+        ) {
+            return this.isCursorLockedToCanvas();
+        }
         // The actual definition for the game if the cursor is locked or not
         return this.focusState.isLock() && this.minecraft.currentScreen === null;
     }
@@ -675,10 +699,31 @@ export default class GameWindow {
                     /* ignore */
                 }
             }
+            // Browsers (esp. Chrome) throw SecurityError on lock if the next request is "immediate" after this.
+            if (typeof window !== "undefined" && window.__LABY_MC_FUS_EMBED__) {
+                this._fusPlRetryNotBefore = Date.now() + 900;
+            }
+            return;
+        }
+        if (
+            typeof window !== "undefined" &&
+            window.__LABY_MC_FUS_EMBED__ &&
+            typeof this._fusPlRetryNotBefore === "number" &&
+            Date.now() < this._fusPlRetryNotBefore
+        ) {
             return;
         }
         if (this.mouseInsideWindow) {
-            this.canvas.requestPointerLock();
+            try {
+                const p = this.canvas.requestPointerLock();
+                if (p && typeof p.then === "function") {
+                    p.catch(() => {
+                        this._fusPlRetryNotBefore = Date.now() + 900;
+                    });
+                }
+            } catch {
+                this._fusPlRetryNotBefore = Date.now() + 900;
+            }
         }
     }
 
@@ -764,14 +809,36 @@ export default class GameWindow {
         }
     }
 
-    registerListener(parent, event, listener = null, preventDefaults = true) {
-        parent.addEventListener(event, event => {
-            if (preventDefaults) {
-                event.preventDefault();
+    /**
+     * @param {string} eventName
+     */
+    registerListener(parent, eventName, listener = null, preventDefaults = true) {
+        parent.addEventListener(eventName, (ev) => {
+            let doPrevent = preventDefaults;
+            /**
+             * FUS Laby: Vue’s HTML settings sit above the shell; the game uses
+             * {@code document} listeners with {@code preventDefault} to capture input.
+             * That breaks native <input type="range"> drags: mousemove is cancelled, the
+             * thumb can’t be dragged (hover/click still work).
+             */
+            if (
+                doPrevent &&
+                parent === document &&
+                typeof window !== "undefined" &&
+                window.__LABY_MC_FUS_EMBED__ &&
+                (eventName === "mousemove" || eventName === "mousedown" || eventName === "mouseup")
+            ) {
+                const t = ev && ev.target;
+                if (t && typeof t.closest === "function" && t.closest(".laby-settings-html")) {
+                    doPrevent = false;
+                }
+            }
+            if (doPrevent) {
+                ev.preventDefault();
             }
 
             if (listener !== null) {
-                listener(event);
+                listener(ev);
             }
         });
     }

@@ -291,7 +291,23 @@ export default class Chunk {
 
         // Update light
         this.world.updateLight(EnumSkyBlock.SKY, totalX, y, totalZ, totalX, y, totalZ);
-        this.world.updateLight(EnumSkyBlock.BLOCK, totalX, y, totalZ, totalX, y, totalZ);
+        const prevBlock = Block.getById(prevTypeId);
+        const newLum = typeId && block != null ? block.getLightValue() : 0;
+        const oldLum = prevTypeId && prevBlock != null ? prevBlock.getLightValue() : 0;
+        if (newLum > 0 || oldLum > 0) {
+            const br = 8;
+            this.world.updateLight(
+                EnumSkyBlock.BLOCK,
+                totalX - br,
+                y - br,
+                totalZ - br,
+                totalX + br,
+                y + br,
+                totalZ + br,
+            );
+        } else {
+            this.world.updateLight(EnumSkyBlock.BLOCK, totalX, y, totalZ, totalX, y, totalZ);
+        }
 
         // Notify surrounding blocks
         this.notifyNeighbors(x, z);
