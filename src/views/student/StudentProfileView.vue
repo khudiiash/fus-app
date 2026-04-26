@@ -81,6 +81,19 @@ const { level, coins, streak, xpProgress } = useGameification(profileRef)
 const isOwnProfile = computed(
   () => !!viewedStudent.value?.id && viewedStudent.value.id === auth.profile?.id,
 )
+/**
+ * Hero `CharacterScene` on own profile: `viewedStudent` comes from {@link loadProfile} once;
+ * equips in {@link AvatarBuilder} only refresh {@link auth.profile}. Merge live avatar so
+ * skin/room/pet thumbnails update without a full reload.
+ */
+const profileForRoomHero = computed(() => {
+  const v = viewedStudent.value
+  if (!v) return null
+  if (isOwnProfile.value && auth.profile?.id === v.id) {
+    return { ...v, avatar: auth.profile.avatar ?? v.avatar }
+  }
+  return v
+})
 /** Activity feed: teacher or peer student; hidden on own profile. */
 const showActivityFeed = computed(
   () =>
@@ -430,7 +443,7 @@ async function doFine() {
       >
         <div class="h-[min(42vw,320px)] min-h-[220px] max-h-[320px] relative">
           <CharacterScene
-            :profile="viewedStudent"
+            :profile="profileForRoomHero"
             :owned-item-ids="viewedStudent?.inventory || []"
             :all-items="userStore.items"
             :room-mode="true"

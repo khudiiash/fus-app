@@ -20,6 +20,8 @@ import {
   seedGlbShopItemsFromFiles,
   seedBlockWorldShopItems,
   seedMysteryBoxes,
+  SUBJECT_BADGE_DESCRIPTION,
+  SUBJECT_BADGE_PRICE,
 } from '@/firebase/seedData'
 import { uploadShopGlb, uploadSkinTextureFile } from '@/firebase/shopAssetStorage'
 import { syncShopStorageClaim } from '@/firebase/syncShopStorageClaim'
@@ -134,7 +136,10 @@ function setCategory(cat) {
   form.value.category = cat
   if (cat === 'subject_badge') {
     form.value.rarity = 'legendary'
-    form.value.price = 1000
+    form.value.price = SUBJECT_BADGE_PRICE
+    if (!String(form.value.description || '').trim()) {
+      form.value.description = SUBJECT_BADGE_DESCRIPTION
+    }
     if (form.value.badgeSpriteIndex == null || form.value.badgeSpriteIndex < -1) {
       form.value.badgeSpriteIndex = 0
     }
@@ -219,6 +224,7 @@ async function save() {
         form.value.category === 'subject_badge' && form.value.badgeSpriteIndex >= 0
           ? Number(form.value.badgeSpriteIndex)
           : null,
+      ...(form.value.category === 'subject_badge' ? { coinKind: 'subject_earned' } : {}),
     }
     if (editItem.value) { await updateItem(editItem.value.id, data); success('Товар оновлено!') }
     else                { await createItem(data);                     success('Товар додано!')   }

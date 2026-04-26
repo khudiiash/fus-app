@@ -482,13 +482,14 @@ const SEED_SUBJECTS = [
  */
 /**
  * Per-subject badge: buyable **only with coins earned from that subject** (100 coins).
- * Gate enforced in {@link ../firebase/collections.js `purchaseItem`}. The description text
- * explains the rule to students so there's no surprise on the buy button.
+ * Gate enforced in {@link ../firebase/collections.js `purchaseItem`}. Shown in shop / admin.
  */
-const BADGE_DESCRIPTION =
-  'Надає право на підвищення тематичної оцінки на 1 бал. Купити можна лише за монети, зароблені з цього предмету.'
+export const SUBJECT_BADGE_DESCRIPTION =
+  'Цей бейдж дає право на підвищення оцінки з цього предмету. Можна придбати лише за монети зароблені з цього предмету.'
 export const SUBJECT_BADGE_PRICE = 100
 export const SUBJECT_BADGE_COIN_KIND = 'subject_earned'
+
+const BADGE_DESCRIPTION = SUBJECT_BADGE_DESCRIPTION
 
 export const SUBJECT_BADGE_DEFS = [
   /** spriteIndex = кадр у src/assets/subjects.png (див. BADGE_SPRITE_LABELS). */

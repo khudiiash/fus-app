@@ -92,7 +92,7 @@ function discountFor(item) {
  */
 function canAfford(item) {
   const cost = priceFor(item)
-  if (item.coinKind === 'subject_earned') {
+  if (shop.isSubjectBilledItem(item)) {
     return shop.subjectBadgeBudget(item.subjectName) >= cost
   }
   return (auth.profile?.coins || 0) >= cost
@@ -100,7 +100,7 @@ function canAfford(item) {
 
 function shortage(item) {
   const cost = priceFor(item)
-  if (item.coinKind === 'subject_earned') {
+  if (shop.isSubjectBilledItem(item)) {
     return Math.max(0, cost - shop.subjectBadgeBudget(item.subjectName))
   }
   return Math.max(0, cost - (auth.profile?.coins || 0))
@@ -436,7 +436,7 @@ const MODAL_BW = 120
                 {{ selectedItem.subjectName }}
               </p>
               <p class="text-[10px] text-slate-500 text-center px-2 max-w-[280px] leading-snug">
-                Легендарний значок. Купи кілька й передай вчителю цього предмета після офлайн-активності (Профіль → Значки).
+                Після покупки передай значок вчителю з цього предмету: «Профіль» → вкладка «Значки».
               </p>
             </template>
             <template v-else-if="selectedItem.category === 'block_world'">
@@ -502,12 +502,19 @@ const MODAL_BW = 120
         </div>
 
         <div
-          v-if="selectedItem.coinKind === 'subject_earned' && selectedItem.subjectName"
+          v-if="shop.isSubjectBilledItem(selectedItem) && selectedItem.subjectName"
           class="flex items-center justify-between rounded-xl px-3 py-2 text-xs"
           style="background:rgba(139,92,246,0.08)"
         >
           <span class="text-violet-300 font-bold">Монети з «{{ selectedItem.subjectName }}»</span>
           <span class="text-violet-200 font-extrabold">{{ shop.subjectBadgeBudget(selectedItem.subjectName) }} 🪙</span>
+        </div>
+        <div
+          v-if="shop.isSubjectBilledItem(selectedItem) && selectedItem.subjectName && !canAfford(selectedItem) && !isSoldOut(selectedItem)"
+          class="rounded-xl px-3 py-2 text-[11px] font-semibold text-amber-200/95 leading-snug"
+          style="background:rgba(251,191,36,0.1)"
+        >
+          Потрібно {{ priceFor(selectedItem) }} монет, зароблених з «{{ selectedItem.subjectName }}» (загальний баланс не підходить).
         </div>
 
         <template v-if="selectedItem.category === 'subject_badge'">

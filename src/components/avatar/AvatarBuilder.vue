@@ -158,7 +158,11 @@ async function equipDefaultSkin() {
 function isEquipped(item) {
   const av = auth.profile?.avatar || {}
   if (item.category === 'skin') {
-    if (av.skinUrl && item.skinUrl) return av.skinUrl === item.skinUrl
+    /** URL skins: match by URL only. Palette / default: no `skinUrl` on profile — never treat URL catalog rows as equipped via `skinId || 'default'`. */
+    if (av.skinUrl) {
+      return !!(item.skinUrl && av.skinUrl === item.skinUrl)
+    }
+    if (item.skinUrl) return false
     return (av.skinId || 'default') === (item.skinId || 'default')
   }
   if (item.category === 'accessory') return (av.accessories || []).includes(item.id)

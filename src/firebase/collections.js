@@ -1410,6 +1410,7 @@ export async function adminGrantItemToStudent({ adminUid, studentUid, itemId, qt
  *   avoid re-aggregating in the transaction; see {@link aggregateStudentAwardCoinsBySubject}).
  */
 export async function purchaseItem({ uid, itemId, price, subjectEarnedCoins }) {
+  let chargedPrice = 0
   await runTransaction(db, async tx => {
     const uRef = doc(db, 'users', uid)
     const iRef = doc(db, 'items', itemId)
@@ -1422,21 +1423,29 @@ export async function purchaseItem({ uid, itemId, price, subjectEarnedCoins }) {
 
     if (item.active === false) throw new Error('Item is no longer available')
 
+    const listPrice = Math.max(0, Math.floor(Number(item.price) || 0))
+    const clientPrice = Math.max(0, Math.floor(Number(price) || 0))
     /**
      * Subject-badge payment path: bills against per-subject earned coins, not {@code user.coins}.
-     * The 'subject_earned' kind is set at seed time — see {@link ../firebase/seedData.js `seedSubjectBadges`}.
+     * {@code coinKind === 'subject_earned'} from seed; legacy rows: {@code category === 'subject_badge'} + {@code subjectName}.
+     * Price is always {@code item.price} from Firestore (ignores client Friday discounts / tampering).
      */
     const isSubjectBilled = item.coinKind === 'subject_earned' && typeof item.subjectName === 'string'
-    if (isSubjectBilled) {
+    const isSubjectBadgeLegacy =
+      item.category === 'subject_badge' && typeof item.subjectName === 'string' && !isSubjectBilled
+    const useSubjectWallet = isSubjectBilled || isSubjectBadgeLegacy
+    const payPrice = useSubjectWallet ? listPrice : clientPrice
+
+    if (useSubjectWallet) {
       const subject = item.subjectName
       const spentMap = { ...(user.subjectCoinsSpent || {}) }
       const alreadySpent = Number(spentMap[subject]) || 0
       const earned = Number.isFinite(Number(subjectEarnedCoins)) ? Math.max(0, Number(subjectEarnedCoins)) : 0
       const available = Math.max(0, earned - alreadySpent)
-      if (available < price) {
-        throw new Error(`Недостатньо монет з «${subject}». Потрібно ${price}, доступно ${available}.`)
+      if (available < payPrice) {
+        throw new Error(`Недостатньо монет з «${subject}». Потрібно ${payPrice}, доступно ${available}.`)
       }
-    } else if ((user.coins || 0) < price) {
+    } else if ((user.coins || 0) < payPrice) {
       throw new Error('Not enough coins')
     }
 
@@ -1448,9 +1457,10 @@ export async function purchaseItem({ uid, itemId, price, subjectEarnedCoins }) {
       const counts = { ...(user.mysteryBoxCounts || {}) }
       counts[itemId] = (counts[itemId] || 0) + 1
 
-      const newXp = (user.xp || 0) + Math.ceil(price * 0.5)
+      const newXp = (user.xp || 0) + Math.ceil(payPrice * 0.5)
+      chargedPrice = payPrice
       tx.update(uRef, {
-        coins: increment(-price),
+        coins: increment(-payPrice),
         mysteryBoxCounts: counts,
         xp: newXp,
         level: calcLevel(newXp),
@@ -1464,7 +1474,7 @@ export async function purchaseItem({ uid, itemId, price, subjectEarnedCoins }) {
     // Кілька однакових предметів: inventory + inventoryCounts (стек)
     const inv = user.inventory || []
     const counts = { ...(user.inventoryCounts || {}) }
-    const newXp = (user.xp || 0) + Math.ceil(price * 0.5)
+    const newXp = (user.xp || 0) + Math.ceil(payPrice * 0.5)
     const lvl = calcLevel(newXp)
 
     // Stock check & decrement (stock: null / undefined = unlimited)
@@ -1476,14 +1486,16 @@ export async function purchaseItem({ uid, itemId, price, subjectEarnedCoins }) {
      * purchases bump {@code subjectCoinsSpent[subjectName]} and leave the wallet alone.
      */
     let coinPatch
-    if (isSubjectBilled) {
+    if (useSubjectWallet) {
       const subj = item.subjectName
       const spentMap = { ...(user.subjectCoinsSpent || {}) }
-      spentMap[subj] = (Number(spentMap[subj]) || 0) + price
+      spentMap[subj] = (Number(spentMap[subj]) || 0) + payPrice
       coinPatch = { subjectCoinsSpent: spentMap }
     } else {
-      coinPatch = { coins: increment(-price) }
+      coinPatch = { coins: increment(-payPrice) }
     }
+
+    chargedPrice = payPrice
 
     if (inv.includes(itemId)) {
       counts[itemId] = (counts[itemId] || 1) + 1
@@ -1507,10 +1519,9 @@ export async function purchaseItem({ uid, itemId, price, subjectEarnedCoins }) {
     }
   })
 
-  await logTransaction({ type: 'purchase', fromUid: uid, toUid: uid, amount: -price, itemIds: [itemId] })
+  await logTransaction({ type: 'purchase', fromUid: uid, toUid: uid, amount: -chargedPrice, itemIds: [itemId] })
 
-  const spent = Number(price) || 0
-  if (spent > 0) await updateQuestProgress(uid, 'spend', spent)
+  if (chargedPrice > 0) await updateQuestProgress(uid, 'spend', chargedPrice)
 }
 
 /** Вчителі, які викладають цей предмет (за subjectId з Firestore). */

@@ -79,24 +79,39 @@ export const useShopStore = defineStore('shop', () => {
     return Math.max(0, earned - spent)
   }
 
+  /** Subject badges bill per-subject earned coins — no Friday % off (price must match server gate). */
+  function isSubjectBilledItem(item) {
+    return (
+      item?.coinKind === 'subject_earned' ||
+      (item?.category === 'subject_badge' && typeof item?.subjectName === 'string')
+    )
+  }
+
   /** Discounted price for a shop item (Friday all-day, 20-80 % off). */
   function priceFor(itemOrId) {
     const item = typeof itemOrId === 'string' ? items.value.find((i) => i.id === itemOrId) : itemOrId
     if (!item) return 0
-    return applyFridayDiscount(item.price, item.id)
+    const base = Math.max(0, Math.floor(Number(item.price) || 0))
+    if (isSubjectBilledItem(item)) return base
+    return applyFridayDiscount(base, item.id)
   }
 
   /** Full discount descriptor for UI (pct, basePrice, discountedPrice, savings, isActive). */
   function discountFor(itemOrId) {
     const item = typeof itemOrId === 'string' ? items.value.find((i) => i.id === itemOrId) : itemOrId
-    return getFridayDiscount(item || {})
+    if (!item) return { pct: 0, basePrice: 0, discountedPrice: 0, savings: 0, isActive: false }
+    if (isSubjectBilledItem(item)) {
+      const base = Math.max(0, Math.floor(Number(item.price) || 0))
+      return { pct: 0, basePrice: base, discountedPrice: base, savings: 0, isActive: false }
+    }
+    return getFridayDiscount(item)
   }
 
   async function buy(itemId) {
     const auth = useAuthStore()
     const item = items.value.find(i => i.id === itemId)
     if (!item) throw new Error('Item not found')
-    const payPrice = applyFridayDiscount(item.price, item.id)
+    const payPrice = priceFor(item)
     /**
      * Subject badges are billed against per-subject earned coins; pass the earned total so
      * the transaction can verify the gate without re-querying award history inside the txn.
@@ -106,7 +121,7 @@ export const useShopStore = defineStore('shop', () => {
       uid: auth.profile.id,
       itemId,
       price: payPrice,
-      ...(item.coinKind === 'subject_earned' ? { subjectEarnedCoins: subjectEarned } : {}),
+      ...(isSubjectBilledItem(item) ? { subjectEarnedCoins: subjectEarned } : {}),
     })
     await fetchItems({ forceCatalog: true })
     await useUserStore().fetchQuests()
@@ -155,6 +170,7 @@ export const useShopStore = defineStore('shop', () => {
     fetchItems,
     refreshSubjectEarnedCoins,
     subjectBadgeBudget,
+    isSubjectBilledItem,
     priceFor,
     discountFor,
     buy,

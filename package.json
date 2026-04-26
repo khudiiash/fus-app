@@ -20,7 +20,9 @@
     "reverse:mob-coins": "node scripts/reverse-block-world-mob-coins.mjs",
     "reverse:mob-coins:dry": "node scripts/reverse-block-world-mob-coins.mjs --dry-run",
     "laby:reset-world": "node scripts/reset-laby-shared-world.mjs",
-    "laby:reset-world:dry": "node scripts/reset-laby-shared-world.mjs --dry-run"
+    "laby:reset-world:dry": "node scripts/reset-laby-shared-world.mjs --dry-run",
+    "shop:update-subject-badges": "node scripts/update-subject-badges.mjs",
+    "shop:update-subject-badges:dry": "node scripts/update-subject-badges.mjs --dry-run"
   },
   "dependencies": {
     "@vueuse/core": "^14.2.1",
