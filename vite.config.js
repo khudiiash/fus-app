@@ -413,6 +413,18 @@ export default defineConfig(({ mode, command }) => ({
               expiration: { maxEntries: 200, maxAgeSeconds: 60 * 60 * 24 * 30 },
             },
           },
+          {
+            urlPattern: ({ url }) =>
+              url.origin === self.location.origin &&
+              /\/labyminecraft\/src\/resources\/(models|sky)\//i.test(url.pathname),
+            handler: 'NetworkFirst',
+            options: {
+              cacheName: 'laby-runtime-assets',
+              networkTimeoutSeconds: 6,
+              expiration: { maxEntries: 200, maxAgeSeconds: 60 * 60 * 24 * 14 },
+              cacheableResponse: { statuses: [200] },
+            },
+          },
         ],
       },
       // Never register the SW during `vite dev`: Workbox runtime caches (e.g. labyminecraft chunk)

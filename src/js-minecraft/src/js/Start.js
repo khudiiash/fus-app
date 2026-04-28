@@ -9,28 +9,48 @@ function labyMcAssetBase() {
     return '';
 }
 
+function fusAssetVersionQuery() {
+    if (typeof window === 'undefined') return '';
+    const raw = window.__FUS_ASSET_REV__ || window.__APP_BUILD_ID__ || window.__FUS_BUILD_ID__;
+    if (raw == null) return '';
+    const v = String(raw).trim();
+    if (!v) return '';
+    const enc = encodeURIComponent(v);
+    return `?v=${enc}`;
+}
+
 class Start {
 
     loadTextures(textures) {
         let resources = [];
         let index = 0;
         const base = labyMcAssetBase();
+        const versionQuery = fusAssetVersionQuery();
+
+        const loadOneTexture = (texturePath, attempt = 0) => new Promise((resolve, reject) => {
+            const image = new Image();
+            const src = base + 'src/resources/' + texturePath + versionQuery;
+            image.onload = () => {
+                resources[texturePath] = image;
+                resolve();
+            };
+            image.onerror = () => {
+                const error = new Error(`[Laby] Texture failed to load: ${src}`);
+                if (attempt < 2) {
+                    setTimeout(() => {
+                        loadOneTexture(texturePath, attempt + 1).then(resolve).catch(reject);
+                    }, 250 * (attempt + 1));
+                    return;
+                }
+                reject(error);
+            };
+            image.src = src;
+            index++;
+        });
 
         return textures.reduce((currentPromise, texturePath) => {
             return currentPromise.then(() => {
-                return new Promise((resolve, reject) => {
-                    const image = new Image();
-                    const src = base + 'src/resources/' + texturePath;
-                    image.onload = () => {
-                        resources[texturePath] = image;
-                        resolve();
-                    };
-                    image.onerror = () => {
-                        reject(new Error(`[Laby] Texture failed to load: ${src}`));
-                    };
-                    image.src = src;
-                    index++;
-                });
+                return loadOneTexture(texturePath);
             });
         }, Promise.resolve()).then(() => {
             return resources;

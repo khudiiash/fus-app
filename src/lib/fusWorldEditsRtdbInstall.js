@@ -70,7 +70,10 @@ export function installFusWorldEditsRtdb(mc, { worldId, uid, rtdb }) {
    * @type {Map<string, Record<string, { id: number, at: any, by: string }>>}
    */
   const writeBuffer = new Map()
-  let writeFlushRaf = 0
+  /** RAF id OR timeout id depending on {@link writeFlushUsesTimeout}. */
+  let writeFlushId = null
+  let writeFlushUsesTimeout = false
+  const immediateWriteFlush = mc.fusInstantBlockActions !== false
 
   const queueWrite = (x, y, z, typeId) => {
     const cellKey = `${x >> 4}_${z >> 4}`
@@ -81,13 +84,20 @@ export function installFusWorldEditsRtdb(mc, { worldId, uid, rtdb }) {
       writeBuffer.set(cellKey, bucket)
     }
     bucket[leafKey] = { id: typeId, at: serverTimestamp(), by: uid }
-    if (!writeFlushRaf) {
-      writeFlushRaf = requestAnimationFrame(flushWrites)
+    if (writeFlushId == null) {
+      if (immediateWriteFlush) {
+        writeFlushUsesTimeout = true
+        writeFlushId = window.setTimeout(flushWrites, 0)
+      } else {
+        writeFlushUsesTimeout = false
+        writeFlushId = requestAnimationFrame(flushWrites)
+      }
     }
   }
 
   const flushWrites = () => {
-    writeFlushRaf = 0
+    writeFlushId = null
+    writeFlushUsesTimeout = false
     for (const [cellKey, bucket] of writeBuffer.entries()) {
       const path = `worldBlockEdits/${worldId}/cells/${cellKey}`
       dbUpdate(dbRef(rtdb, path), bucket).catch((e) =>
@@ -273,7 +283,11 @@ export function installFusWorldEditsRtdb(mc, { worldId, uid, rtdb }) {
     if (disposed) return
     disposed = true
     if (rafId) cancelAnimationFrame(rafId)
-    if (writeFlushRaf) cancelAnimationFrame(writeFlushRaf)
+    if (writeFlushId != null) {
+      if (writeFlushUsesTimeout) clearTimeout(writeFlushId)
+      else cancelAnimationFrame(writeFlushId)
+      writeFlushId = null
+    }
     flushWrites()
     for (const k of [...subs.keys()]) unsubscribeCell(k)
     pendingApplies.clear()

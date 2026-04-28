@@ -16,7 +16,7 @@
  *   {@code 2 * aggroRadius}, then it goes idle/wander (world units); omit → {@link DEFAULT_MOB_AGGRO_R}.
  */
 /** Default detection / chase range when a type omits {@code aggroRadius}. */
-export const DEFAULT_MOB_AGGRO_R = 10;
+export const DEFAULT_MOB_AGGRO_R = 8;
 
 /**
  * Each mob has a distinct gameplay identity — varied {@code moveSpeed}, {@code dmgHalf},

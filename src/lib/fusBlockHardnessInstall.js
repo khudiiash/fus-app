@@ -187,6 +187,7 @@ export function installFusBlockHardness(mc) {
     console.warn('[fusBlockHardness] missing scene; skip install')
     return () => {}
   }
+  const instantBlockActions = mc.fusInstantBlockActions !== false
   const scene = mc.worldRenderer.scene
   let mouseBreakHeld = false
 
@@ -469,8 +470,9 @@ export function installFusBlockHardness(mc) {
     }
     const bf = blockFamily(typeId)
     const torchId = BlockRegistry.TORCH.getId()
-    const swingBump =
-      typeId === torchId
+    const swingBump = instantBlockActions
+      ? 1
+      : typeId === torchId
         ? 1
         : bf === 'dirt' || bf === 'leave'
           ? 0.22

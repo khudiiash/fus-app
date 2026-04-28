@@ -36,7 +36,7 @@ export default class World {
         const staticDay = fusEmbed && minecraft.fusLabyStaticDayTime === true;
         /** Laby static day: fewer async light drain passes (blocks still enqueue on edit). */
         const lightTickMs = fusEmbed ? (staticDay ? 400 : 20) : 0;
-        setInterval(function () {
+        this._fusLightDrainIntervalId = setInterval(function () {
             // Vanilla uses large batches; FUS caps work per timer tick to avoid long main-thread spikes.
             let i = fusEmbed
                 ? scope.minecraft.loadingScreen === null
@@ -645,6 +645,14 @@ export default class World {
         for (let entity of this.entities) {
             this.removeEntityById(entity.id);
         }
+    }
+
+    dispose() {
+        if (this._fusLightDrainIntervalId != null) {
+            clearInterval(this._fusLightDrainIntervalId);
+            this._fusLightDrainIntervalId = null;
+        }
+        this.lightUpdateQueue.length = 0;
     }
 
 }

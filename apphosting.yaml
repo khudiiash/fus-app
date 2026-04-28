@@ -2,7 +2,7 @@
 # Classic Firebase Hosting (`firebase deploy --only hosting`) does not need this file.
 # See https://firebase.google.com/docs/app-hosting/configure#cloud-run
 runConfig:
-  minInstances: 0
+  minInstances: 1
   # maxInstances: 100
   # concurrency: 80
   # cpu: 1

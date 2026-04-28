@@ -117,7 +117,7 @@ const MOB_SPAWN_COUNT_R2 = MOB_SPAWN_COUNT_RADIUS * MOB_SPAWN_COUNT_RADIUS;
 const MOB_MIN_SPACING = 11;
 const MOB_MIN_SPACING_SQ = MOB_MIN_SPACING * MOB_MIN_SPACING;
 /** After this long with no player within {@link MOB_AI_ACTIVE_RADIUS}, leader removes the mob. */
-const MOB_DESPAWN_ABANDONED_MS = 45_000;
+const MOB_DESPAWN_ABANDONED_MS = 90_000;
 /** Global hard cap — prevents a "visited 20 areas" session from leaving 200 stale mob rows. */
 const MOB_TOTAL_CAP = 40;
 /** At most this many spawn writes per spawn pass (keeps RTDB write rate bounded). */
@@ -134,7 +134,7 @@ const SPAWN_PER_TICK_CAP = 2;
 const SPAWN_TICK_INTERVAL_MS = 1500;
 
 /** Leader skips heavy mob AI when no player is within this distance (blocks). Must cover seeded patrol spread (~±92). */
-const MOB_AI_ACTIVE_RADIUS = 240;
+const MOB_AI_ACTIVE_RADIUS = 280;
 
 /** Acquire targets by horizontal distance; ignore huge vertical separation for “see player” (still limited). */
 const AGGRO_MAX_VERTICAL = 24;
@@ -143,8 +143,8 @@ const AGGRO_MAX_VERTICAL = 24;
  * Local-only entity LOD: no {@link FusMobEntity} (no GLTF / mixer / world tick) until the player is near.
  * Uses view distance (chunks) + hysteresis so we do not thrash at the boundary.
  */
-const MOB_ENTITY_LOD_ACTIVATE_EXTRA = 38;
-const MOB_ENTITY_LOD_DEACTIVATE_EXTRA = 78;
+const MOB_ENTITY_LOD_ACTIVATE_EXTRA = 46;
+const MOB_ENTITY_LOD_DEACTIVATE_EXTRA = 110;
 
 /**
  * @param {string} mobKey

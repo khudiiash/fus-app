@@ -113,6 +113,7 @@ export function installFusDeathScreen(mc, opts = {}) {
     pl.prevX = x
     pl.prevY = y
     pl.prevZ = z
+    if (typeof pl.fallDistance === 'number') pl.fallDistance = 0
   }
 
   const resetPlayerMotion = (pl) => {
@@ -233,10 +234,10 @@ export function installFusDeathScreen(mc, opts = {}) {
     if (typeof mc.fusLabyStartTeleportToBlockPosChannel === 'function') {
       try {
         mc.fusLabyStartTeleportToBlockPosChannel({ x: s.x, y: s.y, z: s.z })
+        return
       } catch (e) {
         console.warn('[fusDeathScreen] channeled default-spawn TP failed', e)
       }
-      return
     }
     try {
       applyPos(pl, s.x, s.y, s.z, pl.rotationYaw)

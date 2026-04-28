@@ -47,6 +47,9 @@ export default class PlayerEntity extends EntityLiving {
 
         this.width = 0.6;
         this.height = 1.8;
+
+        /** Blocks fallen this air segment; {@link #travel} applies damage on landing. */
+        this.fallDistance = 0;
     }
 
     respawn() {
@@ -224,6 +227,7 @@ export default class PlayerEntity extends EntityLiving {
         let prevZ = this.z;
 
         if (this === this.world.minecraft.player) {
+            const wasGroundBefore = this.onGround;
             let prevSlipperiness = this.getBlockSlipperiness() * 0.91;
 
             let value = 0.16277136 / (prevSlipperiness * prevSlipperiness * prevSlipperiness);
@@ -252,6 +256,83 @@ export default class PlayerEntity extends EntityLiving {
             this.motionX *= slipperiness;
             this.motionY *= 0.98;
             this.motionZ *= slipperiness;
+
+            /** Fall damage ({@code mc.fusAllowFallDamage === false} disables). Mirrors vanilla-ish
+             *  distance tracking using {@link EntityLiving}’s unchanged {@code prevY} for the tick. */
+            const mc = this.minecraft;
+            const invuln =
+                mc &&
+                typeof mc.fusSpawnInvulnUntilMs === 'number' &&
+                Date.now() < mc.fusSpawnInvulnUntilMs;
+            const deadGate = mc && typeof mc.fusIsDead === 'function' && mc.fusIsDead();
+            if (
+                mc &&
+                mc.fusAllowFallDamage !== false &&
+                !this.flying &&
+                !invuln &&
+                !deadGate
+            ) {
+                if (!this.onGround) {
+                    const fallen = Math.max(0, this.prevY - this.y);
+                    let fd =
+                        typeof this.fallDistance === 'number' && Number.isFinite(this.fallDistance)
+                            ? this.fallDistance
+                            : 0;
+                    fd += fallen;
+                    this.fallDistance = fd;
+                } else {
+                    const fd =
+                        typeof this.fallDistance === 'number' && Number.isFinite(this.fallDistance)
+                            ? this.fallDistance
+                            : 0;
+                    if (!wasGroundBefore && fd > 3) {
+                        const dmg = Math.max(1, Math.floor(fd - 3));
+                        const pl = this;
+                        try {
+                            mc.fusRecordDamageFrom?.({
+                                type: 'environment',
+                                name: 'Падіння',
+                            });
+                        } catch {
+                            /* ignore */
+                        }
+                        const beforeHp = typeof pl.health === 'number' ? pl.health : NaN;
+                        try {
+                            if (typeof pl.takeHit === 'function') pl.takeHit(dmg);
+                            else if (typeof pl.damageEntity === 'function') pl.damageEntity(null, dmg);
+                            else if (typeof pl.attackEntityFrom === 'function')
+                                pl.attackEntityFrom({ source: 'fall' }, dmg);
+                            else if (typeof pl.health === 'number') pl.health = Math.max(0, pl.health - dmg);
+                        } catch {
+                            if (typeof pl.health === 'number') pl.health = Math.max(0, pl.health - dmg);
+                        }
+                        try {
+                            mc.fusFxHit?.(pl.x, pl.y + 1.1, pl.z, { count: 10, spread: 0.45 });
+                        } catch {
+                            /* ignore */
+                        }
+                        if (
+                            Number.isFinite(beforeHp) &&
+                            beforeHp > 0 &&
+                            typeof pl.health === 'number' &&
+                            pl.health <= 0
+                        ) {
+                            try {
+                                mc.fusFxDeath?.(pl.x, pl.y + 1.0, pl.z, {
+                                    count: 22,
+                                    color: 0xdc2626,
+                                    spread: 1.0,
+                                });
+                            } catch {
+                                /* ignore */
+                            }
+                        }
+                    }
+                    this.fallDistance = 0;
+                }
+            } else if (this.onGround) {
+                this.fallDistance = 0;
+            }
         }
 
         // Step sound

@@ -43,6 +43,7 @@ export default class GameWindow {
         this.mouseInsideWindow = false;
 
         this.mouseDownInterval = null;
+        this._fusTouchBreakInterval = null;
         this.focusState = FocusStateType.EXITED;
         this.lastIngameSwitchTime = 0;
         /** FUS: after {@code exitPointerLock} browsers reject {@code requestPointerLock} for a short window — suppress rapid retries. */
@@ -501,7 +502,10 @@ export default class GameWindow {
         this.registerListener(document, 'contextmenu');
 
         // Break block listener
-        setInterval(() => {
+        if (this._fusTouchBreakInterval !== null) {
+            clearInterval(this._fusTouchBreakInterval);
+        }
+        this._fusTouchBreakInterval = setInterval(() => {
             if (touchStartTime !== 0 && (Date.now() - touchStartTime) > 250) {
                 touchStartTime = Date.now();
                 this.minecraft.onMouseClicked(0);
@@ -775,6 +779,14 @@ export default class GameWindow {
     }
 
     close() {
+        if (this.mouseDownInterval !== null) {
+            clearInterval(this.mouseDownInterval);
+            this.mouseDownInterval = null;
+        }
+        if (this._fusTouchBreakInterval !== null) {
+            clearInterval(this._fusTouchBreakInterval);
+            this._fusTouchBreakInterval = null;
+        }
         // Standalone game used to send users to the upstream repo. In FUS Vue embed,
         // `Minecraft.stop()` runs on route leave / HMR — must not hijack `window.location`.
         if (typeof window !== "undefined" && window.__LABY_MC_FUS_EMBED__) {

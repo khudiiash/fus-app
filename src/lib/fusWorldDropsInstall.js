@@ -121,52 +121,64 @@ export function installFusWorldDrops(mc, { worldId, uid, rtdb }) {
       typeof window !== 'undefined' && typeof window.__LABY_MC_ASSET_BASE__ === 'string'
         ? window.__LABY_MC_ASSET_BASE__
         : '/labyminecraft/'
-    const url = `${base}src/resources/models/coin.glb`
-    coinTemplatePromise = new Promise((resolve, reject) => {
-      loader.load(
-        url,
-        (gltf) => {
+    const revRaw =
+      typeof window !== 'undefined'
+        ? window.__FUS_ASSET_REV__ || window.__APP_BUILD_ID__ || window.__FUS_BUILD_ID__
+        : ''
+    const rev = String(revRaw || '').trim()
+    const q = rev ? `?v=${encodeURIComponent(rev)}` : ''
+    const url = `${base}src/resources/models/coin.glb${q}`
+    const loadAttempt = (attempt = 0) =>
+      new Promise((resolve) => {
+        loader.load(
+          url,
+          (gltf) => {
           /** Replace PBR with unlit {@link THREE.MeshBasicMaterial} — no scene lights.
            *  If the mesh has vertex colors (`geometry.attributes.color`), set
            *  `vertexColors: true` and `color: 0xffffff` so exported colors are preserved; the
            *  material’s `color` tints the per-vertex color (multiply). */
-          const root = gltf.scene
-          root.traverse((o) => {
-            if (!o.isMesh || !o.geometry) return
-            const g = o.geometry
-            const oldMat = o.material
-            
-            const newMat = new THREE.MeshBasicMaterial();
-            newMat.copy(oldMat);
-            o.material = newMat;
-          })
-          try {
-            const bbox = new THREE.Box3().setFromObject(root)
-            const size = new THREE.Vector3()
-            bbox.getSize(size)
-            const h = Math.max(size.x, size.y, size.z)
-            if (Number.isFinite(h) && h > 0.0001) {
-              root.scale.setScalar(0.2 / h)
+            const root = gltf.scene
+            root.traverse((o) => {
+              if (!o.isMesh || !o.geometry) return
+              const oldMat = o.material
+              const newMat = new THREE.MeshBasicMaterial()
+              newMat.copy(oldMat)
+              o.material = newMat
+            })
+            try {
+              const bbox = new THREE.Box3().setFromObject(root)
+              const size = new THREE.Vector3()
+              bbox.getSize(size)
+              const h = Math.max(size.x, size.y, size.z)
+              if (Number.isFinite(h) && h > 0.0001) {
+                root.scale.setScalar(0.2 / h)
+              }
+            } catch {
+              /* ignore */
             }
-          } catch {
-            /* ignore */
-          }
-          resolve(root)
-        },
-        undefined,
-        (err) => {
-          /** Network hiccup / 404 — fall back to a cylinder so the game still plays. */
-          console.warn('[fusWorldDrops] coin.glb load failed, using fallback', err)
-          const geom = new THREE.CylinderGeometry(0.12, 0.12, 0.04, 16)
-          const mat = new THREE.MeshBasicMaterial({ color: 0xffcb40 })
-          const mesh = new THREE.Mesh(geom, mat)
-          mesh.rotation.x = Math.PI / 2
-          const grp = new THREE.Group()
-          grp.add(mesh)
-          resolve(grp)
-        },
-      )
-    })
+            resolve(root)
+          },
+          undefined,
+          (err) => {
+            if (attempt < 2) {
+              setTimeout(() => {
+                loadAttempt(attempt + 1).then(resolve)
+              }, 300 * (attempt + 1))
+              return
+            }
+            /** Network hiccup / 404 — fall back to a cylinder so the game still plays. */
+            console.warn('[fusWorldDrops] coin.glb load failed, using fallback', err)
+            const geom = new THREE.CylinderGeometry(0.12, 0.12, 0.04, 16)
+            const mat = new THREE.MeshBasicMaterial({ color: 0xffcb40 })
+            const mesh = new THREE.Mesh(geom, mat)
+            mesh.rotation.x = Math.PI / 2
+            const grp = new THREE.Group()
+            grp.add(mesh)
+            resolve(grp)
+          },
+        )
+      })
+    coinTemplatePromise = loadAttempt()
     return coinTemplatePromise
   }
   void loadCoinTemplate()

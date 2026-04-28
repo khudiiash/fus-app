@@ -256,7 +256,8 @@ export function installFusSimpleMobs(mc, opts = {}) {
    * No new spawns in this XZ disc around the *local* player's placed spawn flag. Prevents
    * mobs from standing on the flag and chain-killing on respawn.
    */
-  const FLAG_SPAWN_EXCLUSION_R = 28
+  const FLAG_SPAWN_EXCLUSION_R = 16
+  const FLAG_EJECT_RADIUS = 8
   const getLocalSpawnFlagPos = () => {
     const f = mc.fusSpawnFlagPos
     if (!f || typeof f !== 'object') return null
@@ -394,7 +395,13 @@ export function installFusSimpleMobs(mc, opts = {}) {
       typeof window !== 'undefined' && typeof window.__LABY_MC_ASSET_BASE__ === 'string'
         ? window.__LABY_MC_ASSET_BASE__
         : '/labyminecraft/'
-    return `${base}src/resources/models/${t.file}`
+    const revRaw =
+      typeof window !== 'undefined'
+        ? window.__FUS_ASSET_REV__ || window.__APP_BUILD_ID__ || window.__FUS_BUILD_ID__
+        : ''
+    const rev = String(revRaw || '').trim()
+    const q = rev ? `?v=${encodeURIComponent(rev)}` : ''
+    return `${base}src/resources/models/${t.file}${q}`
   }
 
   const loadTemplate = (typeId) => {
@@ -402,28 +409,41 @@ export function installFusSimpleMobs(mc, opts = {}) {
     if (cached) return cached
     const loader = new GLTFLoader()
     const url = glbUrlFor(typeId)
-    const p = new Promise((resolve, reject) => {
-      loader.load(
-        url,
-        (gltf) => {
-          /** Compute the raw GLB height once per type so we can normalise wildly-different
-           *  exports (some of the mob packs ship at centimetre scale, others at metre scale).
-           *  Storing it on the cached template means every subsequent clone reuses the number
-           *  without rebuilding a Box3 per spawn. */
-          let rawHeight = 1.9
-          try {
-            const bbox = new THREE.Box3().setFromObject(gltf.scene)
-            const size = new THREE.Vector3()
-            bbox.getSize(size)
-            if (Number.isFinite(size.y) && size.y > 0.001) rawHeight = size.y
-          } catch (e) {
-            console.warn('[fusSimpleMobs] bbox compute failed', typeId, e)
-          }
-          resolve({ scene: gltf.scene, clips: gltf.animations || [], rawHeight })
-        },
-        undefined,
-        (err) => reject(err),
-      )
+    const loadAttempt = (attempt = 0) =>
+      new Promise((resolve, reject) => {
+        loader.load(
+          url,
+          (gltf) => {
+            /** Compute the raw GLB height once per type so we can normalise wildly-different
+             *  exports (some of the mob packs ship at centimetre scale, others at metre scale).
+             *  Storing it on the cached template means every subsequent clone reuses the number
+             *  without rebuilding a Box3 per spawn. */
+            let rawHeight = 1.9
+            try {
+              const bbox = new THREE.Box3().setFromObject(gltf.scene)
+              const size = new THREE.Vector3()
+              bbox.getSize(size)
+              if (Number.isFinite(size.y) && size.y > 0.001) rawHeight = size.y
+            } catch (e) {
+              console.warn('[fusSimpleMobs] bbox compute failed', typeId, e)
+            }
+            resolve({ scene: gltf.scene, clips: gltf.animations || [], rawHeight })
+          },
+          undefined,
+          (err) => {
+            if (attempt < 2) {
+              setTimeout(() => {
+                loadAttempt(attempt + 1).then(resolve).catch(reject)
+              }, 300 * (attempt + 1))
+              return
+            }
+            reject(err)
+          },
+        )
+      })
+    const p = loadAttempt().catch((err) => {
+      templateCache.delete(typeId)
+      throw err
     })
     templateCache.set(typeId, p)
     return p
@@ -1996,7 +2016,7 @@ export function installFusSimpleMobs(mc, opts = {}) {
       return
     }
     {
-      const ex2 = FLAG_SPAWN_EXCLUSION_R * FLAG_SPAWN_EXCLUSION_R
+      const ex2 = FLAG_EJECT_RADIUS * FLAG_EJECT_RADIUS
       const mpx = mob.mesh.position.x
       const mpz = mob.mesh.position.z
       if (distSqToLocalFlag(mpx, mpz) < ex2) {
@@ -2088,6 +2108,82 @@ export function installFusSimpleMobs(mc, opts = {}) {
       /** Hit only after the attack clip reaches its end (see {@link playAttackAndScheduleNextHit}). */
       if (now < (mob.nextHitReadyMs || 0)) continue
       mob.lastLocalHitMs = now
+      const isCreeper = String(mob.typeId || mob.type?.id || '') === 'creeper_mob'
+      if (isCreeper && !mob._fusCreeperExplodedOnce) {
+        mob._fusCreeperExplodedOnce = true
+        const dmgHalfMelee = fusPveMobDamageToPlayerHp(mob, mc)
+        const plMax = Math.max(
+          2,
+          typeof pl.maxHealth === 'number' && pl.maxHealth > 0 ? pl.maxHealth : pl.health || 20,
+        )
+        const dmg = Math.min(
+          plMax * 0.9,
+          Math.max(plMax * 0.42, dmgHalfMelee * 5),
+        )
+        try {
+          mc.fusRecordDamageFrom?.({
+            type: 'mob',
+            name: mob.type?.displayName || 'Вибух кріпера',
+          })
+        } catch {
+          /* ignore */
+        }
+        const beforeHp = typeof pl.health === 'number' ? pl.health : NaN
+        try {
+          if (typeof pl.takeHit === 'function') pl.takeHit(dmg)
+          else if (typeof pl.damageEntity === 'function') pl.damageEntity(null, dmg)
+          else if (typeof pl.attackEntityFrom === 'function')
+            pl.attackEntityFrom({ source: 'mob' }, dmg)
+          else if (typeof pl.health === 'number') pl.health = Math.max(0, pl.health - dmg)
+        } catch {
+          if (typeof pl.health === 'number') pl.health = Math.max(0, pl.health - dmg)
+        }
+        const mx = mob.mesh.position.x
+        const my = mob.mesh.position.y
+        const mz = mob.mesh.position.z
+        try {
+          mc.fusFxDeath?.(mx + 0.2, my + 0.8, mz, {
+            count: 36,
+            color: 0x4ade80,
+            spread: 1.8,
+          })
+          mc.fusFxHit?.(mx, my + 0.65, mz, { count: 22, spread: 1.1 })
+          mc.fusFxHit?.(pl.x, pl.y + 1.1, pl.z, { count: 18, spread: 1.05 })
+        } catch {
+          /* ignore */
+        }
+        if (
+          Number.isFinite(beforeHp) &&
+          beforeHp > 0 &&
+          typeof pl.health === 'number' &&
+          pl.health <= 0
+        ) {
+          try {
+            mc.fusFxDeath?.(pl.x, pl.y + 1.0, pl.z, { count: 22, color: 0xdc2626, spread: 1.0 })
+          } catch {
+            /* ignore */
+          }
+        }
+        mob.hp = 0
+        mob.lastHitUid = uid || ''
+        try {
+          mc.fusPveBlockMobHitUntilMs = nowMs() + PVE_BLOCK_MOB_HIT_AFTER_KILL_MS
+        } catch {
+          /* ignore */
+        }
+        if (!multiplayer) {
+          const killPos = { x: mx, y: my, z: mz }
+          const kType = mob.typeId
+          const kLv = mob.level
+          grantKillRewards(mob)
+          triggerDeathVfx(mob)
+          scheduleMobRespawnAfterKill(killPos, kType, kLv)
+          window.setTimeout(() => removeMob(mob, 'creeper-explosion'), 30)
+        } else {
+          void killMobShared(mob)
+        }
+        continue
+      }
       const dmgHalf = fusPveMobDamageToPlayerHp(mob, mc)
       /** Feed the death-screen resolver BEFORE applying damage — if this blow is fatal the
        *  overlay needs a fresh record to attribute the kill to this mob. */

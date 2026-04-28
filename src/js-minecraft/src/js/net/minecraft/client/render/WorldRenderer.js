@@ -60,6 +60,7 @@ export default class WorldRenderer {
 
         /** FUS: see {@link #renderChunks} — increment each call; sort every other frame. */
         this._fusRenderChunksCount = 0;
+        this._fusPerfLastAt = 0;
         /**
          * FUS: one reusable column AABB per chunk (world XZ footprint × full height) for
          * {@link #renderChunks} so we can reject all 16 sections with a single frustum test.
@@ -1013,6 +1014,16 @@ export default class WorldRenderer {
             for (let i = 0; i < flushCap; i++) {
                 this._fusDequeueAndRebuildOneChunkSection();
             }
+        }
+        const nowPerf = performance.now();
+        if (nowPerf - this._fusPerfLastAt > 1000) {
+            this._fusPerfLastAt = nowPerf;
+            this.minecraft.fusPerfCounters = {
+                chunkQueue: this.chunkSectionUpdateQueue.length,
+                chunkQueueUnique: this._fusChunkInUpdateQueue.size,
+                worldEntities: this.minecraft.world?.entities?.length || 0,
+                lightQueue: this.minecraft.world?.lightUpdateQueue?.length || 0,
+            };
         }
     }
 

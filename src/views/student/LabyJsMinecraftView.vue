@@ -1372,6 +1372,15 @@ onMounted(async () => {
     fusLabySyncFullscreenState()
   }
 
+  /** Let the browser rotate on phones/tablets (some hosts lock orientation for games). */
+  if (typeof screen !== 'undefined' && screen.orientation && typeof screen.orientation.unlock === 'function') {
+    try {
+      screen.orientation.unlock()
+    } catch {
+      /* ignore — not user-gesture or unsupported */
+    }
+  }
+
   installLabyDocumentInteractionGuards()
 
   try {

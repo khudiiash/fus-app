@@ -48,6 +48,17 @@ export function installFusLabySpawnFlag(mc, { worldId, uid, rtdb }) {
   if (mc.fusLabyPresenceTpChStartAt == null) {
     mc.fusLabyPresenceTpChStartAt = 0
   }
+  let lastFlagRejectToastAt = 0
+  const notifyFlagReject = (msg) => {
+    const now = Date.now()
+    if (now - lastFlagRejectToastAt < 1200) return
+    lastFlagRejectToastAt = now
+    try {
+      mc.addMessageToChat?.(msg)
+    } catch {
+      /* ignore */
+    }
+  }
 
   /* ─────────────────────────────── Marker ──────────────────────────────── */
 
@@ -203,6 +214,13 @@ export function installFusLabySpawnFlag(mc, { worldId, uid, rtdb }) {
   mc.fusPlaceSpawnFlag = async function placeFusSpawnFlag() {
     const pl = mc.player
     if (!pl) return
+    const hp = Number(pl.health)
+    const deadByHp = Number.isFinite(hp) && hp <= 0
+    const deadByState = !!pl.isDead || !!pl.dead || (typeof mc.fusIsDead === 'function' && mc.fusIsDead())
+    if (deadByHp || deadByState) {
+      notifyFlagReject('[FUS] Не можна ставити прапор, коли ти мертвий.')
+      return
+    }
     const x = Math.floor(pl.x)
     const y = Math.floor(pl.y)
     const z = Math.floor(pl.z)
@@ -494,6 +512,9 @@ export function installFusLabySpawnFlag(mc, { worldId, uid, rtdb }) {
 
   /** Channel-cancel sentinels so the countdown tick can bail out safely. */
   let channelStartHealth = 0
+  let channelStartX = 0
+  let channelStartY = 0
+  let channelStartZ = 0
   let channelRafId = 0
   let channelEndAt = 0
 
@@ -532,6 +553,25 @@ export function installFusLabySpawnFlag(mc, { worldId, uid, rtdb }) {
     clearPresenceTpCh()
   }
 
+  const postTeleportSafetyFix = (pl) => {
+    try {
+      const wx = mc?.world
+      if (!pl || !wx) return
+      const bx = Math.floor(Number(pl.x) || 0)
+      const by = Math.floor(Number(pl.y) || 0)
+      const bz = Math.floor(Number(pl.z) || 0)
+      const fixedFeetY = fusLabyFeetYAtColumn(wx, bx, bz, by)
+      if (!Number.isFinite(fixedFeetY)) return
+      if (Math.abs((Number(pl.y) || 0) - fixedFeetY) > 0.35) {
+        pl.setPosition?.(bx + 0.5, fixedFeetY, bz + 0.5)
+      }
+      if (typeof pl.fallDistance === 'number') pl.fallDistance = 0
+      if (typeof pl.prevY === 'number') pl.prevY = pl.y
+    } catch {
+      /* ignore safety correction */
+    }
+  }
+
   /**
    * Same ~15s channel + VFX as the spawn flag; completion position depends on {@code pos}:
    *   • Default: block column + {@link fusLabyFeetYAtColumn} (spawn flag / block rt coords).
@@ -557,6 +597,9 @@ export function installFusLabySpawnFlag(mc, { worldId, uid, rtdb }) {
     if (channelEndAt && Date.now() < channelEndAt) return
 
     channelStartHealth = typeof pl.health === 'number' ? pl.health : 0
+    channelStartX = Number(pl.x) || 0
+    channelStartY = Number(pl.y) || 0
+    channelStartZ = Number(pl.z) || 0
     const startT = Date.now()
     const nextEnd = startT + FUS_LABY_FLAG_CHANNEL_MS
     try {
@@ -601,6 +644,13 @@ export function installFusLabySpawnFlag(mc, { worldId, uid, rtdb }) {
           typeof curPl.health === 'number' &&
           (curPl.health <= 0 || curPl.health + 0.001 < channelStartHealth)
         ) {
+          cancelChannel()
+          return
+        }
+        const movedDx = (Number(curPl.x) || 0) - channelStartX
+        const movedDz = (Number(curPl.z) || 0) - channelStartZ
+        const movedDy = Math.abs((Number(curPl.y) || 0) - channelStartY)
+        if (movedDx * movedDx + movedDz * movedDz > 0.25 || movedDy > 1.2) {
           cancelChannel()
           return
         }
@@ -649,6 +699,7 @@ export function installFusLabySpawnFlag(mc, { worldId, uid, rtdb }) {
               const z = res.z
               if ([x, y, z].every((n) => Number.isFinite(n))) {
                 curPl.setPosition?.(x, y, z)
+                postTeleportSafetyFix(curPl)
               } else {
                 console.warn('[fusLabySpawnFlag] peer teleport resolved non-finite', res)
               }
@@ -658,6 +709,7 @@ export function installFusLabySpawnFlag(mc, { worldId, uid, rtdb }) {
               const bz = Math.floor(pz)
               const feetY = fusLabyFeetYAtColumn(mc?.world, bx, bz, by)
               curPl.setPosition?.(bx + 0.5, feetY, bz + 0.5)
+              postTeleportSafetyFix(curPl)
             }
             if (typeof curPl.motionX === 'number') curPl.motionX = 0
             if (typeof curPl.motionY === 'number') curPl.motionY = 0

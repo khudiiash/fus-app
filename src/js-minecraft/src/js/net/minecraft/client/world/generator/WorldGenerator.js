@@ -84,10 +84,10 @@ export default class WorldGenerator extends Generator {
         // rarer replacements deep in solid stone so prospecting near stone massifs pays off.
         let stone = BlockRegistry.STONE.getId();
         let gold = BlockRegistry.GOLD_ORE.getId();
-        for (let t = 0; t < 52; t++) {
+        for (let t = 0; t < 76; t++) {
             let tx = absoluteX + this.random.nextInt(16);
             let tz = absoluteY + this.random.nextInt(16);
-            for (let y = 8; y < 100; y++) {
+            for (let y = 8; y < 110; y++) {
                 if (this.world.getBlockAt(tx, y, tz) !== stone) {
                     continue;
                 }
@@ -99,10 +99,10 @@ export default class WorldGenerator extends Generator {
                     this.world.getBlockAt(tx, y, tz + 1) === 0 ||
                     this.world.getBlockAt(tx, y, tz - 1) === 0;
                 if (airN) {
-                    if (this.random.nextFloat() < 0.42) {
+                    if (this.random.nextFloat() < 0.52) {
                         this.world.setBlockAt(tx, y, tz, gold);
                     }
-                } else if (this.random.nextFloat() < 0.12) {
+                } else if (this.random.nextFloat() < 0.18) {
                     this.world.setBlockAt(tx, y, tz, gold);
                 }
                 break;
