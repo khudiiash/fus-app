@@ -60,6 +60,8 @@ export function installFusWorldEditsRtdb(mc, { worldId, uid, rtdb }) {
   mc.world.setBlockAt = function fusPatchedSetBlockAt(x, y, z, type) {
     origSetBlockAt(x, y, z, type)
     if (reentry) return
+    /** Local fluid simulation — do not persist every propagation tick to RTDB. */
+    if (mc.fusSuppressWorldEditWrite) return
     queueWrite(x, y, z, type)
   }
 
@@ -218,7 +220,9 @@ export function installFusWorldEditsRtdb(mc, { worldId, uid, rtdb }) {
    * time they become visible. Smaller radii cause "edits pop in as you approach" which
    * users read as bugs.
    */
-  const SUB_RADIUS = 2
+  /** Wider than 2 so terrain that finishes loading after the first subscribe pass still
+   *  receives historical cell state before the player walks into it ("trees came back"). */
+  const SUB_RADIUS = 4
   let lastCx = Number.NaN
   let lastCz = Number.NaN
   const reconcileWindow = () => {
@@ -279,6 +283,28 @@ export function installFusWorldEditsRtdb(mc, { worldId, uid, rtdb }) {
   }
   rafId = requestAnimationFrame(frame)
 
+  /**
+   * Re-fetch every cell we are currently subscribed to and re-apply all leaves. Safe after
+   * chunks become loadable: `applyLeaf` no-ops when `existing === id`. Use once post-boot
+   * when deterministic terrain was blocking earlier applies.
+   */
+  const replaySubscribedPrimes = () => {
+    for (const [cellKey, s] of subs.entries()) {
+      get(s.ref)
+        .then((snap) => {
+          const v = snap.val() || {}
+          for (const leafKey of Object.keys(v)) applyLeaf(cellKey, leafKey, v[leafKey])
+        })
+        .catch((e) => console.warn('[fusWorldEditsRtdb] replay prime failed', cellKey, e))
+    }
+  }
+
+  mc.fusRerunWorldEditsReconcileSoon = () => {
+    lastCx = Number.NaN
+    lastCz = Number.NaN
+  }
+  mc.fusReplayWorldEditPrimes = replaySubscribedPrimes
+
   const dispose = () => {
     if (disposed) return
     disposed = true
@@ -292,6 +318,8 @@ export function installFusWorldEditsRtdb(mc, { worldId, uid, rtdb }) {
     for (const k of [...subs.keys()]) unsubscribeCell(k)
     pendingApplies.clear()
     mc.world.setBlockAt = origSetBlockAt
+    delete mc.fusRerunWorldEditsReconcileSoon
+    delete mc.fusReplayWorldEditPrimes
   }
   mc.fusDisposeWorldEditsRtdb = dispose
   return dispose

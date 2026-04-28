@@ -96,7 +96,9 @@ export default class Chunk {
                         level = 0;
                     }
 
-                    section.setLightAt(EnumSkyBlock.BLOCK, x, y & 15, z, blockLight);
+                    /** Propagated attenuation — was incorrectly `blockLight` (source only), which
+                     *  stripped torch glow after chunk mesh regen / reload (FUS Laby 2026-04). */
+                    section.setLightAt(EnumSkyBlock.BLOCK, x, y & 15, z, level);
                 }
             }
         }

@@ -64,6 +64,7 @@ import { installFusBlockHardness } from '@/lib/fusBlockHardnessInstall'
 import { installFusDamageFlash } from '@/lib/fusDamageFlashInstall'
 import { installFusPvpKarma } from '@/lib/fusPvpKarmaInstall'
 import { installFusWorldDrops } from '@/lib/fusWorldDropsInstall'
+import { installFusWaterFlow } from '@/lib/fusWaterFlowInstall'
 import { installFusWorldEditsRtdb } from '@/lib/fusWorldEditsRtdbInstall'
 import { installFusSpawnInvuln } from '@/lib/fusSpawnInvulnInstall'
 import { installFusPresenceWriter } from '@/lib/fusPresenceWriterInstall'
@@ -1019,6 +1020,7 @@ async function runLabyEngineBootstrap() {
     installFusCombatFx(mc)
     installFusPvpKarma(mc, { worldId: FUS_SHARED_WORLD_LABY_ID, uid, rtdb })
     installFusWorldDrops(mc, { worldId: FUS_SHARED_WORLD_LABY_ID, uid, rtdb })
+    mc.fusDisposeWaterFlow = installFusWaterFlow(mc)
 
     if (import.meta.env.DEV && typeof window !== 'undefined') {
       window.__FUS_CLEAR_LABY_MOBS__ = () => clearLabySharedWorldMobsRtdb()
@@ -1153,6 +1155,25 @@ async function runLabyEngineBootstrap() {
      *  every subscribed cell the first time it enters the window. */
     if (rtdb) {
       installFusWorldEditsRtdb(mc, { worldId: FUS_SHARED_WORLD_LABY_ID, uid, rtdb })
+      /** After chunks hydrate, replay RTDB primes so persisted breaks (trees) win over stale terrain. */
+      void nextTick(() => {
+        requestAnimationFrame(() => {
+          try {
+            mc.fusRerunWorldEditsReconcileSoon?.()
+          } catch {
+            /* ignore */
+          }
+        })
+      })
+      mc._fusWorldEditsReplayTimer = window.setTimeout(() => {
+        try {
+          mc.fusReplayWorldEditPrimes?.()
+          mc.fusRerunWorldEditsReconcileSoon?.()
+        } catch {
+          /* ignore */
+        }
+        mc._fusWorldEditsReplayTimer = 0
+      }, 9500)
     }
 
     /**
@@ -1777,6 +1798,20 @@ onBeforeUnmount(() => {
     mc.fusDisposeWorldDrops?.()
   } catch (e) {
     console.warn('[LabyJsMinecraftView] dispose world drops', e)
+  }
+  try {
+    mc.fusDisposeWaterFlow?.()
+    delete mc.fusDisposeWaterFlow
+  } catch (e) {
+    console.warn('[LabyJsMinecraftView] dispose water flow', e)
+  }
+  if (typeof mc._fusWorldEditsReplayTimer === 'number' && mc._fusWorldEditsReplayTimer > 0) {
+    try {
+      window.clearTimeout(mc._fusWorldEditsReplayTimer)
+    } catch {
+      /* ignore */
+    }
+    mc._fusWorldEditsReplayTimer = 0
   }
   try {
     mc.fusDisposeWorldEditsRtdb?.()
