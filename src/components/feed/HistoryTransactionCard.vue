@@ -10,7 +10,7 @@ import TransactionItemThumb from '@/components/shop/TransactionItemThumb.vue'
 import MysteryBoxSprite from '@/components/shop/MysteryBoxSprite.vue'
 import {
   Coins, ArrowLeftRight, ShoppingBag, Trophy, Flame, ScrollText, Star,
-  Gavel, Gift, Medal,
+  Gavel, Gift, Medal, Brain,
 } from 'lucide-vue-next'
 
 const props = defineProps({
@@ -33,6 +33,7 @@ const TX = {
   streak_bonus:       { Icon: Flame,          label: 'Бонус серії',       color: 'text-orange-400',  bg: 'bg-orange-500/12',  ring: 'ring-orange-500/25'  },
   quest_reward:       { Icon: ScrollText,     label: 'Завдання виконано', color: 'text-violet-300',  bg: 'bg-violet-500/12',  ring: 'ring-violet-500/25'  },
   daily_quest:        { Icon: ScrollText,     label: 'Щоденне завдання',  color: 'text-violet-300',  bg: 'bg-violet-500/12',  ring: 'ring-violet-500/25'  },
+  daily_quiz:         { Icon: Brain,          label: 'Предметний квіз',   color: 'text-sky-400',     bg: 'bg-sky-500/12',     ring: 'ring-sky-500/25'     },
 }
 
 function cfg(t) {

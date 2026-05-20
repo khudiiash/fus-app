@@ -95,6 +95,7 @@ function txLabel(t) {
     quest_reward: 'Завдання',
     streak_bonus: 'Серія',
     daily_quest: 'Щоденне завдання',
+    daily_quiz: 'Предметний квіз',
     achievement_reward: 'Досягнення',
   }
   return map[t.type] || (t.type || 'Подія')
