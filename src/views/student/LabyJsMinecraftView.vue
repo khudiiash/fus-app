@@ -7,7 +7,21 @@ import { useAuthStore } from '@/stores/auth'
 import { useUserStore } from '@/stores/user'
 import { useBlockWorldSession } from '@/stores/blockWorldSession'
 import { get, onValue, ref as dbRef } from 'firebase/database'
-import { rtdb } from '@/firebase/config'
+import { rtdb as firebaseRtdb } from '@/firebase/config'
+
+/**
+ * Diagnosis helper: bypass all RTDB-backed Laby installers (spawn flag read, world edits,
+ * presence/avatars, PvP karma, world drops, combat, mob payouts). Firebase Auth / Firestore
+ * used elsewhere stay unchanged.
+ *
+ * Flip {@code FUS_DIAG_FORCE_DISABLE_LABY_RTDB_LOCAL} back to {@code false} after testing or
+ * set `"VITE_FUS_DIAG_DISABLE_LABY_RTDB": "true"` in `.env.local` without editing this file.
+ */
+const FUS_DIAG_FORCE_DISABLE_LABY_RTDB_LOCAL = false
+const FUS_DIAG_DISABLE_LABY_RTDB =
+  FUS_DIAG_FORCE_DISABLE_LABY_RTDB_LOCAL ||
+  String(import.meta.env?.VITE_FUS_DIAG_DISABLE_LABY_RTDB || '').toLowerCase() === 'true'
+const rtdb = FUS_DIAG_DISABLE_LABY_RTDB ? null : firebaseRtdb
 import {
   calcLevel,
   debitPkLootFromUser,
@@ -64,7 +78,6 @@ import { installFusBlockHardness } from '@/lib/fusBlockHardnessInstall'
 import { installFusDamageFlash } from '@/lib/fusDamageFlashInstall'
 import { installFusPvpKarma } from '@/lib/fusPvpKarmaInstall'
 import { installFusWorldDrops } from '@/lib/fusWorldDropsInstall'
-import { installFusWaterFlow } from '@/lib/fusWaterFlowInstall'
 import { installFusWorldEditsRtdb } from '@/lib/fusWorldEditsRtdbInstall'
 import { installFusSpawnInvuln } from '@/lib/fusSpawnInvulnInstall'
 import { installFusPresenceWriter } from '@/lib/fusPresenceWriterInstall'
@@ -1018,9 +1031,9 @@ async function runLabyEngineBootstrap() {
     installFusSpawnInvuln(mc)
     installFusDamageFlash(mc)
     installFusCombatFx(mc)
-    installFusPvpKarma(mc, { worldId: FUS_SHARED_WORLD_LABY_ID, uid, rtdb })
-    installFusWorldDrops(mc, { worldId: FUS_SHARED_WORLD_LABY_ID, uid, rtdb })
-    mc.fusDisposeWaterFlow = installFusWaterFlow(mc)
+    /** PvP karma + world loot installs attach RTDB listeners; Firebase replays *every*
+     *  historic row synchronously unless we stagger (see installers). Deferred until terrain
+     *  is mesh-ready — see block after {@link waitForWorldRenderReady}. */
 
     if (import.meta.env.DEV && typeof window !== 'undefined') {
       window.__FUS_CLEAR_LABY_MOBS__ = () => clearLabySharedWorldMobsRtdb()
@@ -1150,55 +1163,6 @@ async function runLabyEngineBootstrap() {
       mc._fusTerrainBootUntil = performance.now() + 10000
     }
 
-    /** Mount world-edits streaming now that `mc.world` exists. Install order is important:
-     *  chunks primed before this call still apply because the cell `get(...)` prime runs on
-     *  every subscribed cell the first time it enters the window. */
-    if (rtdb) {
-      installFusWorldEditsRtdb(mc, { worldId: FUS_SHARED_WORLD_LABY_ID, uid, rtdb })
-      /** After chunks hydrate, replay RTDB primes so persisted breaks (trees) win over stale terrain. */
-      void nextTick(() => {
-        requestAnimationFrame(() => {
-          try {
-            mc.fusRerunWorldEditsReconcileSoon?.()
-          } catch {
-            /* ignore */
-          }
-        })
-      })
-      mc._fusWorldEditsReplayTimer = window.setTimeout(() => {
-        try {
-          mc.fusReplayWorldEditPrimes?.()
-          mc.fusRerunWorldEditsReconcileSoon?.()
-        } catch {
-          /* ignore */
-        }
-        mc._fusWorldEditsReplayTimer = 0
-      }, 9500)
-    }
-
-    /**
-     * Multiplayer avatars: write our pose/HP/held/PvP state to `worldPresence/...` at ~10 Hz
-     * and subscribe to every peer's row to draw their skinned model + nametag + HP bar. The
-     * remote-avatar installer must come after world-edits so the avatar scale computations
-     * get the final `worldRenderer` camera (set during world load).
-     */
-    if (rtdb) {
-      installFusPresenceWriter(mc, {
-        worldId: FUS_SHARED_WORLD_LABY_ID,
-        uid,
-        rtdb,
-        displayName,
-        skinUrl,
-        slim: auth.profile?.avatar?.modelType === 'slim',
-      })
-      try {
-        mc.fusForcePresenceWrite?.()
-      } catch {
-        /* first push of invUntil after writer exists */
-      }
-      installFusRemoteAvatars(mc, { worldId: FUS_SHARED_WORLD_LABY_ID, uid, rtdb })
-    }
-
     syncHotbarToEngine()
     mc.player.inventory.selectedSlotIndex = 0
 
@@ -1244,6 +1208,34 @@ async function runLabyEngineBootstrap() {
      * that chunk uploads desperately need. Unfreezing even a couple frames early is visible.
      */
     await waitForWorldRenderReady(mc, 5000)
+
+    /** RTDB subtree listeners (loot + PVP rows) — must not attach during genesis or initial mesh. */
+    installFusPvpKarma(mc, { worldId: FUS_SHARED_WORLD_LABY_ID, uid, rtdb })
+    if (rtdb) {
+      installFusWorldDrops(mc, { worldId: FUS_SHARED_WORLD_LABY_ID, uid, rtdb })
+    }
+
+    /**
+     * RTDB only after terrain is mesh-ready: world-edits RAF + Firebase `get`/listeners used to
+     * stack with genesis/mesh (“0 FPS”). Presence/avatars likewise wait so first frames are terrain.
+     * World-edits installer must precede presence (avatar scale relies on finalized camera).
+     */
+    if (rtdb) {
+      installFusWorldEditsRtdb(mc, { worldId: FUS_SHARED_WORLD_LABY_ID, uid, rtdb })
+    }
+    if (rtdb) {
+      installFusPresenceWriter(mc, {
+        worldId: FUS_SHARED_WORLD_LABY_ID,
+        uid,
+        rtdb,
+        displayName,
+        skinUrl,
+        slim: auth.profile?.avatar?.modelType === 'slim',
+      })
+      /** Do not fusForcePresenceWrite here — {@code fusFrozen} is still true; first push happens in finally after unfreeze. */
+      installFusRemoteAvatars(mc, { worldId: FUS_SHARED_WORLD_LABY_ID, uid, rtdb })
+    }
+
     if (typeof window !== 'undefined' && window.__LABY_MC_FUS_EMBED__ && mc.worldRenderer?.fusPrewarmSpawnAreaMeshes) {
       try {
         await mc.worldRenderer.fusPrewarmSpawnAreaMeshes({ maxTotalMs: 8000, stepsPerRaf: 28 })
@@ -1798,20 +1790,6 @@ onBeforeUnmount(() => {
     mc.fusDisposeWorldDrops?.()
   } catch (e) {
     console.warn('[LabyJsMinecraftView] dispose world drops', e)
-  }
-  try {
-    mc.fusDisposeWaterFlow?.()
-    delete mc.fusDisposeWaterFlow
-  } catch (e) {
-    console.warn('[LabyJsMinecraftView] dispose water flow', e)
-  }
-  if (typeof mc._fusWorldEditsReplayTimer === 'number' && mc._fusWorldEditsReplayTimer > 0) {
-    try {
-      window.clearTimeout(mc._fusWorldEditsReplayTimer)
-    } catch {
-      /* ignore */
-    }
-    mc._fusWorldEditsReplayTimer = 0
   }
   try {
     mc.fusDisposeWorldEditsRtdb?.()

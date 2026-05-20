@@ -184,10 +184,26 @@ export function installFusPvpKarma(mc, { worldId, uid, rtdb }) {
 
   /** @type {import('firebase/database').Unsubscribe[]} */
   const pvpUnsubs = []
-  if (rtdb && worldId) {
-    const pvpRef = dbRef(rtdb, `worldPlayerPvp/${worldId}`)
-    const applyPvpRow = (k, row) => {
-      if (!k || !row || typeof row !== 'object') return
+  /** Listener initial sync fires one callback per historic row — Map updates are cheap but still stack with loot/mesh boot; spread ingest. */
+  const pvpRowReplayQueue = []
+  let pvpRowReplayRaf = 0
+  const karmaRowBatchPerFrame = () =>
+    typeof mc.fusPvpReplayRowsPerFrame === 'number' && Number.isFinite(mc.fusPvpReplayRowsPerFrame)
+      ? Math.max(8, Math.min(2000, Math.floor(mc.fusPvpReplayRowsPerFrame)))
+      : typeof window !== 'undefined' && window.__LABY_MC_FUS_EMBED__
+        ? 128
+        : 400
+
+  let karmaListenerDisposed = false
+  const flushPvpRowReplay = () => {
+    pvpRowReplayRaf = 0
+    if (karmaListenerDisposed) return
+    let budget = karmaRowBatchPerFrame()
+    while (budget-- > 0 && pvpRowReplayQueue.length > 0) {
+      const item = pvpRowReplayQueue.shift()
+      if (!item) break
+      const { key: k, row } = item
+      if (!k || !row || typeof row !== 'object') continue
       remote.set(k, {
         mode: row.mode || 'white',
         karma: Number(row.karma) || 0,
@@ -195,14 +211,34 @@ export function installFusPvpKarma(mc, { worldId, uid, rtdb }) {
         lastUpdateAt: Number(row.lastUpdateAt) || 0,
       })
     }
+    if (!karmaListenerDisposed && pvpRowReplayQueue.length > 0) {
+      pvpRowReplayRaf = requestAnimationFrame(flushPvpRowReplay)
+    }
+  }
+  const schedulePvpRowReplay = () => {
+    if (!pvpRowReplayRaf) {
+      pvpRowReplayRaf = requestAnimationFrame(flushPvpRowReplay)
+    }
+  }
+
+  if (rtdb && worldId) {
+    const pvpRef = dbRef(rtdb, `worldPlayerPvp/${worldId}`)
     pvpUnsubs.push(
       onChildAdded(pvpRef, (snap) => {
-        applyPvpRow(snap.key, snap.val())
+        const row = snap.val()
+        if (snap.key && row && typeof row === 'object') {
+          pvpRowReplayQueue.push({ key: snap.key, row })
+          schedulePvpRowReplay()
+        }
       }),
     )
     pvpUnsubs.push(
       onChildChanged(pvpRef, (snap) => {
-        applyPvpRow(snap.key, snap.val())
+        const row = snap.val()
+        if (snap.key && row && typeof row === 'object') {
+          pvpRowReplayQueue.push({ key: snap.key, row })
+          schedulePvpRowReplay()
+        }
       }),
     )
     pvpUnsubs.push(
@@ -249,6 +285,14 @@ export function installFusPvpKarma(mc, { worldId, uid, rtdb }) {
   const dispose = () => {
     if (disposed) return
     disposed = true
+    karmaListenerDisposed = true
+    try {
+      if (pvpRowReplayRaf) cancelAnimationFrame(pvpRowReplayRaf)
+    } catch {
+      /* ignore */
+    }
+    pvpRowReplayRaf = 0
+    pvpRowReplayQueue.length = 0
     window.clearInterval(decayIv)
     for (const u of pvpUnsubs) {
       try {

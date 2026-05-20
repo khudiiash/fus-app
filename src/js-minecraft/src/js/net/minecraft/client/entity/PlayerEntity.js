@@ -257,6 +257,11 @@ export default class PlayerEntity extends EntityLiving {
             this.motionY *= 0.98;
             this.motionZ *= slipperiness;
 
+
+            const isLabyDev = import.meta.env.DEV;
+
+            mc.fusAllowFallDamage = !isLabyDev;
+
             /** Fall damage ({@code mc.fusAllowFallDamage === false} disables). Mirrors vanilla-ish
              *  distance tracking using {@link EntityLiving}’s unchanged {@code prevY} for the tick. */
             const mc = this.minecraft;

@@ -38,8 +38,23 @@ export default class ChunkProviderGenerate extends ChunkProvider {
         if (!chunk.isTerrainPopulated) {
             chunk.isTerrainPopulated = true;
 
-            // Populate chunk
-            this.generator.populateChunk(chunk.x, chunk.z);
+            /**
+             * Trees / ore placement use {@link World#setBlockAt}. The Laby RTDB layer patches
+             * that method to persist edits — without this guard, every generated block is
+             * mistaken for a player edit and spams Firebase + mesh churn (0 FPS freeze).
+             */
+            const mc = this.world.minecraft;
+            const prev = mc != null ? (mc.fusPopulationDepth | 0) : 0;
+            if (mc != null) {
+                mc.fusPopulationDepth = prev + 1;
+            }
+            try {
+                this.generator.populateChunk(chunk.x, chunk.z);
+            } finally {
+                if (mc != null) {
+                    mc.fusPopulationDepth = prev;
+                }
+            }
         }
     }
 

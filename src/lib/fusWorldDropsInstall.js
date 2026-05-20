@@ -772,9 +772,45 @@ export function installFusWorldDrops(mc, { worldId, uid, rtdb }) {
 
   const sweepIv = window.setInterval(sweepExpired, SWEEP_MS)
 
-  /** RTDB subscription: watch the whole world node. Cheap — drops are small and rare. */
+  let disposed = false
+  /** Firebase replays existing children when the listener attaches; {@link addDrop} allocates THREE state. */
+  const rtdbAddsReplayQueue = []
+  let rtdbAddsRaf = 0
+  const addsPerBatch = () =>
+    typeof mc.fusWorldDropsAddsPerFrame === 'number' && Number.isFinite(mc.fusWorldDropsAddsPerFrame)
+      ? Math.max(1, Math.min(64, Math.floor(mc.fusWorldDropsAddsPerFrame)))
+      : typeof window !== 'undefined' && window.__LABY_MC_FUS_EMBED__
+        ? 8
+        : 24
+  const flushRtdbAddsQueue = () => {
+    rtdbAddsRaf = 0
+    if (disposed) return
+    let budget = addsPerBatch()
+    while (budget-- > 0 && rtdbAddsReplayQueue.length > 0) {
+      const pair = rtdbAddsReplayQueue.shift()
+      if (!pair) break
+      try {
+        addDrop(pair.id, pair.row)
+      } catch (e) {
+        console.warn('[fusWorldDrops] addDrop ingest', pair.id, e)
+      }
+    }
+    if (!disposed && rtdbAddsReplayQueue.length > 0) {
+      rtdbAddsRaf = requestAnimationFrame(flushRtdbAddsQueue)
+    }
+  }
+  const scheduleAddsReplay = () => {
+    if (!rtdbAddsRaf) {
+      rtdbAddsRaf = requestAnimationFrame(flushRtdbAddsQueue)
+    }
+  }
+
+  /** RTDB subscription: whole-world drop tree (historic rows replay on attach — stagger above). */
   const rootRef = dbRef(rtdb, `worldLootDrops/${worldId}`)
-  const onAdded = onChildAdded(rootRef, (snap) => addDrop(snap.key, snap.val()))
+  const onAdded = onChildAdded(rootRef, (snap) => {
+    rtdbAddsReplayQueue.push({ id: snap.key, row: snap.val() })
+    scheduleAddsReplay()
+  })
   const onChanged = onChildChanged(rootRef, (snap) => {
     /** If someone else claimed this drop (claimedBy set), hide the mesh pre-emptively so
      *  the player doesn't see a ghost coin between "claim" and "delete". */
@@ -853,10 +889,16 @@ export function installFusWorldDrops(mc, { worldId, uid, rtdb }) {
   mc.fusDropCoinAt = dropCoinAt
   mc.fusDropItemAt = dropItemAt
 
-  let disposed = false
   const dispose = () => {
     if (disposed) return
     disposed = true
+    try {
+      if (rtdbAddsRaf) cancelAnimationFrame(rtdbAddsRaf)
+    } catch {
+      /* ignore */
+    }
+    rtdbAddsRaf = 0
+    rtdbAddsReplayQueue.length = 0
     delete mc.fusWorldDropsTick
     window.clearInterval(sweepIv)
     try {

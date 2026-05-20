@@ -9,70 +9,23 @@ import {
   update as dbUpdate,
 } from 'firebase/database'
 
-/**
- * RTDB-backed streaming of world edits with cross-session persistence.
- *
- * Design goals (from user request):
- *   • Any block edit (place, break) is persisted.
- *   • Edits are fetched and applied fast (subscribed to a moving window around the player,
- *     primed via a single `get` per cell the first time it enters the window, debounced
- *     batched writes so a fast builder doesn't round-trip 10 times/s).
- *   • Cost-proportional to activity — no polling, no per-frame RTDB calls.
- *   • **Respawns/reloads see their own historical edits.** The previous revision silently
- *     dropped incoming rows whose `by === uid`, under the assumption they were same-session
- *     echoes. That was correct mid-session but broke persistence across refreshes: a
- *     reloaded client has the *same* uid, so its own edits looked like echoes and were
- *     skipped, causing the world to revert on every rejoin. We now suppress same-session
- *     echoes via the `existing === id` local-state check (which is a free no-op when the
- *     server confirms what we just wrote) and leave cross-session edits alone.
- *
- * Storage layout:
- *   `worldBlockEdits/{worldId}/cells/{cellKey}/{cellCoord}`
- *     - `cellKey` = `cx_cz`, where `cx = x >> 4`, `cz = z >> 4`. 16×16 column.
- *     - `cellCoord` = `lx_y_lz` with local x/z (0-15) and *absolute* y.
- *     - Each leaf: `{ id, at, by }` where `id` is blockTypeId (0 = air), `at` is a
- *       `serverTimestamp()`, `by` is the writer's uid (kept for future admin tooling —
- *       "who broke this?" — but no longer used for echo suppression).
- *
- * Apply pipeline:
- *   • Same-frame apply if the target chunk is already loaded.
- *   • Deferred-apply queue otherwise. Each miss is pushed into
- *     {@link pendingApplies}; the RAF loop (which we already run for the subscribe-window
- *     reconcile) drains it in small batches, checking whether the chunk is now available.
- *     This is the failure mode that previously lost edits silently: the client
- *     subscribes → prime returns edits for chunks that haven't finished generating →
- *     `getBlockAt` throws → edit is discarded. Now it's just parked and retried.
- *   • Applies use a reentry guard so the patched `setBlockAt` below doesn't try to
- *     re-write what we just pulled from the server.
- *
- * @param {any} mc
- * @param {{ worldId: string, uid: string, rtdb: any }} opts
- * @returns {() => void}
- */
 export function installFusWorldEditsRtdb(mc, { worldId, uid, rtdb }) {
   if (!mc || !mc.world || !rtdb || !worldId || !uid) {
     return () => {}
   }
 
-  /** `true` while applying an incoming edit — suppresses the outgoing-write path. */
   let reentry = false
   const origSetBlockAt = mc.world.setBlockAt.bind(mc.world)
   mc.world.setBlockAt = function fusPatchedSetBlockAt(x, y, z, type) {
     origSetBlockAt(x, y, z, type)
     if (reentry) return
-    /** Local fluid simulation — do not persist every propagation tick to RTDB. */
     if (mc.fusSuppressWorldEditWrite) return
+    if ((mc.fusPopulationDepth | 0) > 0) return
+    if (mc.fusFrozen === true) return
     queueWrite(x, y, z, type)
   }
 
-  /**
-   * Debounce writes per-cell so a fast builder spamming 10 blocks/sec still issues one
-   * `update(...)` per cell per RAF window, not 10 round-trips. The bucket is keyed by
-   * cellKey so edits in the same 16×16 column coalesce into a single multi-leaf update.
-   * @type {Map<string, Record<string, { id: number, at: any, by: string }>>}
-   */
   const writeBuffer = new Map()
-  /** RAF id OR timeout id depending on {@link writeFlushUsesTimeout}. */
   let writeFlushId = null
   let writeFlushUsesTimeout = false
   const immediateWriteFlush = mc.fusInstantBlockActions !== false
@@ -109,32 +62,21 @@ export function installFusWorldEditsRtdb(mc, { worldId, uid, rtdb }) {
     writeBuffer.clear()
   }
 
-  /**
-   * Deferred apply queue for edits whose target chunk isn't loaded yet. Keyed by a
-   * per-cell string so a later incoming update for the same cell overwrites the stale
-   * one instead of double-applying.
-   * @type {Map<string, { x: number, y: number, z: number, id: number, enqueuedAt: number }>}
-   */
   const pendingApplies = new Map()
-  /** Soft cap — if the server dumps tens of thousands of edits into a tiny client view,
-   *  we don't want the retry map to grow without bound. Oldest entries get evicted. */
   const PENDING_MAX = 50000
 
-  /** @type {Map<string, { ref: any, addedCb: any, changedCb: any }>} */
   const subs = new Map()
-  let disposed = false
 
-  /** Actually push an `(x,y,z,id)` tuple through the engine. Returns true on success,
-   *  false if the chunk wasn't ready (caller parks it in {@link pendingApplies}). */
+  const subscribeDeferredQueue = []
+  let disposed
+ = false
+
   const tryApply = (x, y, z, id) => {
     try {
       const existing = mc.world.getBlockAt(x, y, z)
-      /** Same-session echo suppression — if the local state already matches the server,
-       *  there's nothing to do (and calling setBlockAt would still be correct but pay the
-       *  chunk-rebuild cost for nothing). */
       if (existing === id) return true
     } catch {
-      return false /** chunk not loaded */
+      return false
     }
     reentry = true
     try {

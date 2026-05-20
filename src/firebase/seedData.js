@@ -401,6 +401,17 @@ const SEED_SKINS = [
   { name: 'Verdel',          file: 'Verdel.png',             rarity: 'rare',      description: 'Зелений, свіжий, непередбачуваний. Верде — це природа у бою.' },
   { name: 'Wiwiyiv',         file: 'Wiwiyiv.png',            rarity: 'common',    description: 'Загадкове ім\'я, загадкова особистість. Вівійів дивиться на тебе.' },
   { name: 'Zoltron',         file: 'Zoltron96.png',          rarity: 'legendary', description: 'Зачинений у 96-му, відроджений зараз. Залтрон — кіборг-легенда.' },
+  { name: 'Omniman',         file: 'Omniman.png',            rarity: 'legendary', description: 'Омнімен — це всесвіт. Він все володіє і все контролює. Омнімен — це бог.' },
+  { name: 'Invincible',      file: 'Invincible.png',         rarity: 'epic',      description: 'Нездоланний. Нездоланний. Нездоланний. Інвінсібл — це сила.' },
+  { name: 'Mario',           file: 'Mario.png',              rarity: 'rare',      description: 'Маріо завжди прийде врятувати принцесу або полагодити сантехніку.' },
+  { name: '67',              file: '67.png',                 rarity: 'rare',      description: '67 — це мем який перевернув світ' },
+  { name: 'Death',           file: 'Death.png',              rarity: 'common',    description: 'Смерть — це не кінець, це лише початок нового життя. Death — це бог смерті.' },
+  { name: 'BaneOfSins',      file: 'BaneOfSins.png',         rarity: 'rare',      description: 'Гріховний Бейн — колись був ангелем, але тепер є богом гріхів.' },
+  { name: 'Пан Дмитро',      file: 'PanDmytro.png',          rarity: 'legendary', description: 'Пан Дмитро — просто вчитель інформатики' },
+  { name: 'Зеленський',      file: 'Zelensky.png',           rarity: 'legendary', description: 'Зеленський — потужний президент України' },
+  { name: 'Порошенко',       file: 'Poroshenko.png',         rarity: 'legendary', description: 'Порошенко — президент Рошену' },
+  { name: 'Donald Trump',    file: 'Trump.png',              rarity: 'legendary', description: 'Make America Great Again' },
+  { name: 'Шевченко',        file: 'Shevchenko.png',         rarity: 'legendary', description: 'Тарас Григорович Шевченко — великий український поет' },
 ]
 
 // Canonical list of all school subjects

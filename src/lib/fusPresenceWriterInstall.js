@@ -202,6 +202,12 @@ export function installFusPresenceWriter(mc, { worldId, uid, rtdb, displayName, 
   async function writeRowInner(forceImmediate) {
     const pl = mc.player
     if (!pl) return
+    /**
+     * Laby holds {@code fusFrozen} until the full play bootstrap try-block finishes — presence
+     * would otherwise contend with spawn mesh uploads / prewarm (“0 FPS”; empty RTDB does not fix).
+     * Forced writes (swing markers, explicit flush) bypass this gate.
+     */
+    if (mc.fusFrozen === true && !forceImmediate) return
     const now = Date.now()
     const dt = state.lastWriteMs > 0 ? now - state.lastWriteMs : PRESENCE_WRITE_MS
     const liveX = Number(pl.x)
@@ -375,6 +381,7 @@ export function installFusPresenceWriter(mc, { worldId, uid, rtdb, displayName, 
     if (disposed) return
     rafId = requestAnimationFrame(tick)
     if (!mc.player) return
+    if (mc.fusFrozen === true) return
     const now = Date.now()
     const iu = mc.fusSpawnInvulnUntilMs
     if (Number.isFinite(iu) && iu > now) {

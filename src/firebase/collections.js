@@ -1609,6 +1609,7 @@ function grantOneToInventory(inv, counts, itemId) {
 
 /**
  * Відкрити магічну коробку: монети + 0–2 предмети з магазину за правилами rarity/price cap.
+ * Якщо в пулі ще є предмети тієї ж рідкості, що й коробка, серед луту завжди є хоча б один такий.
  * @returns {Promise<{ coins: number, itemIds: string[] }>}
  */
 export async function openMysteryBox(uid, boxItemId) {

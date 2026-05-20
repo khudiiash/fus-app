@@ -187,7 +187,7 @@ export function installFusBlockHardness(mc) {
     console.warn('[fusBlockHardness] missing scene; skip install')
     return () => {}
   }
-  const instantBlockActions = mc.fusInstantBlockActions !== false
+  const instantBlockActions = mc.fusInstantBlockActions === true
   const scene = mc.worldRenderer.scene
   let mouseBreakHeld = false
 

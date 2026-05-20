@@ -109,10 +109,14 @@ export function installFusSimpleMobs(mc, opts = {}) {
    * every mob clustered around the master's spawn point. The new budget is per-player:
    * each live player has its own bubble of mobs, and when they wander the master follows
    * them around with fresh spawns. The total is hard-capped so a 10-player lobby can't
-   * explode to 100 mobs at once.
+   * explode to hundreds of mob rows (RTDB + leadership cost).
+   *
+   * Tuning matches the former engine-side {@code FusMobSync.js} budget (targets ≈4 mobs/player,
+   * hard cap ≈40). A 2026-04 tweak raised per-player budgets to 6–8 with {@code MAX_TOTAL_MOBS}
+   * floors at 48+ — combined with multi-tab top-up races that inflated Firebase instance counts.
    */
-  /** Per-player mob budget — user target ≈5+ visible near one chunk; mobile keeps same cap. */
-  const MOBS_PER_PLAYER = count <= 4 ? 6 : 8
+  /** Per-player in-bubble target (aligned with former {@code FusMobSync.js} {@code MOB_TARGET_PER_PLAYER}). */
+  const MOBS_PER_PLAYER = count <= 4 ? 3 : 4
   /** Bubble radius inside which a mob "belongs" to a player for counting purposes. */
   const BUBBLE_RADIUS = 52
   /** Beyond this horizontal distance from every live player anchor, the master may cull. */
@@ -131,8 +135,8 @@ export function installFusSimpleMobs(mc, opts = {}) {
   const MOB_RENDER_VIS_HOLD_MS = 520
   const getMobVisHoldMs = () =>
     mc.fusLowTierMobile || mc.fusIosSafari ? 0 : MOB_RENDER_VIS_HOLD_MS
-  /** Global ceiling — scales with install {@code count} so large lobbies stay bounded. */
-  const MAX_TOTAL_MOBS = Math.max(48, count * 6)
+  /** Same order of magnitude as FusMobSync {@code MOB_TOTAL_CAP}; keeps shared RTDB bounded. */
+  const MAX_TOTAL_MOBS = 40
   /**
    * After a natural kill, re-seed the same mob at the same rough location so the world
    * doesn't go empty. Only the last-hitter schedules (multiplayer) so we don't duplicate spawns.
@@ -304,6 +308,11 @@ export function installFusSimpleMobs(mc, opts = {}) {
    *  may claim. Chosen > 2× refresh so a stutter tab doesn't instantly lose the mob. */
   const LEADER_LEASE_MS = 5000
   const LEADER_REFRESH_MS = 2000
+  /** After a failed/aborted leadership {@code runTransaction}, don't retry same mob every RAF. */
+  const LEADERSHIP_CLAIM_BACKOFF_MS =
+    typeof mc.fusMobLeadershipClaimBackoffMs === 'number' && Number.isFinite(mc.fusMobLeadershipClaimBackoffMs)
+      ? Math.max(200, Math.min(5000, Math.floor(mc.fusMobLeadershipClaimBackoffMs)))
+      : 900
   /** Playback lag so observers always have a sample ahead of render time. */
   const INTERP_DELAY_MS = 180
   /** Spawn-top-up cadence and jitter so if two tabs briefly agree on master they don't both
@@ -1499,11 +1508,26 @@ export function installFusSimpleMobs(mc, opts = {}) {
     })
   }
 
+  /**
+   * In-flight mutex: {@link frame} invokes {@code tryClaimLeadership(mob.id)} with {@code void}
+   * — without this, overlapping {@code runTransaction} calls peg the main thread (Chrome: 99%+ in
+   * {@code firebase_database.js}).
+   */
+  const claimLeadershipInflight = new Set()
+
   /** Claim leadership on a mob we want to lead. Transactional so two clients racing end with
    *  exactly one winner. */
   const tryClaimLeadership = async (mobKey) => {
     if (!multiplayer) return false
-    const now = nowMs()
+    if (mc.fusFrozen === true) return false
+    if (claimLeadershipInflight.has(mobKey)) return false
+    const stamp = nowMs()
+    const mobGate = mobs.get(mobKey)
+    if (mobGate && typeof mobGate._fusNextLeadershipClaimAt === 'number' && stamp < mobGate._fusNextLeadershipClaimAt) {
+      return false
+    }
+    claimLeadershipInflight.add(mobKey)
+    const now = stamp
     const ref = dbRef(rtdb, `worldMobs/${worldId}/instances/${mobKey}`)
     try {
       const res = await runTransaction(ref, (row) => {
@@ -1523,11 +1547,18 @@ export function installFusSimpleMobs(mc, opts = {}) {
           local.leaderUid = uid
           local.leaderUntil = now + LEADER_LEASE_MS
           local.lastRefreshMs = now
+          local._fusNextLeadershipClaimAt = undefined
         }
         return true
       }
+      const tgt = mobs.get(mobKey)
+      if (tgt) tgt._fusNextLeadershipClaimAt = stamp + LEADERSHIP_CLAIM_BACKOFF_MS
     } catch (e) {
       console.warn('[fusSimpleMobs] claim transaction failed', e)
+      const tgt = mobs.get(mobKey)
+      if (tgt) tgt._fusNextLeadershipClaimAt = stamp + LEADERSHIP_CLAIM_BACKOFF_MS * 2
+    } finally {
+      claimLeadershipInflight.delete(mobKey)
     }
     return false
   }
@@ -2563,7 +2594,7 @@ export function installFusSimpleMobs(mc, opts = {}) {
     if (myIdx < 0) return
     const deficit = MOBS_PER_PLAYER - counts[myIdx]
     if (deficit <= 0) return
-    const batch = Math.min(deficit, 5, Math.max(0, MAX_TOTAL_MOBS - mobs.size))
+    const batch = Math.min(deficit, 2, Math.max(0, MAX_TOTAL_MOBS - mobs.size))
     for (let s = 0; s < batch; s++) {
       if (mobs.size >= MAX_TOTAL_MOBS) break
       // eslint-disable-next-line no-await-in-loop

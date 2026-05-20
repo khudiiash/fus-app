@@ -1,5 +1,6 @@
 /**
  * Mystery box loot: eligible pool, roll outcome, and grant checks (used by `openMysteryBox` in collections).
+ * Rolls prefer at least one reward matching the box rarity when such items remain in the pool.
  */
 
 const RARITY_RANK = {
@@ -59,8 +60,25 @@ export function buildEligibleLootPool(allItems, inv, boxRarity, boxPrice) {
 }
 
 /**
+ * @param {Array<Record<string, unknown> & { id?: string }>} arr
+ */
+function shufflePool(arr) {
+  const copy = [...arr]
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[copy[i], copy[j]] = [copy[j], copy[i]]
+  }
+  return copy
+}
+
+/** @param {unknown} r */
+function rarityKey(r) {
+  return String(r || 'common').toLowerCase()
+}
+
+/**
  * @param {Record<string, unknown>} boxItem
- * @param {Array<{ id: string }>} pool
+ * @param {Array<Record<string, unknown> & { id: string }>} pool
  * @returns {{ coins: number, itemIds: string[] }}
  */
 export function rollMysteryBox(boxItem, pool) {
@@ -75,24 +93,51 @@ export function rollMysteryBox(boxItem, pool) {
   else if (r < 0.82) numItems = 1
   else numItems = 2
 
-  if (!pool.length || numItems === 0) {
+  if (!pool.length) {
     return { coins, itemIds: [] }
   }
 
-  const copy = [...pool]
-  for (let i = copy.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1))
-    ;[copy[i], copy[j]] = [copy[j], copy[i]]
+  const boxR = rarityKey(boxItem?.rarity)
+  const sameRarityPool = pool.filter((it) => rarityKey(it.rarity) === boxR)
+
+  // If any loot at the box's tier exists in the pool, the open includes at least one such item
+  // (and is never coins-only while that tier is still available).
+  if (sameRarityPool.length > 0 && numItems === 0) {
+    numItems = 1
+  }
+
+  if (numItems === 0) {
+    return { coins, itemIds: [] }
   }
 
   const itemIds = []
-  const want = Math.min(numItems, copy.length)
-  for (let i = 0; i < want; i++) {
-    const id = copy[i]?.id
-    if (typeof id === 'string' && id && !itemIds.includes(id)) {
-      itemIds.push(id)
+
+  if (sameRarityPool.length > 0) {
+    const first = shufflePool(sameRarityPool)[0]
+    const fid = first?.id
+    if (typeof fid === 'string' && fid) itemIds.push(fid)
+
+    if (numItems >= 2 && itemIds.length) {
+      const rest = shufflePool(pool.filter((it) => it.id !== itemIds[0]))
+      for (const it of rest) {
+        const id = it?.id
+        if (typeof id === 'string' && id && !itemIds.includes(id)) {
+          itemIds.push(id)
+          break
+        }
+      }
+    }
+  } else {
+    const copy = shufflePool(pool)
+    const want = Math.min(numItems, copy.length)
+    for (let i = 0; i < want; i++) {
+      const id = copy[i]?.id
+      if (typeof id === 'string' && id && !itemIds.includes(id)) {
+        itemIds.push(id)
+      }
     }
   }
+
   return { coins, itemIds }
 }
 

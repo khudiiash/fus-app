@@ -25,6 +25,8 @@
     "laby:clear-loot:dry": "node scripts/clear-world-loot.mjs --dry-run",
     "laby:clear-terrain": "node scripts/clear-world-terrain-custom-blocks.mjs",
     "laby:clear-terrain:dry": "node scripts/clear-world-terrain-custom-blocks.mjs --dry-run",
+    "rtdb:clear-mobs": "node scripts/clear-world-mobs-rtdb.mjs",
+    "rtdb:clear-mobs:dry": "node scripts/clear-world-mobs-rtdb.mjs --dry-run",
     "shop:update-subject-badges": "node scripts/update-subject-badges.mjs",
     "shop:update-subject-badges:dry": "node scripts/update-subject-badges.mjs --dry-run"
   },

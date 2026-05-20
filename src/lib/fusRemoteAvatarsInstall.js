@@ -1130,6 +1130,8 @@ export function installFusRemoteAvatars(mc, { worldId, uid, rtdb }) {
   const frame = () => {
     if (disposed) return
     rafId = requestAnimationFrame(frame)
+    /** Match {@link fusPresenceWriterInstall}: skip peer rig + nametag GPU work until Laby clears {@code fusFrozen}. */
+    if (mc.fusFrozen === true) return
     const now = performance.now()
     const dt = Math.min(0.1, Math.max(0.001, (now - prev) / 1000))
     prev = now

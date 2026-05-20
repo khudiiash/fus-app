@@ -39,3 +39,4 @@ vendor/js-minecraft/
 
 # Scratch clone when refreshing the fork (not committed)
 .tmp-js-minecraft/
+.aider*
