@@ -112,6 +112,7 @@ Log in as admin → Dashboard → click **"Seed Now"** to populate shop items an
 - Trade coins/items with classmates
 - Compete on Leaderboard
 - Unlock Achievement badges
+- Optional **subject quiz** on Home: 5 питань з матеріалів на кшталт ЗНО/НМТ — джерело [NLPForUA/ZNO](https://github.com/NLPForUA/ZNO) (ліцензія `DATA_LICENSE` у репозиторії)
 
 ---
 
@@ -123,6 +124,7 @@ Log in as admin → Dashboard → click **"Seed Now"** to populate shop items an
 | ⭐ XP + Levels | Earned by logins, coins, trades; 50 levels total |
 | 🔥 Streak | Daily login streak; bonus coins at 3/7/14/30 days |
 | ⚡ Daily Quests | 3 quests/day, reset at midnight |
+| 📚 Subject quiz | 5 запитань із банків ZNO/НМТ ([NLPForUA/ZNO](https://github.com/NLPForUA/ZNO)); монети + XP не частіше разу на день лише за ідеальну спробу |
 | 🏅 Achievements | Milestone badges with coin/XP rewards |
 | 🎨 Avatar | Skin, background, frame, accessories — all unlockable |
 | 🤝 Trading | Student-to-student coin + item offers |

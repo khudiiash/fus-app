@@ -13,6 +13,7 @@ import StreakWidget from '@/components/gamification/StreakWidget.vue'
 import QuestCard from '@/components/gamification/QuestCard.vue'
 import TeacherQuestAssignmentCard from '@/components/gamification/TeacherQuestAssignmentCard.vue'
 import QuestSubmitProofModal from '@/components/gamification/QuestSubmitProofModal.vue'
+import DailyQuizSection from '@/components/student/DailyQuizSection.vue'
 import { Zap, ClipboardList, Activity, Inbox } from 'lucide-vue-next'
 import { givenNameFromDisplayName } from '@/utils/personName'
 
@@ -78,6 +79,8 @@ function formatDate(ts) {
 
     <!-- Streak -->
     <StreakWidget :streak="streak" />
+
+    <DailyQuizSection />
 
     <!-- Daily Quests -->
     <div>

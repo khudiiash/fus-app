@@ -14,6 +14,8 @@ import {
 } from '@/lib/mysteryBoxRng'
 import { parseBlockWorldItem } from '@/lib/blockWorldShopVisuals'
 import { FUS_CATALOG_TO_ENGINE_BLOCK_ID } from '@/lib/fusTerrainBlockIds'
+import { ZNO_QUIZ_SUBJECTS } from '@/lib/znoQuizConstants'
+import { fetchZnoSubjectBank } from '@/lib/znoQuizLoad'
 
 // ─── Collection refs ──────────────────────────────────────────────────────────
 export const usersCol    = () => collection(db, 'users')
@@ -2071,6 +2073,262 @@ export async function getLeaderboard(classId = null, limitCount = 20, sortBy = '
   }
   const snap = await getDocs(q)
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }))
+}
+
+// ─── Daily ZNO/NMT subject quiz (NLPForUA/ZNO dataset, see DATA_LICENSE in that repo) ──
+/** Cached map {@code mbSeedKey} → Firestore item id for mystery_box rows. */
+let _quizMysteryBoxIdBySeed = null
+
+/**
+ * @returns {Promise<Record<string, string>>}
+ */
+async function resolveMysteryBoxItemIdsForQuiz() {
+  if (_quizMysteryBoxIdBySeed) return _quizMysteryBoxIdBySeed
+  const snap = await getDocs(query(itemsCol(), where('category', '==', 'mystery_box')))
+  /** @type {Record<string, string>} */
+  const map = {}
+  for (const d of snap.docs) {
+    const data = d.data()
+    const key = data.mbSeedKey
+    if (typeof key === 'string' && key) map[key] = d.id
+  }
+  const need = ['mb:legendary', 'mb:epic', 'mb:rare', 'mb:common']
+  for (const k of need) {
+    if (!map[k]) {
+      throw new Error(
+        'У каталозі магазину немає магічних коробок (mb:legendary / mb:epic / mb:rare / mb:common). '
+        + 'Запустіть у адмін-панелі «Згенерувати коробки».',
+      )
+    }
+  }
+  _quizMysteryBoxIdBySeed = map
+  return map
+}
+
+/** Календарний день UTC (yyyy-mm-dd) — одна спроба квізу на добу. */
+export function utcCalendarDateString(d = new Date()) {
+  return d.toISOString().split('T')[0]
+}
+
+/**
+ * Зарезервувати денну спробу предметного квізу (викликати перед показом питань).
+ * @param {string} uid
+ * @throws {Error} якщо сьогодні вже було {@code quizDailyAttemptDate}
+ */
+export async function beginDailyZnoQuiz(uid) {
+  if (!uid) throw new Error('Не вдалося перевірити акаунт')
+  const today = utcCalendarDateString()
+
+  await runTransaction(db, async (tx) => {
+    const uRef = doc(db, 'users', uid)
+    const uSnap = await tx.get(uRef)
+    if (!uSnap.exists()) throw new Error('Користувача не знайдено')
+    const u = uSnap.data()
+    if (u.role !== 'student') throw new Error('Лише для учнів')
+
+    const last = String(u.quizDailyAttemptDate || '').trim()
+    if (last === today) {
+      throw new Error('Сьогоднішній предметний квіз ви вже проходили. Наступна спроба — завтра.')
+    }
+
+    tx.update(uRef, { quizDailyAttemptDate: today })
+  })
+}
+
+/**
+ * @param {number} errorCount 0–5
+ * @returns {{ coins: number, mbSeed: string | null }}
+ */
+function dailyQuizRewardSpec(errorCount) {
+  const n = Math.max(0, Math.min(5, Math.round(Number(errorCount) || 0)))
+  if (n <= 0) return { coins: 100, mbSeed: 'mb:legendary' }
+  if (n === 1) return { coins: 75, mbSeed: 'mb:epic' }
+  if (n === 2) return { coins: 50, mbSeed: 'mb:rare' }
+  if (n === 3) return { coins: 25, mbSeed: 'mb:common' }
+  return { coins: 0, mbSeed: null }
+}
+
+/**
+ * Зафіксувати питання квізу як «вже використані» без нагороди (наприклад помилка на одному з перших запитань).
+ * @param {string} uid
+ * @param {string[]} taskKeys canonical keys включно до поточного питання
+ */
+export async function recordConsumedQuizQuestions(uid, taskKeys, reasonNote = '') {
+  const keys = [...new Set((taskKeys || []).map(String).filter(Boolean))]
+  if (!uid || keys.length === 0) return
+  const today = utcCalendarDateString()
+  await updateDoc(doc(db, 'users', uid), {
+    quizConsumedQuestionIds: arrayUnion(...keys),
+    quizDailyAttemptDate: today,
+  })
+  const extra = typeof reasonNote === 'string' && reasonNote.trim() ? ` · ${reasonNote.trim()}` : ''
+  await logTransaction({
+    type: 'daily_quiz',
+    fromUid: uid,
+    toUid: uid,
+    amount: 0,
+    note: `Квіз: знято ${keys.length} пит.${extra}`,
+  }).catch(() => {})
+}
+
+/**
+ * Перевіряє 5 відповідей по банку ZNO/НМТ; рахує помилки; нагорода за таблицею (монети на предмет + коробка),
+ * Одна спроба на календарний день (UTC): {@code quizDailyAttemptDate} (див. {@link beginDailyZnoQuiz}).
+ * Нагорода (монети + коробка) — не частіше разу на день: {@code quizDailyPerfectRewardDate}.
+ *
+ * Усі питання зі спроби заносяться в {@code quizConsumedQuestionIds}.
+ *
+ * @param {string} uid
+ * @param {{ subjectSlug: string, items: Array<{ taskKey: string, picked: string }> }} payload
+ * @returns {Promise<{
+ *   ok: boolean,
+ *   errorCount: number,
+ *   rewarded: boolean,
+ *   skippedReward: boolean,
+ *   coinsGranted: number,
+ *   boxName: string,
+ *   message: string,
+ * }>}
+ */
+export async function submitDailyZnoQuiz(uid, payload) {
+  const subjectSlug = String(payload?.subjectSlug || '').trim()
+  const items = payload?.items
+  if (!uid) throw new Error('Не вдалося перевірити акаунт')
+  if (!subjectSlug) throw new Error('Потрібно обрати предмет')
+  if (!Array.isArray(items) || items.length !== 5) throw new Error('Потрібно відповісти на всі 5 питань')
+
+  const subjectMeta = ZNO_QUIZ_SUBJECTS.find((s) => s.slug === subjectSlug)
+  if (!subjectMeta) throw new Error('Невідомий предмет')
+
+  const bank = await fetchZnoSubjectBank(subjectMeta, subjectSlug)
+  const byKey = new Map(bank.map((t) => [t.taskKey, t]))
+
+  const rows = items.map((row) => ({
+    taskKey: String(row.taskKey || '').trim(),
+    picked: String(row.picked || '').trim(),
+  }))
+  const rowKeys = new Set(rows.map((r) => r.taskKey))
+  if (rows.some((r) => !r.taskKey || !r.picked)) throw new Error('Некоректні відповіді')
+  if (rowKeys.size !== 5) throw new Error('Питання не повторюватись протягом квізу')
+
+  let errorCount = 0
+  for (const r of rows) {
+    const t = byKey.get(r.taskKey)
+    if (!t || t.correctLetter !== r.picked) errorCount += 1
+  }
+
+  const spec = dailyQuizRewardSpec(errorCount)
+  const boxMap = spec.mbSeed ? await resolveMysteryBoxItemIdsForQuiz() : null
+  const boxItemId = spec.mbSeed && boxMap ? boxMap[spec.mbSeed] : null
+  let boxName = ''
+  if (boxItemId) {
+    const boxSnap = await getDoc(doc(db, 'items', boxItemId))
+    if (boxSnap.exists()) boxName = String(boxSnap.data().name || '').trim()
+  }
+
+  const today = utcCalendarDateString()
+  let rewarded = false
+  let skippedReward = false
+  let coinsGranted = 0
+
+  await runTransaction(db, async (tx) => {
+    const uRef = doc(db, 'users', uid)
+    const uSnap = await tx.get(uRef)
+    if (!uSnap.exists()) throw new Error('Користувача не знайдено')
+    const u = uSnap.data()
+    if (u.role !== 'student') throw new Error('Лише для учнів')
+
+    const lastAttempt = String(u.quizDailyAttemptDate || '').trim()
+    if (lastAttempt !== today) {
+      throw new Error(
+        'Сьогоднішній квіз не розпочато або спроба вже закрита. Оновіть сторінку; повтор — лише завтра.',
+      )
+    }
+
+    const consumed = Array.isArray(u.quizConsumedQuestionIds) ? u.quizConsumedQuestionIds.map(String) : []
+    const consumedSet = new Set(consumed)
+    for (const r of rows) {
+      if (consumedSet.has(r.taskKey)) {
+        throw new Error('Частину цих питань уже використано. Почніть новий квіз з іншого підбору.')
+      }
+    }
+
+    const newKeys = rows.map((r) => r.taskKey)
+    const patch = {
+      quizConsumedQuestionIds: arrayUnion(...newKeys),
+    }
+
+    const lastRw = String(u.quizDailyPerfectRewardDate || '').trim()
+    const wantsReward = spec.coins > 0 && boxItemId
+    if (wantsReward && lastRw !== today) {
+      const c = spec.coins
+      const xpGain = Math.ceil(c * 1.5)
+      const newCoins = (u.coins || 0) + c
+      const newXp = (u.xp || 0) + xpGain
+      Object.assign(patch, {
+        coins: newCoins,
+        xp: newXp,
+        level: calcLevel(newXp),
+        quizDailyPerfectRewardDate: today,
+      })
+
+      const counts = { ...(u.mysteryBoxCounts || {}) }
+      const prev = counts[boxItemId] || 0
+      counts[boxItemId] = prev + 1
+      if (prev === 0) adjustShopItemOwnersCount(tx, boxItemId, 1)
+      patch.mysteryBoxCounts = counts
+
+      rewarded = true
+      coinsGranted = c
+    } else if (wantsReward && lastRw === today) {
+      skippedReward = true
+    }
+
+    tx.update(uRef, patch)
+  })
+
+  const subLabel = subjectMeta.label
+  let message = ''
+  if (rewarded) {
+    message = `Помилок: ${errorCount}. +${coinsGranted} монет на предмет «${subLabel}»`
+    if (boxName) message += ` і «${boxName}»`
+    message += '.'
+  } else if (skippedReward) {
+    message = `Помилок: ${errorCount}. Нагороду за квіз ви вже отримали сьогодні — завтра знову.`
+  } else if (errorCount >= 4) {
+    message = `Помилок: ${errorCount}. Нагороди немає (потрібно не більше 3 помилок). Питання знято з підбору.`
+  } else {
+    message = 'Щось пішло не так з нагородою — зверніться до адміністратора.'
+  }
+
+  await logTransaction({
+    type: 'daily_quiz',
+    fromUid: uid,
+    toUid: uid,
+    amount: coinsGranted,
+    note: `${subLabel} · помилок ${errorCount}${rewarded ? ` · +${coinsGranted} 🪙` : ''}${boxName ? ` · ${boxName}` : ''}${skippedReward ? ' · нагорода вже була сьогодні' : ''}`,
+  }).catch(() => {})
+
+  if (coinsGranted > 0) {
+    await logTransaction({
+      type: 'award',
+      fromUid: uid,
+      toUid: uid,
+      amount: coinsGranted,
+      subjectName: subLabel,
+      note: `Предметний квіз · ${errorCount} помил.`,
+    }).catch(() => {})
+  }
+
+  return {
+    ok: true,
+    errorCount,
+    rewarded,
+    skippedReward,
+    coinsGranted,
+    boxName,
+    message,
+  }
 }
 
 // ─── Daily quests ─────────────────────────────────────────────────────────────
