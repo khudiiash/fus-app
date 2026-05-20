@@ -16,10 +16,10 @@ import {
   utcCalendarDateString,
 } from '@/firebase/collections'
 import { ZNO_QUIZ_SUBJECTS } from '@/lib/znoQuizConstants'
+import { isPrimarySchoolGrade } from '@/lib/primaryQuizBank'
 import {
   fetchZnoSubjectBank,
   pickRandomQuizTasks,
-  schoolTierOrdinalFromGrade,
   shuffleAnswersForDisplay,
 } from '@/lib/znoQuizLoad'
 import { gradeFromClassName } from '@/utils/schoolTier'
@@ -30,7 +30,7 @@ const { success, error, info } = useToast()
 const studentGrade = ref(null)
 const loadingGrade = ref(false)
 
-const subjectSlug = ref(ZNO_QUIZ_SUBJECTS[0].slug)
+const subjectSlug = ref('primary_school')
 /** Сабміт на сервер лише коли немає часу — не збігається з жодною літерою варіантів. */
 const PICK_TIMEOUT_SENTINEL = '__QUIZ_TIME__'
 const QUESTION_TIME_SEC = 60
@@ -167,11 +167,26 @@ watch(
   { immediate: true },
 )
 
-const tierLabel = computed(() => {
-  const o = schoolTierOrdinalFromGrade(studentGrade.value)
-  const labels = ['молодша школа (1–4 клас)', 'середня школа (5–8 клас)', 'старша школа (9–11 клас)']
-  return labels[o]
+/** Предмети в селекті: для 1–4 класу — початкова школа + укр. мова; для старших — ZNO без початкової. */
+const quizSubjectsForStudent = computed(() => {
+  if (isPrimarySchoolGrade(studentGrade.value)) {
+    return ZNO_QUIZ_SUBJECTS.filter(
+      (s) => s.slug === 'primary_school' || s.slug === 'ukr_lang_lit',
+    )
+  }
+  return ZNO_QUIZ_SUBJECTS.filter((s) => s.slug !== 'primary_school')
 })
+
+watch(
+  [studentGrade, quizSubjectsForStudent],
+  () => {
+    const list = quizSubjectsForStudent.value
+    if (!list.some((s) => s.slug === subjectSlug.value)) {
+      subjectSlug.value = list[0]?.slug ?? ZNO_QUIZ_SUBJECTS[0].slug
+    }
+  },
+  { immediate: true },
+)
 
 const consumedKeys = computed(() => {
   const arr = auth.profile?.quizConsumedQuestionIds
@@ -244,7 +259,8 @@ async function buildSession() {
   decorated.value = []
 
   try {
-    const meta = ZNO_QUIZ_SUBJECTS.find((s) => s.slug === subjectSlug.value)
+    const meta = quizSubjectsForStudent.value.find((s) => s.slug === subjectSlug.value)
+      ?? ZNO_QUIZ_SUBJECTS.find((s) => s.slug === subjectSlug.value)
     if (!meta) throw new Error('Невідомий предмет')
     const bank = await fetchZnoSubjectBank(meta, subjectSlug.value)
     const picked = pickRandomQuizTasks(bank, consumedKeys.value, studentGrade.value, 5)
@@ -380,24 +396,28 @@ const doneSummaryTitle = computed(() => {
         </span>
         <template v-else>
           <span>
-            Рівень за паралеллю класу:
-            <span class="text-sky-300/95 font-semibold">{{ tierLabel }}</span>
-          </span>
-          <span v-if="studentGrade == null" class="text-amber-400/95">
-            (клас без номера — ніби старша школа)
+            Питання за програмою
+            <span v-if="studentGrade != null" class="text-sky-300/95 font-semibold">{{ studentGrade }} класу</span>
+            <span v-else class="text-sky-300/95 font-semibold">10–11 класів</span>
+            <span class="text-slate-500"> (тема з банку ЗНО)</span>
           </span>
         </template>
       </div>
 
       <p class="text-[11px] text-slate-500 leading-snug">
-        Банк питань: проєкт
-        <a
-          href="https://github.com/NLPForUA/ZNO"
-          target="_blank"
-          rel="noopener noreferrer"
-          class="text-sky-400 underline-offset-2 hover:underline font-semibold"
-        >NLPForUA/ZNO</a>
-        (ліцензії в репозиторії).
+        <template v-if="subjectSlug === 'primary_school'">
+          100 власних питань для 1–4 класу (математика, мова, природознавство).
+        </template>
+        <template v-else>
+          Банк питань:
+          <a
+            href="https://github.com/NLPForUA/ZNO"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="text-sky-400 underline-offset-2 hover:underline font-semibold"
+          >NLPForUA/ZNO</a>
+          (ліцензії в репозиторії).
+        </template>
       </p>
 
       <div v-if="phase === 'idle' || phase === 'loading'" class="flex flex-col gap-2">
@@ -413,7 +433,7 @@ const doneSummaryTitle = computed(() => {
           class="bg-game-card border border-white/[0.08] rounded-xl px-3 py-2.5 text-slate-200 text-sm outline-none focus:border-white/18"
           :disabled="phase === 'loading' || quizTakenToday"
         >
-          <option v-for="s in ZNO_QUIZ_SUBJECTS" :key="s.slug" :value="s.slug">{{ s.label }}</option>
+          <option v-for="s in quizSubjectsForStudent" :key="s.slug" :value="s.slug">{{ s.label }}</option>
         </select>
         <AppButton
           variant="primary"

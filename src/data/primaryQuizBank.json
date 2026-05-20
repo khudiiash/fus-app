@@ -1,0 +1,2602 @@
+[
+  {
+    "id": 1,
+    "question": "Скільки буде 1 + 1?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "2"
+      },
+      {
+        "letter": "Б",
+        "text": "3"
+      },
+      {
+        "letter": "В",
+        "text": "1"
+      },
+      {
+        "letter": "Г",
+        "text": "5"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "математика. додавання в межах 20",
+    "gradeMin": 1,
+    "gradeMax": 2
+  },
+  {
+    "id": 2,
+    "question": "Скільки буде 1 + 2?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "3"
+      },
+      {
+        "letter": "Б",
+        "text": "4"
+      },
+      {
+        "letter": "В",
+        "text": "2"
+      },
+      {
+        "letter": "Г",
+        "text": "6"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "математика. додавання в межах 20",
+    "gradeMin": 1,
+    "gradeMax": 2
+  },
+  {
+    "id": 3,
+    "question": "Скільки буде 1 + 3?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "4"
+      },
+      {
+        "letter": "Б",
+        "text": "5"
+      },
+      {
+        "letter": "В",
+        "text": "3"
+      },
+      {
+        "letter": "Г",
+        "text": "7"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "математика. додавання в межах 20",
+    "gradeMin": 1,
+    "gradeMax": 2
+  },
+  {
+    "id": 4,
+    "question": "Скільки буде 1 + 4?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "5"
+      },
+      {
+        "letter": "Б",
+        "text": "6"
+      },
+      {
+        "letter": "В",
+        "text": "4"
+      },
+      {
+        "letter": "Г",
+        "text": "8"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "математика. додавання в межах 20",
+    "gradeMin": 1,
+    "gradeMax": 2
+  },
+  {
+    "id": 5,
+    "question": "Скільки буде 1 + 5?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "6"
+      },
+      {
+        "letter": "Б",
+        "text": "7"
+      },
+      {
+        "letter": "В",
+        "text": "5"
+      },
+      {
+        "letter": "Г",
+        "text": "9"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "математика. додавання в межах 20",
+    "gradeMin": 1,
+    "gradeMax": 2
+  },
+  {
+    "id": 6,
+    "question": "Скільки буде 1 + 6?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "7"
+      },
+      {
+        "letter": "Б",
+        "text": "8"
+      },
+      {
+        "letter": "В",
+        "text": "6"
+      },
+      {
+        "letter": "Г",
+        "text": "10"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "математика. додавання в межах 20",
+    "gradeMin": 1,
+    "gradeMax": 2
+  },
+  {
+    "id": 7,
+    "question": "Скільки буде 1 + 7?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "8"
+      },
+      {
+        "letter": "Б",
+        "text": "9"
+      },
+      {
+        "letter": "В",
+        "text": "7"
+      },
+      {
+        "letter": "Г",
+        "text": "11"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "математика. додавання в межах 20",
+    "gradeMin": 1,
+    "gradeMax": 2
+  },
+  {
+    "id": 8,
+    "question": "Скільки буде 1 + 8?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "9"
+      },
+      {
+        "letter": "Б",
+        "text": "10"
+      },
+      {
+        "letter": "В",
+        "text": "8"
+      },
+      {
+        "letter": "Г",
+        "text": "12"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "математика. додавання в межах 20",
+    "gradeMin": 1,
+    "gradeMax": 2
+  },
+  {
+    "id": 9,
+    "question": "Скільки буде 1 + 9?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "10"
+      },
+      {
+        "letter": "Б",
+        "text": "11"
+      },
+      {
+        "letter": "В",
+        "text": "9"
+      },
+      {
+        "letter": "Г",
+        "text": "13"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "математика. додавання в межах 20",
+    "gradeMin": 1,
+    "gradeMax": 2
+  },
+  {
+    "id": 10,
+    "question": "Скільки буде 2 + 1?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "3"
+      },
+      {
+        "letter": "Б",
+        "text": "4"
+      },
+      {
+        "letter": "В",
+        "text": "2"
+      },
+      {
+        "letter": "Г",
+        "text": "6"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "математика. додавання в межах 20",
+    "gradeMin": 1,
+    "gradeMax": 2
+  },
+  {
+    "id": 11,
+    "question": "Скільки буде 2 + 2?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "4"
+      },
+      {
+        "letter": "Б",
+        "text": "5"
+      },
+      {
+        "letter": "В",
+        "text": "3"
+      },
+      {
+        "letter": "Г",
+        "text": "7"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "математика. додавання в межах 20",
+    "gradeMin": 1,
+    "gradeMax": 2
+  },
+  {
+    "id": 12,
+    "question": "Скільки буде 2 + 3?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "5"
+      },
+      {
+        "letter": "Б",
+        "text": "6"
+      },
+      {
+        "letter": "В",
+        "text": "4"
+      },
+      {
+        "letter": "Г",
+        "text": "8"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "математика. додавання в межах 20",
+    "gradeMin": 1,
+    "gradeMax": 2
+  },
+  {
+    "id": 13,
+    "question": "Скільки буде 2 + 4?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "6"
+      },
+      {
+        "letter": "Б",
+        "text": "7"
+      },
+      {
+        "letter": "В",
+        "text": "5"
+      },
+      {
+        "letter": "Г",
+        "text": "9"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "математика. додавання в межах 20",
+    "gradeMin": 1,
+    "gradeMax": 2
+  },
+  {
+    "id": 14,
+    "question": "Скільки буде 2 + 5?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "7"
+      },
+      {
+        "letter": "Б",
+        "text": "8"
+      },
+      {
+        "letter": "В",
+        "text": "6"
+      },
+      {
+        "letter": "Г",
+        "text": "10"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "математика. додавання в межах 20",
+    "gradeMin": 1,
+    "gradeMax": 2
+  },
+  {
+    "id": 15,
+    "question": "Скільки буде 2 + 6?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "8"
+      },
+      {
+        "letter": "Б",
+        "text": "9"
+      },
+      {
+        "letter": "В",
+        "text": "7"
+      },
+      {
+        "letter": "Г",
+        "text": "11"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "математика. додавання в межах 20",
+    "gradeMin": 1,
+    "gradeMax": 2
+  },
+  {
+    "id": 16,
+    "question": "Скільки буде 2 + 7?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "9"
+      },
+      {
+        "letter": "Б",
+        "text": "10"
+      },
+      {
+        "letter": "В",
+        "text": "8"
+      },
+      {
+        "letter": "Г",
+        "text": "12"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "математика. додавання в межах 20",
+    "gradeMin": 1,
+    "gradeMax": 2
+  },
+  {
+    "id": 17,
+    "question": "Скільки буде 2 + 8?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "10"
+      },
+      {
+        "letter": "Б",
+        "text": "11"
+      },
+      {
+        "letter": "В",
+        "text": "9"
+      },
+      {
+        "letter": "Г",
+        "text": "13"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "математика. додавання в межах 20",
+    "gradeMin": 1,
+    "gradeMax": 2
+  },
+  {
+    "id": 18,
+    "question": "Скільки буде 2 + 9?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "11"
+      },
+      {
+        "letter": "Б",
+        "text": "12"
+      },
+      {
+        "letter": "В",
+        "text": "10"
+      },
+      {
+        "letter": "Г",
+        "text": "14"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "математика. додавання в межах 20",
+    "gradeMin": 1,
+    "gradeMax": 2
+  },
+  {
+    "id": 19,
+    "question": "Скільки буде 3 + 1?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "4"
+      },
+      {
+        "letter": "Б",
+        "text": "5"
+      },
+      {
+        "letter": "В",
+        "text": "3"
+      },
+      {
+        "letter": "Г",
+        "text": "7"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "математика. додавання в межах 20",
+    "gradeMin": 1,
+    "gradeMax": 2
+  },
+  {
+    "id": 20,
+    "question": "Скільки буде 3 + 2?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "5"
+      },
+      {
+        "letter": "Б",
+        "text": "6"
+      },
+      {
+        "letter": "В",
+        "text": "4"
+      },
+      {
+        "letter": "Г",
+        "text": "8"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "математика. додавання в межах 20",
+    "gradeMin": 1,
+    "gradeMax": 2
+  },
+  {
+    "id": 21,
+    "question": "Скільки буде 3 + 3?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "6"
+      },
+      {
+        "letter": "Б",
+        "text": "7"
+      },
+      {
+        "letter": "В",
+        "text": "5"
+      },
+      {
+        "letter": "Г",
+        "text": "9"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "математика. додавання в межах 20",
+    "gradeMin": 1,
+    "gradeMax": 2
+  },
+  {
+    "id": 22,
+    "question": "Скільки буде 3 + 4?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "7"
+      },
+      {
+        "letter": "Б",
+        "text": "8"
+      },
+      {
+        "letter": "В",
+        "text": "6"
+      },
+      {
+        "letter": "Г",
+        "text": "10"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "математика. додавання в межах 20",
+    "gradeMin": 1,
+    "gradeMax": 2
+  },
+  {
+    "id": 23,
+    "question": "Скільки буде 3 + 5?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "8"
+      },
+      {
+        "letter": "Б",
+        "text": "9"
+      },
+      {
+        "letter": "В",
+        "text": "7"
+      },
+      {
+        "letter": "Г",
+        "text": "11"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "математика. додавання в межах 20",
+    "gradeMin": 1,
+    "gradeMax": 2
+  },
+  {
+    "id": 24,
+    "question": "Скільки буде 3 + 6?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "9"
+      },
+      {
+        "letter": "Б",
+        "text": "10"
+      },
+      {
+        "letter": "В",
+        "text": "8"
+      },
+      {
+        "letter": "Г",
+        "text": "12"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "математика. додавання в межах 20",
+    "gradeMin": 1,
+    "gradeMax": 2
+  },
+  {
+    "id": 25,
+    "question": "Скільки буде 3 + 7?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "10"
+      },
+      {
+        "letter": "Б",
+        "text": "11"
+      },
+      {
+        "letter": "В",
+        "text": "9"
+      },
+      {
+        "letter": "Г",
+        "text": "13"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "математика. додавання в межах 20",
+    "gradeMin": 1,
+    "gradeMax": 2
+  },
+  {
+    "id": 26,
+    "question": "Скільки буде 3 + 8?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "11"
+      },
+      {
+        "letter": "Б",
+        "text": "12"
+      },
+      {
+        "letter": "В",
+        "text": "10"
+      },
+      {
+        "letter": "Г",
+        "text": "14"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "математика. додавання в межах 20",
+    "gradeMin": 1,
+    "gradeMax": 2
+  },
+  {
+    "id": 27,
+    "question": "Скільки буде 3 + 9?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "12"
+      },
+      {
+        "letter": "Б",
+        "text": "13"
+      },
+      {
+        "letter": "В",
+        "text": "11"
+      },
+      {
+        "letter": "Г",
+        "text": "15"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "математика. додавання в межах 20",
+    "gradeMin": 1,
+    "gradeMax": 2
+  },
+  {
+    "id": 28,
+    "question": "Скільки буде 4 + 1?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "5"
+      },
+      {
+        "letter": "Б",
+        "text": "6"
+      },
+      {
+        "letter": "В",
+        "text": "4"
+      },
+      {
+        "letter": "Г",
+        "text": "8"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "математика. додавання в межах 20",
+    "gradeMin": 1,
+    "gradeMax": 2
+  },
+  {
+    "id": 29,
+    "question": "Скільки буде 10 − 1?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "9"
+      },
+      {
+        "letter": "Б",
+        "text": "10"
+      },
+      {
+        "letter": "В",
+        "text": "11"
+      },
+      {
+        "letter": "Г",
+        "text": "1"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "математика. віднімання в межах 20",
+    "gradeMin": 1,
+    "gradeMax": 2
+  },
+  {
+    "id": 30,
+    "question": "Скільки буде 10 − 2?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "8"
+      },
+      {
+        "letter": "Б",
+        "text": "9"
+      },
+      {
+        "letter": "В",
+        "text": "10"
+      },
+      {
+        "letter": "Г",
+        "text": "2"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "математика. віднімання в межах 20",
+    "gradeMin": 1,
+    "gradeMax": 2
+  },
+  {
+    "id": 31,
+    "question": "Скільки буде 10 − 3?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "7"
+      },
+      {
+        "letter": "Б",
+        "text": "8"
+      },
+      {
+        "letter": "В",
+        "text": "9"
+      },
+      {
+        "letter": "Г",
+        "text": "3"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "математика. віднімання в межах 20",
+    "gradeMin": 1,
+    "gradeMax": 2
+  },
+  {
+    "id": 32,
+    "question": "Скільки буде 10 − 4?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "6"
+      },
+      {
+        "letter": "Б",
+        "text": "7"
+      },
+      {
+        "letter": "В",
+        "text": "8"
+      },
+      {
+        "letter": "Г",
+        "text": "4"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "математика. віднімання в межах 20",
+    "gradeMin": 1,
+    "gradeMax": 2
+  },
+  {
+    "id": 33,
+    "question": "Скільки буде 10 − 5?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "5"
+      },
+      {
+        "letter": "Б",
+        "text": "6"
+      },
+      {
+        "letter": "В",
+        "text": "7"
+      },
+      {
+        "letter": "Г",
+        "text": "5"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "математика. віднімання в межах 20",
+    "gradeMin": 1,
+    "gradeMax": 2
+  },
+  {
+    "id": 34,
+    "question": "Скільки буде 11 − 1?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "10"
+      },
+      {
+        "letter": "Б",
+        "text": "11"
+      },
+      {
+        "letter": "В",
+        "text": "12"
+      },
+      {
+        "letter": "Г",
+        "text": "1"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "математика. віднімання в межах 20",
+    "gradeMin": 1,
+    "gradeMax": 2
+  },
+  {
+    "id": 35,
+    "question": "Скільки буде 11 − 2?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "9"
+      },
+      {
+        "letter": "Б",
+        "text": "10"
+      },
+      {
+        "letter": "В",
+        "text": "11"
+      },
+      {
+        "letter": "Г",
+        "text": "2"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "математика. віднімання в межах 20",
+    "gradeMin": 1,
+    "gradeMax": 2
+  },
+  {
+    "id": 36,
+    "question": "Скільки буде 11 − 3?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "8"
+      },
+      {
+        "letter": "Б",
+        "text": "9"
+      },
+      {
+        "letter": "В",
+        "text": "10"
+      },
+      {
+        "letter": "Г",
+        "text": "3"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "математика. віднімання в межах 20",
+    "gradeMin": 1,
+    "gradeMax": 2
+  },
+  {
+    "id": 37,
+    "question": "Скільки буде 11 − 4?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "7"
+      },
+      {
+        "letter": "Б",
+        "text": "8"
+      },
+      {
+        "letter": "В",
+        "text": "9"
+      },
+      {
+        "letter": "Г",
+        "text": "4"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "математика. віднімання в межах 20",
+    "gradeMin": 1,
+    "gradeMax": 2
+  },
+  {
+    "id": 38,
+    "question": "Скільки буде 11 − 5?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "6"
+      },
+      {
+        "letter": "Б",
+        "text": "7"
+      },
+      {
+        "letter": "В",
+        "text": "8"
+      },
+      {
+        "letter": "Г",
+        "text": "5"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "математика. віднімання в межах 20",
+    "gradeMin": 1,
+    "gradeMax": 2
+  },
+  {
+    "id": 39,
+    "question": "Скільки буде 12 − 1?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "11"
+      },
+      {
+        "letter": "Б",
+        "text": "12"
+      },
+      {
+        "letter": "В",
+        "text": "13"
+      },
+      {
+        "letter": "Г",
+        "text": "1"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "математика. віднімання в межах 20",
+    "gradeMin": 1,
+    "gradeMax": 2
+  },
+  {
+    "id": 40,
+    "question": "Скільки буде 12 − 2?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "10"
+      },
+      {
+        "letter": "Б",
+        "text": "11"
+      },
+      {
+        "letter": "В",
+        "text": "12"
+      },
+      {
+        "letter": "Г",
+        "text": "2"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "математика. віднімання в межах 20",
+    "gradeMin": 1,
+    "gradeMax": 2
+  },
+  {
+    "id": 41,
+    "question": "Скільки буде 2 × 3?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "6"
+      },
+      {
+        "letter": "Б",
+        "text": "8"
+      },
+      {
+        "letter": "В",
+        "text": "3"
+      },
+      {
+        "letter": "Г",
+        "text": "5"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "математика. множення",
+    "gradeMin": 3,
+    "gradeMax": 4
+  },
+  {
+    "id": 42,
+    "question": "Скільки буде 2 × 4?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "8"
+      },
+      {
+        "letter": "Б",
+        "text": "10"
+      },
+      {
+        "letter": "В",
+        "text": "4"
+      },
+      {
+        "letter": "Г",
+        "text": "6"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "математика. множення",
+    "gradeMin": 3,
+    "gradeMax": 4
+  },
+  {
+    "id": 43,
+    "question": "Скільки буде 2 × 5?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "10"
+      },
+      {
+        "letter": "Б",
+        "text": "12"
+      },
+      {
+        "letter": "В",
+        "text": "5"
+      },
+      {
+        "letter": "Г",
+        "text": "7"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "математика. множення",
+    "gradeMin": 3,
+    "gradeMax": 4
+  },
+  {
+    "id": 44,
+    "question": "Скільки буде 2 × 6?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "12"
+      },
+      {
+        "letter": "Б",
+        "text": "14"
+      },
+      {
+        "letter": "В",
+        "text": "6"
+      },
+      {
+        "letter": "Г",
+        "text": "8"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "математика. множення",
+    "gradeMin": 3,
+    "gradeMax": 4
+  },
+  {
+    "id": 45,
+    "question": "Скільки буде 3 × 3?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "9"
+      },
+      {
+        "letter": "Б",
+        "text": "12"
+      },
+      {
+        "letter": "В",
+        "text": "6"
+      },
+      {
+        "letter": "Г",
+        "text": "6"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "математика. множення",
+    "gradeMin": 3,
+    "gradeMax": 4
+  },
+  {
+    "id": 46,
+    "question": "Скільки буде 3 × 4?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "12"
+      },
+      {
+        "letter": "Б",
+        "text": "15"
+      },
+      {
+        "letter": "В",
+        "text": "8"
+      },
+      {
+        "letter": "Г",
+        "text": "7"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "математика. множення",
+    "gradeMin": 3,
+    "gradeMax": 4
+  },
+  {
+    "id": 47,
+    "question": "Скільки буде 3 × 5?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "15"
+      },
+      {
+        "letter": "Б",
+        "text": "18"
+      },
+      {
+        "letter": "В",
+        "text": "10"
+      },
+      {
+        "letter": "Г",
+        "text": "8"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "математика. множення",
+    "gradeMin": 3,
+    "gradeMax": 4
+  },
+  {
+    "id": 48,
+    "question": "Скільки буде 4 × 2?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "8"
+      },
+      {
+        "letter": "Б",
+        "text": "12"
+      },
+      {
+        "letter": "В",
+        "text": "6"
+      },
+      {
+        "letter": "Г",
+        "text": "6"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "математика. множення",
+    "gradeMin": 3,
+    "gradeMax": 4
+  },
+  {
+    "id": 49,
+    "question": "Скільки буде 4 × 3?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "12"
+      },
+      {
+        "letter": "Б",
+        "text": "16"
+      },
+      {
+        "letter": "В",
+        "text": "9"
+      },
+      {
+        "letter": "Г",
+        "text": "7"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "математика. множення",
+    "gradeMin": 3,
+    "gradeMax": 4
+  },
+  {
+    "id": 50,
+    "question": "Скільки буде 4 × 4?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "16"
+      },
+      {
+        "letter": "Б",
+        "text": "20"
+      },
+      {
+        "letter": "В",
+        "text": "12"
+      },
+      {
+        "letter": "Г",
+        "text": "8"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "математика. множення",
+    "gradeMin": 3,
+    "gradeMax": 4
+  },
+  {
+    "id": 51,
+    "question": "Скільки буде 5 × 2?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "10"
+      },
+      {
+        "letter": "Б",
+        "text": "15"
+      },
+      {
+        "letter": "В",
+        "text": "8"
+      },
+      {
+        "letter": "Г",
+        "text": "7"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "математика. множення",
+    "gradeMin": 3,
+    "gradeMax": 4
+  },
+  {
+    "id": 52,
+    "question": "Скільки буде 5 × 3?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "15"
+      },
+      {
+        "letter": "Б",
+        "text": "20"
+      },
+      {
+        "letter": "В",
+        "text": "12"
+      },
+      {
+        "letter": "Г",
+        "text": "8"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "математика. множення",
+    "gradeMin": 3,
+    "gradeMax": 4
+  },
+  {
+    "id": 53,
+    "question": "Скільки буде 6 × 2?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "12"
+      },
+      {
+        "letter": "Б",
+        "text": "18"
+      },
+      {
+        "letter": "В",
+        "text": "10"
+      },
+      {
+        "letter": "Г",
+        "text": "8"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "математика. множення",
+    "gradeMin": 3,
+    "gradeMax": 4
+  },
+  {
+    "id": 54,
+    "question": "Скільки буде 7 × 2?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "14"
+      },
+      {
+        "letter": "Б",
+        "text": "21"
+      },
+      {
+        "letter": "В",
+        "text": "12"
+      },
+      {
+        "letter": "Г",
+        "text": "9"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "математика. множення",
+    "gradeMin": 3,
+    "gradeMax": 4
+  },
+  {
+    "id": 55,
+    "question": "Скільки буде 8 × 2?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "16"
+      },
+      {
+        "letter": "Б",
+        "text": "24"
+      },
+      {
+        "letter": "В",
+        "text": "14"
+      },
+      {
+        "letter": "Г",
+        "text": "10"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "математика. множення",
+    "gradeMin": 3,
+    "gradeMax": 4
+  },
+  {
+    "id": 56,
+    "question": "Скільки буде 9 × 2?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "18"
+      },
+      {
+        "letter": "Б",
+        "text": "27"
+      },
+      {
+        "letter": "В",
+        "text": "16"
+      },
+      {
+        "letter": "Г",
+        "text": "11"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "математика. множення",
+    "gradeMin": 3,
+    "gradeMax": 4
+  },
+  {
+    "id": 57,
+    "question": "Скільки буде 3 × 6?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "18"
+      },
+      {
+        "letter": "Б",
+        "text": "21"
+      },
+      {
+        "letter": "В",
+        "text": "12"
+      },
+      {
+        "letter": "Г",
+        "text": "9"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "математика. множення",
+    "gradeMin": 3,
+    "gradeMax": 4
+  },
+  {
+    "id": 58,
+    "question": "Скільки буде 4 × 5?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "20"
+      },
+      {
+        "letter": "Б",
+        "text": "24"
+      },
+      {
+        "letter": "В",
+        "text": "15"
+      },
+      {
+        "letter": "Г",
+        "text": "9"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "математика. множення",
+    "gradeMin": 3,
+    "gradeMax": 4
+  },
+  {
+    "id": 59,
+    "question": "Скільки буде 5 × 4?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "20"
+      },
+      {
+        "letter": "Б",
+        "text": "25"
+      },
+      {
+        "letter": "В",
+        "text": "16"
+      },
+      {
+        "letter": "Г",
+        "text": "9"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "математика. множення",
+    "gradeMin": 3,
+    "gradeMax": 4
+  },
+  {
+    "id": 60,
+    "question": "Скільки буде 6 × 3?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "18"
+      },
+      {
+        "letter": "Б",
+        "text": "24"
+      },
+      {
+        "letter": "В",
+        "text": "15"
+      },
+      {
+        "letter": "Г",
+        "text": "9"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "математика. множення",
+    "gradeMin": 3,
+    "gradeMax": 4
+  },
+  {
+    "id": 61,
+    "question": "Який знак ставлять між 7 і 5: 7 _ 5?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": ">"
+      },
+      {
+        "letter": "Б",
+        "text": "<"
+      },
+      {
+        "letter": "В",
+        "text": "="
+      },
+      {
+        "letter": "Г",
+        "text": "7 і 5"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "математика. порівняння та вимірювання",
+    "gradeMin": 3,
+    "gradeMax": 4
+  },
+  {
+    "id": 62,
+    "question": "Який знак: 12 _ 15?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "<"
+      },
+      {
+        "letter": "Б",
+        "text": ">"
+      },
+      {
+        "letter": "В",
+        "text": "="
+      },
+      {
+        "letter": "Г",
+        "text": "12 і 15"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "математика. порівняння та вимірювання",
+    "gradeMin": 3,
+    "gradeMax": 4
+  },
+  {
+    "id": 63,
+    "question": "Який знак: 48 _ 48?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "="
+      },
+      {
+        "letter": "Б",
+        "text": "<"
+      },
+      {
+        "letter": "В",
+        "text": ">"
+      },
+      {
+        "letter": "Г",
+        "text": "не можна"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "математика. порівняння та вимірювання",
+    "gradeMin": 3,
+    "gradeMax": 4
+  },
+  {
+    "id": 64,
+    "question": "Найбільше з чисел 23, 19, 31?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "31"
+      },
+      {
+        "letter": "Б",
+        "text": "23"
+      },
+      {
+        "letter": "В",
+        "text": "19"
+      },
+      {
+        "letter": "Г",
+        "text": "однакові"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "математика. порівняння та вимірювання",
+    "gradeMin": 3,
+    "gradeMax": 4
+  },
+  {
+    "id": 65,
+    "question": "Найменше з чисел 56, 61, 54?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "54"
+      },
+      {
+        "letter": "Б",
+        "text": "61"
+      },
+      {
+        "letter": "В",
+        "text": "56"
+      },
+      {
+        "letter": "Г",
+        "text": "жодне"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "математика. порівняння та вимірювання",
+    "gradeMin": 3,
+    "gradeMax": 4
+  },
+  {
+    "id": 66,
+    "question": "Скільки десятків у числі 80?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "8"
+      },
+      {
+        "letter": "Б",
+        "text": "0"
+      },
+      {
+        "letter": "В",
+        "text": "80"
+      },
+      {
+        "letter": "Г",
+        "text": "10"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "математика. порівняння та вимірювання",
+    "gradeMin": 3,
+    "gradeMax": 4
+  },
+  {
+    "id": 67,
+    "question": "Скільки сотень у числі 300?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "3"
+      },
+      {
+        "letter": "Б",
+        "text": "0"
+      },
+      {
+        "letter": "В",
+        "text": "30"
+      },
+      {
+        "letter": "Г",
+        "text": "300"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "математика. порівняння та вимірювання",
+    "gradeMin": 3,
+    "gradeMax": 4
+  },
+  {
+    "id": 68,
+    "question": "Округли 47 до десятків.",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "50"
+      },
+      {
+        "letter": "Б",
+        "text": "40"
+      },
+      {
+        "letter": "В",
+        "text": "47"
+      },
+      {
+        "letter": "Г",
+        "text": "60"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "математика. порівняння та вимірювання",
+    "gradeMin": 3,
+    "gradeMax": 4
+  },
+  {
+    "id": 69,
+    "question": "Периметр квадрата зі стороною 4 см дорівнює…",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "16 см"
+      },
+      {
+        "letter": "Б",
+        "text": "8 см"
+      },
+      {
+        "letter": "В",
+        "text": "12 см"
+      },
+      {
+        "letter": "Г",
+        "text": "4 см"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "математика. порівняння та вимірювання",
+    "gradeMin": 3,
+    "gradeMax": 4
+  },
+  {
+    "id": 70,
+    "question": "Площа прямокутника 5 см × 2 см = …",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "10 см²"
+      },
+      {
+        "letter": "Б",
+        "text": "7 см²"
+      },
+      {
+        "letter": "В",
+        "text": "5 см²"
+      },
+      {
+        "letter": "Г",
+        "text": "20 см²"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "математика. порівняння та вимірювання",
+    "gradeMin": 3,
+    "gradeMax": 4
+  },
+  {
+    "id": 71,
+    "question": "У якому слові наголос на першому складі?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "кни́га"
+      },
+      {
+        "letter": "Б",
+        "text": "книга́"
+      },
+      {
+        "letter": "В",
+        "text": "книзі́"
+      },
+      {
+        "letter": "Г",
+        "text": "книжок"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "українська мова. орфографія та наголос",
+    "gradeMin": 1,
+    "gradeMax": 4
+  },
+  {
+    "id": 72,
+    "question": "У якому слові наголос на останньому складі?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "зима́"
+      },
+      {
+        "letter": "Б",
+        "text": "́зима"
+      },
+      {
+        "letter": "В",
+        "text": "зи́ми"
+      },
+      {
+        "letter": "Г",
+        "text": "зимно"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "українська мова. орфографія та наголос",
+    "gradeMin": 1,
+    "gradeMax": 4
+  },
+  {
+    "id": 73,
+    "question": "У якому рядку всі слова з наголосом на першому складі?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "вода́, рука́, сніг"
+      },
+      {
+        "letter": "Б",
+        "text": "вода, рука, сніг"
+      },
+      {
+        "letter": "В",
+        "text": "води́, руки́, снігу́"
+      },
+      {
+        "letter": "Г",
+        "text": "водя́ний"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "українська мова. орфографія та наголос",
+    "gradeMin": 1,
+    "gradeMax": 4
+  },
+  {
+    "id": 74,
+    "question": "Де правильно: «… книга»?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "ця"
+      },
+      {
+        "letter": "Б",
+        "text": "сі"
+      },
+      {
+        "letter": "В",
+        "text": "сій"
+      },
+      {
+        "letter": "Г",
+        "text": "цей"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "українська мова. орфографія та наголос",
+    "gradeMin": 1,
+    "gradeMax": 4
+  },
+  {
+    "id": 75,
+    "question": "Яке слово пишеться з великої літери?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "Україна"
+      },
+      {
+        "letter": "Б",
+        "text": "вулиця"
+      },
+      {
+        "letter": "В",
+        "text": "річка"
+      },
+      {
+        "letter": "Г",
+        "text": "ліс"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "українська мова. орфографія та наголос",
+    "gradeMin": 1,
+    "gradeMax": 4
+  },
+  {
+    "id": 76,
+    "question": "Скільки голосних у слові «школа»?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "2"
+      },
+      {
+        "letter": "Б",
+        "text": "3"
+      },
+      {
+        "letter": "В",
+        "text": "4"
+      },
+      {
+        "letter": "Г",
+        "text": "5"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "українська мова. орфографія та наголос",
+    "gradeMin": 1,
+    "gradeMax": 4
+  },
+  {
+    "id": 77,
+    "question": "Яка частина мови слово «швидко» в реченні «Він біжить швидко»?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "прислівник"
+      },
+      {
+        "letter": "Б",
+        "text": "прикметник"
+      },
+      {
+        "letter": "В",
+        "text": "іменник"
+      },
+      {
+        "letter": "Г",
+        "text": "дієслово"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "українська мова. орфографія та наголос",
+    "gradeMin": 2,
+    "gradeMax": 4
+  },
+  {
+    "id": 78,
+    "question": "Яка частина мови «сонце»?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "іменник"
+      },
+      {
+        "letter": "Б",
+        "text": "дієслово"
+      },
+      {
+        "letter": "В",
+        "text": "прикметник"
+      },
+      {
+        "letter": "Г",
+        "text": "сполучник"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "українська мова. орфографія та наголос",
+    "gradeMin": 2,
+    "gradeMax": 4
+  },
+  {
+    "id": 79,
+    "question": "Де правильно написано?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "зимовий"
+      },
+      {
+        "letter": "Б",
+        "text": "зімовий"
+      },
+      {
+        "letter": "В",
+        "text": "зимовій"
+      },
+      {
+        "letter": "Г",
+        "text": "зимовый"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "українська мова. орфографія та наголос",
+    "gradeMin": 2,
+    "gradeMax": 4
+  },
+  {
+    "id": 80,
+    "question": "Де помилка?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "йти (правильно)"
+      },
+      {
+        "letter": "Б",
+        "text": "и́ти з помилкою"
+      },
+      {
+        "letter": "В",
+        "text": "їхати"
+      },
+      {
+        "letter": "Г",
+        "text": "бігти"
+      }
+    ],
+    "correctLetter": "Б",
+    "topic": "українська мова. орфографія та наголос",
+    "gradeMin": 2,
+    "gradeMax": 4
+  },
+  {
+    "id": 81,
+    "question": "Синонім до слова «великий»?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "величезний"
+      },
+      {
+        "letter": "Б",
+        "text": "маленький"
+      },
+      {
+        "letter": "В",
+        "text": "вузький"
+      },
+      {
+        "letter": "Г",
+        "text": "низький"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "українська мова. орфографія та наголос",
+    "gradeMin": 2,
+    "gradeMax": 4
+  },
+  {
+    "id": 82,
+    "question": "Антонім до «день»?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "ніч"
+      },
+      {
+        "letter": "Б",
+        "text": "ранок"
+      },
+      {
+        "letter": "В",
+        "text": "світло"
+      },
+      {
+        "letter": "Г",
+        "text": "сонце"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "українська мова. орфографія та наголос",
+    "gradeMin": 2,
+    "gradeMax": 4
+  },
+  {
+    "id": 83,
+    "question": "У реченні «Діти грають у дворі» підмет — це…",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "діти"
+      },
+      {
+        "letter": "Б",
+        "text": "грають"
+      },
+      {
+        "letter": "В",
+        "text": "у дворі"
+      },
+      {
+        "letter": "Г",
+        "text": "гра"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "українська мова. орфографія та наголос",
+    "gradeMin": 2,
+    "gradeMax": 4
+  },
+  {
+    "id": 84,
+    "question": "Скільки слів у реченні «Сонце світить яскраво»?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "3"
+      },
+      {
+        "letter": "Б",
+        "text": "2"
+      },
+      {
+        "letter": "В",
+        "text": "4"
+      },
+      {
+        "letter": "Г",
+        "text": "5"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "українська мова. орфографія та наголос",
+    "gradeMin": 1,
+    "gradeMax": 4
+  },
+  {
+    "id": 85,
+    "question": "Де крапка в кінці речення?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "«Мама читає книгу.»"
+      },
+      {
+        "letter": "Б",
+        "text": "«Мама читає книгу»"
+      },
+      {
+        "letter": "В",
+        "text": "«мама читає книгу.»"
+      },
+      {
+        "letter": "Г",
+        "text": "«Мама читає книгу!»"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "українська мова. орфографія та наголос",
+    "gradeMin": 1,
+    "gradeMax": 4
+  },
+  {
+    "id": 86,
+    "question": "Який рядок — іменники?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "стіл, книга, ручка"
+      },
+      {
+        "letter": "Б",
+        "text": "бігти, читати, писати"
+      },
+      {
+        "letter": "В",
+        "text": "швидкий, синій, теплий"
+      },
+      {
+        "letter": "Г",
+        "text": "і, але, бо"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "українська мова. граматика",
+    "gradeMin": 2,
+    "gradeMax": 4
+  },
+  {
+    "id": 87,
+    "question": "Яке слово — дієслово?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "писати"
+      },
+      {
+        "letter": "Б",
+        "text": "перо"
+      },
+      {
+        "letter": "В",
+        "text": "письмовий"
+      },
+      {
+        "letter": "Г",
+        "text": "письменник"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "українська мова. граматика",
+    "gradeMin": 2,
+    "gradeMax": 4
+  },
+  {
+    "id": 88,
+    "question": "Де правильно «прийшов»?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "прийшов"
+      },
+      {
+        "letter": "Б",
+        "text": "пришов"
+      },
+      {
+        "letter": "В",
+        "text": "прийшов"
+      },
+      {
+        "letter": "Г",
+        "text": "прийшов"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "українська мова. правопис",
+    "gradeMin": 2,
+    "gradeMax": 4
+  },
+  {
+    "id": 89,
+    "question": "Де «прийшов» з помилкою?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "прийшов"
+      },
+      {
+        "letter": "Б",
+        "text": "прийшов"
+      },
+      {
+        "letter": "В",
+        "text": "прийшов"
+      },
+      {
+        "letter": "Г",
+        "text": "пришов"
+      }
+    ],
+    "correctLetter": "Г",
+    "topic": "українська мова. правопис",
+    "gradeMin": 2,
+    "gradeMax": 4
+  },
+  {
+    "id": 90,
+    "question": "Яка форма множини слова «учень»?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "учні"
+      },
+      {
+        "letter": "Б",
+        "text": "ученя"
+      },
+      {
+        "letter": "В",
+        "text": "ученів"
+      },
+      {
+        "letter": "Г",
+        "text": "ученьи"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "українська мова. граматика",
+    "gradeMin": 2,
+    "gradeMax": 4
+  },
+  {
+    "id": 91,
+    "question": "Яке речення питальне?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "Ти любиш читати?"
+      },
+      {
+        "letter": "Б",
+        "text": "Я люблю читати."
+      },
+      {
+        "letter": "В",
+        "text": "Читай книгу!"
+      },
+      {
+        "letter": "Г",
+        "text": "Як гарно!"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "українська мова. граматика",
+    "gradeMin": 2,
+    "gradeMax": 4
+  },
+  {
+    "id": 92,
+    "question": "Де займенник?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "він"
+      },
+      {
+        "letter": "Б",
+        "text": "дім"
+      },
+      {
+        "letter": "В",
+        "text": "зелений"
+      },
+      {
+        "letter": "Г",
+        "text": "біжить"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "українська мова. граматика",
+    "gradeMin": 2,
+    "gradeMax": 4
+  },
+  {
+    "id": 93,
+    "question": "Де прийменник?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "на"
+      },
+      {
+        "letter": "Б",
+        "text": "стіл"
+      },
+      {
+        "letter": "В",
+        "text": "великий"
+      },
+      {
+        "letter": "Г",
+        "text": "сидить"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "українська мова. граматика",
+    "gradeMin": 2,
+    "gradeMax": 4
+  },
+  {
+    "id": 94,
+    "question": "Скільки приголосних у слові «книга»?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "3"
+      },
+      {
+        "letter": "Б",
+        "text": "2"
+      },
+      {
+        "letter": "В",
+        "text": "4"
+      },
+      {
+        "letter": "Г",
+        "text": "5"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "українська мова. граматика",
+    "gradeMin": 1,
+    "gradeMax": 4
+  },
+  {
+    "id": 95,
+    "question": "Яка літера завжди в слові «йод»?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "д"
+      },
+      {
+        "letter": "Б",
+        "text": "й"
+      },
+      {
+        "letter": "В",
+        "text": "о"
+      },
+      {
+        "letter": "Г",
+        "text": "і"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "українська мова. граматика",
+    "gradeMin": 1,
+    "gradeMax": 4
+  },
+  {
+    "id": 96,
+    "question": "Що дає нам Сонце вдень?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "світло і тепло"
+      },
+      {
+        "letter": "Б",
+        "text": "тільки вітер"
+      },
+      {
+        "letter": "В",
+        "text": "дощ"
+      },
+      {
+        "letter": "Г",
+        "text": "сніг"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "природознавство",
+    "gradeMin": 2,
+    "gradeMax": 4
+  },
+  {
+    "id": 97,
+    "question": "Яка пора року після літа?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "осінь"
+      },
+      {
+        "letter": "Б",
+        "text": "весна"
+      },
+      {
+        "letter": "В",
+        "text": "зима"
+      },
+      {
+        "letter": "Г",
+        "text": "літо"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "природознавство",
+    "gradeMin": 1,
+    "gradeMax": 4
+  },
+  {
+    "id": 98,
+    "question": "Хто живе у воді?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "риба"
+      },
+      {
+        "letter": "Б",
+        "text": "горобець"
+      },
+      {
+        "letter": "В",
+        "text": "кішка"
+      },
+      {
+        "letter": "Г",
+        "text": "білка"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "природознавство",
+    "gradeMin": 1,
+    "gradeMax": 4
+  },
+  {
+    "id": 99,
+    "question": "З чого ростуть дерева?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "з насіння"
+      },
+      {
+        "letter": "Б",
+        "text": "з каменю"
+      },
+      {
+        "letter": "В",
+        "text": "з пластику"
+      },
+      {
+        "letter": "Г",
+        "text": "з металу"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "природознавство",
+    "gradeMin": 2,
+    "gradeMax": 4
+  },
+  {
+    "id": 100,
+    "question": "Що потрібно рослині для росту?",
+    "answers": [
+      {
+        "letter": "А",
+        "text": "вода, світло, повітря"
+      },
+      {
+        "letter": "Б",
+        "text": "лише темрява"
+      },
+      {
+        "letter": "В",
+        "text": "лише камінь"
+      },
+      {
+        "letter": "Г",
+        "text": "нічого"
+      }
+    ],
+    "correctLetter": "А",
+    "topic": "природознавство",
+    "gradeMin": 2,
+    "gradeMax": 4
+  }
+]

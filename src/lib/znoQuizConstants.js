@@ -5,10 +5,11 @@
 
 export const ZNO_JS_DELIVR_BASE = 'https://cdn.jsdelivr.net/gh/NLPForUA/ZNO@main/tests'
 
-/** @typedef {{ slug: string, label: string, fileName: string }} ZnoQuizSubject */
+/** @typedef {{ slug: string, label: string, fileName?: string, local?: boolean }} ZnoQuizSubject */
 
 /** @type {ZnoQuizSubject[]} */
 export const ZNO_QUIZ_SUBJECTS = [
+  { slug: 'primary_school', label: 'Початкова школа (1–4 клас)', local: true },
   { slug: 'math', label: 'Математика', fileName: 'math_raw.json' },
   { slug: 'ukr_lang_lit', label: 'Українська мова й література', fileName: 'ukrainian_raw.json' },
   { slug: 'history', label: 'Історія України', fileName: 'history_raw.json' },
@@ -16,5 +17,6 @@ export const ZNO_QUIZ_SUBJECTS = [
 ]
 
 export function znoQuizDataUrl(subject) {
+  if (!subject?.fileName) throw new Error('Предмет без зовнішнього банку')
   return `${ZNO_JS_DELIVR_BASE}/${subject.fileName}`
 }

@@ -18,6 +18,7 @@ import { useShopStore } from '@/stores/shop'
 import { useToast } from '@/composables/useToast'
 import { useHaptic } from '@/composables/useHaptic'
 import { mergeItemMetaById } from '@/lib/fusShopItemMetaMerge.js'
+import { firestoreClientErrorMessage } from '@/lib/firestoreErrorMessage'
 import { getSubjectIcon } from '@/composables/useSubjectIcon'
 import { enrichStudentFeedTransactions } from '@/composables/useTransactionFeed'
 import {
@@ -286,7 +287,7 @@ async function openOwnedBox(boxItem) {
     }
     revealOpen.value = true
   } catch (e) {
-    error(e?.message || 'Помилка')
+    error(firestoreClientErrorMessage(e, 'Не вдалося відкрити коробку'))
   } finally {
     openingBoxId.value = ''
   }

@@ -1508,7 +1508,7 @@ export async function purchaseItem({ uid, itemId, price, subjectEarnedCoins }) {
         xp: newXp,
         level: calcLevel(newXp),
       })
-      if (hasStock) {
+      if (hasStock && item.stock > 0) {
         tx.update(iRef, { stock: increment(-1) })
       }
       return
@@ -1690,7 +1690,13 @@ export async function openMysteryBox(uid, boxItemId) {
     const prevBoxStack = counts[boxItemId] || 0
     counts[boxItemId] = prevBoxStack - 1
     if (counts[boxItemId] <= 0) delete counts[boxItemId]
-    if (prevBoxStack === 1) adjustShopItemOwnersCount(tx, boxItemId, -1)
+    const boxOwnersBefore =
+      typeof boxItem.ownersCount === 'number' && boxItem.ownersCount >= 0
+        ? boxItem.ownersCount
+        : 0
+    if (prevBoxStack === 1 && boxOwnersBefore > 0) {
+      adjustShopItemOwnersCount(tx, boxItemId, -1)
+    }
 
     const granted = []
     for (const rid of outcome.itemIds) {
@@ -1705,8 +1711,9 @@ export async function openMysteryBox(uid, boxItemId) {
       inv.add(rid)
       adjustShopItemOwnersCount(tx, rid, 1)
 
+      const stockVal = Number(it.stock)
       const hasStock = it.stock !== null && it.stock !== undefined
-      if (hasStock) {
+      if (hasStock && Number.isFinite(stockVal) && stockVal > 0) {
         tx.update(iRef, { stock: increment(-1) })
       }
     }

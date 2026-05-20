@@ -6,6 +6,7 @@ import {
   aggregateStudentAwardCoinsBySubject,
 } from '@/firebase/collections'
 import { applyFridayDiscount, getFridayDiscount } from '@/lib/fridayDiscount'
+import { firestoreClientErrorMessage } from '@/lib/firestoreErrorMessage'
 import { useAuthStore } from './auth'
 import { useUserStore } from './user'
 
@@ -130,10 +131,14 @@ export const useShopStore = defineStore('shop', () => {
   /** Застаріло: магічні коробки; залишено для старих акаунтів. */
   async function openBox(itemId) {
     const auth = useAuthStore()
-    if (!auth.profile?.id) throw new Error('Not signed in')
-    const result = await openMysteryBox(auth.profile.id, itemId)
-    await fetchItems({ forceCatalog: true })
-    return result
+    if (!auth.profile?.id) throw new Error('Увійдіть у застосунок')
+    try {
+      const result = await openMysteryBox(auth.profile.id, itemId)
+      await fetchItems({ forceCatalog: true })
+      return result
+    } catch (e) {
+      throw new Error(firestoreClientErrorMessage(e, 'Не вдалося відкрити коробку'))
+    }
   }
 
   function itemsByCategory(category) {

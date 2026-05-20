@@ -48,6 +48,24 @@ service cloud.firestore {
       return isAuth() && request.auth.uid == uid;
     }
 
+    /** Власник профілю: квіз, коробки, предметні монети (окремо від trade-only patch). */
+    function studentSelfServiceProfileUpdate(uid) {
+      return isAuth()
+        && request.auth.uid == uid
+        && exists(userDoc())
+        && get(userDoc()).data.role == 'student'
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'mysteryBoxCounts',
+          'quizConsumedQuestionIds',
+          'quizDailyAttemptDate',
+          'quizDailyPerfectRewardDate',
+          'subjectCoinsSpent',
+          'coins',
+          'xp',
+          'level'
+        ]);
+    }
+
     /** Integer {@code items.ownersCount} before update (missing → 0). */
     function shopItemOwnersCountBefore() {
       return resource.data.keys().hasAll(['ownersCount']) && resource.data.ownersCount is int
@@ -194,6 +212,7 @@ service cloud.firestore {
       // allow self-create so a manually bootstrapped account can write its own profile
       allow create: if isAdmin() || (isAuth() && request.auth.uid == uid);
       allow update: if isOwner(uid) || isAdmin() || isTeacher()
+        || studentSelfServiceProfileUpdate(uid)
         // Trade execution writes coins/inventory (+counts)/xp for both parties atomically;
         // limit this broader permission to only those fields.
         || (isAuth() && request.resource.data.diff(resource.data).affectedKeys()

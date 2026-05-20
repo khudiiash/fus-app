@@ -3,7 +3,9 @@
  */
 
 import { znoQuizDataUrl } from '@/lib/znoQuizConstants'
-import { extractZnoTopic, topicSuitability } from '@/lib/znoQuizTopics'
+import { extractZnoTopic } from '@/lib/znoQuizTopics'
+import { inferCurriculumGradeRange, isTaskAppropriateForGrade } from '@/lib/znoCurriculumGrades'
+import { loadPrimaryQuizBank } from '@/lib/primaryQuizBank'
 
 /** @typedef {{ letter: string, text: string }} ZnoAnswer */
 
@@ -30,11 +32,7 @@ export function schoolTierOrdinalFromGrade(grade) {
   return 2
 }
 
-/** Heuristic “hard” wording in question/comment when topic line is missing or ambiguous. */
-const HARD_TOPIC_RX =
-  /похідн|диференціал|інтеграл|логариф|арк(?:кос|ксин|танг)|тригонометр|комплексн|матриц|ймовірність.*формул|[\d]+\s*[∫∑Π√]|векторн.*множенн|стереометр|обертання|x\s*[\^²³]|y\s*=/msi
-
-/** @typedef {{ ql: number, al: number, earlyTest: boolean, hay: string, topic: string }} ZnoTaskMeta */
+/** @typedef {{ ql: number, al: number, earlyTest: boolean, hay: string, topic: string, gradeMin: number, gradeMax: number }} ZnoTaskMeta */
 
 /**
  * @param {string} subjectSlug
@@ -54,12 +52,17 @@ function taskMeta(subjectSlug, testIndex, numTests, rawTask) {
   const nT = Number(numTests)
   const earlyTest =
     Number.isFinite(nT) && nT > 0 ? testIndex < Math.ceil(nT * 0.32) : true
+  const hay = `${question}\n${comment}`.toLowerCase()
+  const topic = extractZnoTopic(comment)
+  const gr = inferCurriculumGradeRange(subjectSlug, topic, hay)
   return {
     ql: question.length,
     al,
     earlyTest,
-    hay: `${question}\n${comment}`.toLowerCase(),
-    topic: extractZnoTopic(comment),
+    hay,
+    topic,
+    gradeMin: gr.gradeMin,
+    gradeMax: gr.gradeMax,
   }
 }
 
@@ -150,15 +153,19 @@ function flattenExamJson(subjectSlug, data) {
  * @param {string} subjectSlug e.g. math
  */
 export async function fetchZnoSubjectBank(subject, subjectSlug) {
-  const ck = `${subjectSlug}:bankV5`
+  const ck = `${subjectSlug}:bankV6`
   const hit = _cache.get(ck)
   if (hit?.promise) return hit.promise
 
-  const url = znoQuizDataUrl(subject)
-  const promise = fetch(url, { credentials: 'omit' }).then(async (r) => {
-    if (!r.ok) throw new Error(`Не вдалося завантажити банк питань (${r.status})`)
-    return r.json()
-  }).then((json) => flattenExamJson(subjectSlug, json))
+  const promise =
+    subject?.local === true || subjectSlug === 'primary_school'
+      ? Promise.resolve(loadPrimaryQuizBank())
+      : fetch(znoQuizDataUrl(subject), { credentials: 'omit' })
+          .then(async (r) => {
+            if (!r.ok) throw new Error(`Не вдалося завантажити банк питань (${r.status})`)
+            return r.json()
+          })
+          .then((json) => flattenExamJson(subjectSlug, json))
 
   _cache.set(ck, { promise })
   return promise
@@ -174,66 +181,42 @@ function metaOf(t) {
     const L = String(a?.text || '').length
     if (L > al) al = L
   }
-  return { ql, al, earlyTest: false, hay: String(t.question || '').toLowerCase(), topic: '' }
+  return {
+    ql,
+    al,
+    earlyTest: false,
+    hay: String(t.question || '').toLowerCase(),
+    topic: '',
+    gradeMin: 10,
+    gradeMax: 11,
+  }
 }
 
 /**
- * @param {BankRow} row
- * @param {0|1|2} tierOrdinal
+ * У межах програми класу — додатково коротші формулювання (м’якше для молодших).
  * @param {number | null | undefined} grade
- */
-function topicOk(row, tierOrdinal, grade) {
-  const m = metaOf(row)
-  const slug = row.subjectSlug || ''
-  const suit = topicSuitability(slug, m.topic, tierOrdinal, grade)
-  if (suit === 'block') return false
-  if (suit === 'allow') return true
-  return !HARD_TOPIC_RX.test(m.hay)
-}
-
-/**
- * Cascading filters by parallel (grade). Primary never falls back to «any» row — only non-blocked topics.
- * @param {0|1|2} tierOrdinal from {@link schoolTierOrdinalFromGrade}
- * @param {number | null | undefined} grade клас 1–11
  * @returns {Array<(row: BankRow) => boolean>}
  */
-function difficultyPredicatesForTier(tierOrdinal, grade) {
-  if (tierOrdinal === 2) {
-    return [() => true]
+function qualityPredicatesForGrade(grade) {
+  const g = Number(grade)
+  if (!Number.isFinite(g) || g < 1) {
+    return [(t) => metaOf(t).ql <= 280]
   }
-  if (tierOrdinal === 1) {
+  if (g <= 4) {
     return [
-      (t) => {
-        const m = metaOf(t)
-        return topicOk(t, 1, grade) && m.ql <= 320 && m.al <= 200
-      },
-      (t) => {
-        const m = metaOf(t)
-        return topicOk(t, 1, grade) && m.ql <= 400 && m.al <= 260
-      },
-      (t) => topicOk(t, 1, grade),
+      (t) => { const m = metaOf(t); return m.ql <= 95 && m.al <= 50 },
+      (t) => { const m = metaOf(t); return m.ql <= 130 && m.al <= 72 },
+      (t) => true,
     ]
   }
-  /** Primary 1–4: тема з коментаря (allow/block) + короткий текст; без «будь-якого» ЗНО-питання в кінці */
-  return [
-    (t) => {
-      const m = metaOf(t)
-      return topicOk(t, 0, grade) && m.earlyTest && m.ql <= 85 && m.al <= 45
-    },
-    (t) => {
-      const m = metaOf(t)
-      return topicOk(t, 0, grade) && m.earlyTest && m.ql <= 110 && m.al <= 60
-    },
-    (t) => {
-      const m = metaOf(t)
-      return topicOk(t, 0, grade) && m.ql <= 130 && m.al <= 72
-    },
-    (t) => {
-      const m = metaOf(t)
-      return topicOk(t, 0, grade) && m.ql <= 160 && m.al <= 90
-    },
-    (t) => topicOk(t, 0, grade),
-  ]
+  if (g <= 8) {
+    return [
+      (t) => { const m = metaOf(t); return m.ql <= 200 && m.al <= 120 },
+      (t) => { const m = metaOf(t); return m.ql <= 280 && m.al <= 160 },
+      (t) => true,
+    ]
+  }
+  return [() => true]
 }
 
 /**
@@ -252,14 +235,29 @@ export function pickRandomQuizTasks(bank, consumedKeys, studentGrade, need = 5) 
     )
   }
 
-  const g = Number(studentGrade)
-  const tier = schoolTierOrdinalFromGrade(Number.isFinite(g) && g >= 1 ? g : null)
+  const gradeOk = avail.filter((t) => {
+    const m = metaOf(t)
+    if (Number.isFinite(m.gradeMin) && Number.isFinite(m.gradeMax)) {
+      const g = Number(studentGrade)
+      if (!Number.isFinite(g) || g < 1) return m.gradeMin <= 4 && m.gradeMax >= 1
+      return g >= m.gradeMin && g <= m.gradeMax
+    }
+    return isTaskAppropriateForGrade(t.subjectSlug || '', m, studentGrade)
+  })
+  if (gradeOk.length < need) {
+    const g = Number(studentGrade)
+    const gradeHint = Number.isFinite(g) && g >= 1 ? ` для ${g} класу` : ''
+    throw new Error(
+      `Недостатньо питань${gradeHint} за цим предметом (за програмою навчання). `
+      + 'Спробуйте інший предмет або зайдіть завтра.',
+    )
+  }
 
-  for (const pred of difficultyPredicatesForTier(tier, Number.isFinite(g) && g >= 1 ? g : null)) {
-    const pool = avail.filter((t) => pred(/** @type {BankRow} */ (t)))
+  for (const pred of qualityPredicatesForGrade(studentGrade)) {
+    const pool = gradeOk.filter((t) => pred(/** @type {BankRow} */ (t)))
     if (pool.length >= need) return shufflePick(pool, need)
   }
-  return shufflePick(avail, need)
+  return shufflePick(gradeOk, need)
 }
 
 function shufflePick(arr, n) {
