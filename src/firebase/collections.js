@@ -25,6 +25,32 @@ export const txCol       = () => collection(db, 'transactions')
 export const achievementsCol = () => collection(db, 'achievements')
 export const subjectsCol     = () => collection(db, 'subjects')
 
+/** Denormalized on {@code items/{id}}: number of users with ≥1 copy (inventory or mystery box stack). */
+const OWNERS_COUNT_FIELD = 'ownersCount'
+
+/**
+ * @param {unknown} inv
+ * @param {unknown} counts
+ * @param {string} itemId
+ */
+function willConsumeRemoveLastOwnedCopy(inv, counts, itemId) {
+  if (!Array.isArray(inv) || !inv.includes(itemId)) return false
+  const n = counts?.[itemId]
+  const qty = n == null || n === 0 ? 1 : n
+  return qty === 1
+}
+
+/**
+ * @param {import('firebase/firestore').Transaction} tx
+ * @param {string} itemId
+ * @param {number} delta +1 first-time owner, −1 last copy lost
+ */
+function adjustShopItemOwnersCount(tx, itemId, delta) {
+  const d = Math.trunc(Number(delta) || 0)
+  if (!itemId || !d) return
+  tx.update(doc(db, 'items', itemId), { [OWNERS_COUNT_FIELD]: increment(d) })
+}
+
 /** @type {Map<string, Promise<unknown>>} */
 const _userDocWriteTails = new Map()
 
@@ -442,7 +468,12 @@ export async function getActiveItems() {
 }
 
 export async function createItem(data) {
-  const ref = await addDoc(itemsCol(), { ...data, active: true, createdAt: serverTimestamp() })
+  const ref = await addDoc(itemsCol(), {
+    ...data,
+    active: true,
+    ownersCount: typeof data?.ownersCount === 'number' && data.ownersCount >= 0 ? data.ownersCount : 0,
+    createdAt: serverTimestamp(),
+  })
   return ref.id
 }
 
@@ -1056,6 +1087,7 @@ export async function grantShopItemByBwSeedKey(uid, bwSeedKey) {
     const next = grantOneToInventory(inv, counts, itemId)
     if (!next) return
     const newXp = (user.xp || 0) + 8
+    if (!inv.includes(itemId)) adjustShopItemOwnersCount(tx, itemId, 1)
     tx.update(uRef, {
       inventory: next.inventory,
       inventoryCounts: next.inventoryCounts,
@@ -1087,6 +1119,7 @@ export async function grantShopSkinBySkinId(uid, skinId) {
     const next = grantOneToInventory(inv, counts, itemId)
     if (!next) return
     const newXp = (user.xp || 0) + 12
+    if (!inv.includes(itemId)) adjustShopItemOwnersCount(tx, itemId, 1)
     tx.update(uRef, {
       inventory: next.inventory,
       inventoryCounts: next.inventoryCounts,
@@ -1238,8 +1271,10 @@ export async function debitPkLootFromUser(uid, { karma }) {
     /** @type {string[]} */
     const removedItemIds = []
     for (const { itemId } of picked) {
+      const loseOwner = willConsumeRemoveLastOwnedCopy(newInv, newCounts, itemId)
       const r = consumeOneFromInventory(newInv, newCounts, itemId)
       if (!r) continue
+      if (loseOwner) adjustShopItemOwnersCount(tx, itemId, -1)
       removedItemIds.push(itemId)
       newInv = r.inventory
       newCounts = r.inventoryCounts
@@ -1366,7 +1401,9 @@ export async function adminGrantItemToStudent({ adminUid, studentUid, itemId, qt
 
     if (item.category === 'mystery_box') {
       const counts = { ...(student.mysteryBoxCounts || {}) }
-      counts[itemId] = (counts[itemId] || 0) + amount
+      const prev = counts[itemId] || 0
+      counts[itemId] = prev + amount
+      if (prev === 0) adjustShopItemOwnersCount(tx, itemId, 1)
       tx.update(sRef, { mysteryBoxCounts: counts })
       return
     }
@@ -1374,11 +1411,13 @@ export async function adminGrantItemToStudent({ adminUid, studentUid, itemId, qt
     /** Stack-friendly path — same logic as {@link grantOneToInventory} but batched. */
     let inv = [...(student.inventory || [])]
     let cMap = { ...(student.inventoryCounts || {}) }
+    const wasOwner = inv.includes(itemId)
     for (let i = 0; i < amount; i++) {
       const next = grantOneToInventory(inv, cMap, itemId)
       inv = next.inventory
       cMap = next.inventoryCounts
     }
+    if (!wasOwner && inv.includes(itemId)) adjustShopItemOwnersCount(tx, itemId, 1)
     tx.update(sRef, { inventory: inv, inventoryCounts: cMap })
   })
 
@@ -1455,7 +1494,9 @@ export async function purchaseItem({ uid, itemId, price, subjectEarnedCoins }) {
       if (hasStock && item.stock <= 0) throw new Error('Sold out')
 
       const counts = { ...(user.mysteryBoxCounts || {}) }
-      counts[itemId] = (counts[itemId] || 0) + 1
+      const prevCount = counts[itemId] || 0
+      counts[itemId] = prevCount + 1
+      if (prevCount === 0) adjustShopItemOwnersCount(tx, itemId, 1)
 
       const newXp = (user.xp || 0) + Math.ceil(payPrice * 0.5)
       chargedPrice = payPrice
@@ -1506,6 +1547,7 @@ export async function purchaseItem({ uid, itemId, price, subjectEarnedCoins }) {
         level: lvl,
       })
     } else {
+      adjustShopItemOwnersCount(tx, itemId, 1)
       tx.update(uRef, {
         ...coinPatch,
         inventory: arrayUnion(itemId),
@@ -1560,6 +1602,9 @@ export async function sendSubjectBadge({ studentUid, itemId, teacherUid }) {
 
     const consumed = consumeOneFromInventory(student.inventory, student.inventoryCounts, itemId)
     if (!consumed) throw new Error('У вас немає цього значка')
+
+    const lostLast = willConsumeRemoveLastOwnedCopy(student.inventory, student.inventoryCounts, itemId)
+    if (lostLast) adjustShopItemOwnersCount(tx, itemId, -1)
 
     tx.update(sRef, {
       inventory: consumed.inventory,
@@ -1640,8 +1685,10 @@ export async function openMysteryBox(uid, boxItemId) {
     const pool = buildEligibleLootPool(allItems, inv, boxItem.rarity, boxItem.price)
     const outcome = rollMysteryBox(boxItem, pool)
 
-    counts[boxItemId] = (counts[boxItemId] || 0) - 1
+    const prevBoxStack = counts[boxItemId] || 0
+    counts[boxItemId] = prevBoxStack - 1
     if (counts[boxItemId] <= 0) delete counts[boxItemId]
+    if (prevBoxStack === 1) adjustShopItemOwnersCount(tx, boxItemId, -1)
 
     const granted = []
     for (const rid of outcome.itemIds) {
@@ -1654,6 +1701,7 @@ export async function openMysteryBox(uid, boxItemId) {
 
       granted.push(rid)
       inv.add(rid)
+      adjustShopItemOwnersCount(tx, rid, 1)
 
       const hasStock = it.stock !== null && it.stock !== undefined
       if (hasStock) {
@@ -1916,27 +1964,35 @@ export async function executeTrade(tradeId) {
     let toCounts = { ...(to.inventoryCounts || {}) }
 
     for (const itemId of trade.offeredItems || []) {
+      const lose = willConsumeRemoveLastOwnedCopy(fromInv, fromCounts, itemId)
       const r = consumeOneFromInventory(fromInv, fromCounts, itemId)
       if (!r) throw new Error('Sender does not own item')
+      if (lose) adjustShopItemOwnersCount(tx, itemId, -1)
       fromInv = r.inventory
       fromCounts = r.inventoryCounts
     }
     for (const itemId of trade.requestedItems || []) {
+      const lose = willConsumeRemoveLastOwnedCopy(toInv, toCounts, itemId)
       const r = consumeOneFromInventory(toInv, toCounts, itemId)
       if (!r) throw new Error('Receiver does not own item')
+      if (lose) adjustShopItemOwnersCount(tx, itemId, -1)
       toInv = r.inventory
       toCounts = r.inventoryCounts
     }
 
     for (const itemId of trade.requestedItems || []) {
+      const gain = !fromInv.includes(itemId)
       const r = grantOneToInventory(fromInv, fromCounts, itemId)
       fromInv = r.inventory
       fromCounts = r.inventoryCounts
+      if (gain) adjustShopItemOwnersCount(tx, itemId, 1)
     }
     for (const itemId of trade.offeredItems || []) {
+      const gain = !toInv.includes(itemId)
       const r = grantOneToInventory(toInv, toCounts, itemId)
       toInv = r.inventory
       toCounts = r.inventoryCounts
+      if (gain) adjustShopItemOwnersCount(tx, itemId, 1)
     }
 
     const fromAvatarNext = avatarAfterLosingTradedItems(from.avatar, trade.offeredItems || [], itemMeta)
@@ -2450,6 +2506,27 @@ export async function adminClearUserInventoryAndCosmetics(uid) {
   const snap = await getDoc(ref)
   const prev = snap.exists() ? snap.data() : {}
   const av = prev.avatar || {}
+
+  const decIds = new Set(Array.isArray(prev.inventory) ? prev.inventory : [])
+  const mb = prev.mysteryBoxCounts || {}
+  for (const [bid, q] of Object.entries(mb)) {
+    if (Number(q) > 0) decIds.add(bid)
+  }
+  if (decIds.size > 0) {
+    let batch = writeBatch(db)
+    let ops = 0
+    for (const iid of decIds) {
+      batch.update(doc(db, 'items', iid), { [OWNERS_COUNT_FIELD]: increment(-1) })
+      ops++
+      if (ops >= 400) {
+        await batch.commit()
+        batch = writeBatch(db)
+        ops = 0
+      }
+    }
+    if (ops > 0) await batch.commit()
+  }
+
   await updateDoc(ref, {
     inventory: [],
     inventoryCounts: {},
@@ -2493,6 +2570,29 @@ export async function adminResetStudentStats(fields = ['coins', 'xp', 'level', '
     resetData.inventoryCounts = {}
   }
   if (fields.includes('badges'))    resetData.badges     = []
+
+  if (fields.includes('inventory') && snap.docs.length > 0) {
+    /** One decrement per student per unique item they held (ownersCount = distinct users). */
+    const ownerDec = new Map()
+    for (const d of snap.docs) {
+      const u = d.data()
+      for (const iid of u.inventory || []) {
+        if (typeof iid === 'string' && iid) ownerDec.set(iid, (ownerDec.get(iid) || 0) + 1)
+      }
+    }
+    let itemBatch = writeBatch(db)
+    let itemOps = 0
+    for (const [iid, dec] of ownerDec) {
+      itemBatch.update(doc(db, 'items', iid), { [OWNERS_COUNT_FIELD]: increment(-dec) })
+      itemOps++
+      if (itemOps >= 400) {
+        await itemBatch.commit()
+        itemBatch = writeBatch(db)
+        itemOps = 0
+      }
+    }
+    if (itemOps > 0) await itemBatch.commit()
+  }
 
   const chunks = []
   let batch = writeBatch(db)

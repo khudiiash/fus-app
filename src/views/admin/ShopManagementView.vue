@@ -14,6 +14,7 @@ import { useToast } from '@/composables/useToast'
 import { Archive, RotateCcw, Package, Layers, Infinity, Trash2, Pencil, Search, X, ShoppingBag, Download, Blocks, Gift } from 'lucide-vue-next'
 import SubjectBadgeArt from '@/components/shop/SubjectBadgeArt.vue'
 import BlockWorldShopThumb from '@/components/shop/BlockWorldShopThumb.vue'
+import ShopItemOwnerCountLabel from '@/components/shop/ShopItemOwnerCountLabel.vue'
 import GlbThumbnail from '@/components/character/GlbThumbnail.vue'
 import {
   seedSkinsFromFiles,
@@ -636,6 +637,8 @@ function onModelFileSelect(e) {
                 <span :class="rarityColor[item.rarity]">{{ RARITY_LABELS[item.rarity] }}</span>
                 <span class="text-slate-600">·</span>
                 <span class="text-amber-400 font-bold">{{ item.price }} м</span>
+                <span class="text-slate-600">·</span>
+                <ShopItemOwnerCountLabel compact :count="item.ownersCount" />
                 <span class="text-slate-600">·</span>
                 <span v-if="item.stock == null" class="text-slate-600 flex items-center gap-0.5">
                   <Infinity :size="9" :stroke-width="2" /> необм.

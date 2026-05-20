@@ -15,6 +15,7 @@ import SubjectBadgeArt from '@/components/shop/SubjectBadgeArt.vue'
 import BlockWorldShopThumb from '@/components/shop/BlockWorldShopThumb.vue'
 import MysteryBoxSprite from '@/components/shop/MysteryBoxSprite.vue'
 import MysteryBoxRevealModal from '@/components/shop/MysteryBoxRevealModal.vue'
+import ShopItemOwnerCountLabel from '@/components/shop/ShopItemOwnerCountLabel.vue'
 import { ShoppingBag, Sparkles, Palette, ChefHat, Home, Package, CheckCircle2, Clock, Medal, PawPrint, Gift } from 'lucide-vue-next'
 import { mergeItemMetaById } from '@/lib/fusShopItemMetaMerge.js'
 
@@ -372,7 +373,10 @@ const MODAL_BW = 120
 
         <!-- Info strip -->
         <div class="px-3 py-2.5 flex items-center justify-between gap-2 bg-game-card/60">
-          <div class="font-bold text-xs truncate" :class="isSoldOut(item) ? 'text-slate-500' : 'text-slate-200'">{{ item.name }}</div>
+          <div class="min-w-0 flex-1">
+            <div class="font-bold text-xs truncate" :class="isSoldOut(item) ? 'text-slate-500' : 'text-slate-200'">{{ item.name }}</div>
+            <ShopItemOwnerCountLabel class="mt-0.5" :count="item.ownersCount" />
+          </div>
           <div class="flex items-center gap-1.5 shrink-0">
             <span
               v-if="discountFor(item).isActive"
@@ -460,14 +464,15 @@ const MODAL_BW = 120
           </div>
         </div>
 
-        <div class="flex items-center justify-between text-xs text-slate-400">
+        <div class="flex items-center justify-between gap-2 text-xs text-slate-400">
           <span class="font-bold capitalize" :class="{
             'text-amber-400': selectedItem.rarity === 'legendary',
             'text-purple-400': selectedItem.rarity === 'epic',
             'text-blue-400': selectedItem.rarity === 'rare',
             'text-slate-400': selectedItem.rarity === 'common',
           }">{{ { legendary: 'Легендарний', epic: 'Епічний', rare: 'Рідкісний', common: 'Звичайний' }[selectedItem.rarity] || selectedItem.rarity }}</span>
-          <span class="capitalize">{{ CAT_LABEL[selectedItem.category] || selectedItem.category }}</span>
+          <ShopItemOwnerCountLabel :count="selectedItem.ownersCount" />
+          <span class="capitalize text-right">{{ CAT_LABEL[selectedItem.category] || selectedItem.category }}</span>
         </div>
 
         <p v-if="selectedItem.description" class="text-slate-300 text-sm">{{ selectedItem.description }}</p>
