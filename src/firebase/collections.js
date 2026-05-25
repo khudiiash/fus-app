@@ -1690,32 +1690,28 @@ export async function openMysteryBox(uid, boxItemId) {
     const prevBoxStack = counts[boxItemId] || 0
     counts[boxItemId] = prevBoxStack - 1
     if (counts[boxItemId] <= 0) delete counts[boxItemId]
-    const boxOwnersBefore =
-      typeof boxItem.ownersCount === 'number' && boxItem.ownersCount >= 0
-        ? boxItem.ownersCount
-        : 0
-    if (prevBoxStack === 1 && boxOwnersBefore > 0) {
-      adjustShopItemOwnersCount(tx, boxItemId, -1)
-    }
 
-    const granted = []
-    for (const rid of outcome.itemIds) {
-      if (inv.has(rid)) continue
-      const iRef = doc(db, 'items', rid)
-      const iSnap = await tx.get(iRef)
+    /** Усі tx.get до будь-якого tx.update (вимога Firestore transactions). */
+    const lootCandidates = outcome.itemIds.filter((rid) => !inv.has(rid))
+    const lootSnaps = await Promise.all(
+      lootCandidates.map((rid) => tx.get(doc(db, 'items', rid))),
+    )
+
+    /** @type {string[]} */
+    const toGrant = []
+    for (let i = 0; i < lootCandidates.length; i++) {
+      const rid = lootCandidates[i]
+      const iSnap = lootSnaps[i]
       if (!iSnap.exists()) continue
       const it = { id: iSnap.id, ...iSnap.data() }
       if (!canGrantShopItemFromBox(it, inv, boxItem.rarity, boxItem.price)) continue
-
-      granted.push(rid)
+      toGrant.push(rid)
       inv.add(rid)
-      adjustShopItemOwnersCount(tx, rid, 1)
+    }
 
-      const stockVal = Number(it.stock)
-      const hasStock = it.stock !== null && it.stock !== undefined
-      if (hasStock && Number.isFinite(stockVal) && stockVal > 0) {
-        tx.update(iRef, { stock: increment(-1) })
-      }
+    const granted = []
+    for (const rid of toGrant) {
+      granted.push(rid)
     }
 
     const xpGain = Math.ceil(outcome.coins * 0.12) + granted.length * 6
@@ -1973,35 +1969,27 @@ export async function executeTrade(tradeId) {
     let toCounts = { ...(to.inventoryCounts || {}) }
 
     for (const itemId of trade.offeredItems || []) {
-      const lose = willConsumeRemoveLastOwnedCopy(fromInv, fromCounts, itemId)
       const r = consumeOneFromInventory(fromInv, fromCounts, itemId)
       if (!r) throw new Error('Sender does not own item')
-      if (lose) adjustShopItemOwnersCount(tx, itemId, -1)
       fromInv = r.inventory
       fromCounts = r.inventoryCounts
     }
     for (const itemId of trade.requestedItems || []) {
-      const lose = willConsumeRemoveLastOwnedCopy(toInv, toCounts, itemId)
       const r = consumeOneFromInventory(toInv, toCounts, itemId)
       if (!r) throw new Error('Receiver does not own item')
-      if (lose) adjustShopItemOwnersCount(tx, itemId, -1)
       toInv = r.inventory
       toCounts = r.inventoryCounts
     }
 
     for (const itemId of trade.requestedItems || []) {
-      const gain = !fromInv.includes(itemId)
       const r = grantOneToInventory(fromInv, fromCounts, itemId)
       fromInv = r.inventory
       fromCounts = r.inventoryCounts
-      if (gain) adjustShopItemOwnersCount(tx, itemId, 1)
     }
     for (const itemId of trade.offeredItems || []) {
-      const gain = !toInv.includes(itemId)
       const r = grantOneToInventory(toInv, toCounts, itemId)
       toInv = r.inventory
       toCounts = r.inventoryCounts
-      if (gain) adjustShopItemOwnersCount(tx, itemId, 1)
     }
 
     const fromAvatarNext = avatarAfterLosingTradedItems(from.avatar, trade.offeredItems || [], itemMeta)

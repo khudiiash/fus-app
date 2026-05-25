@@ -13,6 +13,7 @@ import AppModal from '@/components/ui/AppModal.vue'
 import AvatarDisplay from '@/components/avatar/AvatarDisplay.vue'
 import CoinDisplay from '@/components/gamification/CoinDisplay.vue'
 import ItemModelThumb from '@/components/character/ItemModelThumb.vue'
+import { firestoreClientErrorMessage } from '@/lib/firestoreErrorMessage'
 import { ArrowLeftRight, Inbox, Plus, Clock } from 'lucide-vue-next'
 
 /** Match compact trade cards (~w-8); GLB/skin use same baked previews as shop */
@@ -162,19 +163,27 @@ async function accept(offerId) {
     success('Обмін завершено! 🤝')
     void trySystemNotify('Обмін завершено!', 'Ти прийняв(ла) пропозицію 🤝', { tag: 'trade-accepted-self' })
     showDetail.value = null
-  } catch (e) { error(e.message) }
+  } catch (e) { error(firestoreClientErrorMessage(e, 'Не вдалося прийняти обмін')) }
   finally { accepting.value = false }
 }
 
 async function decline(offerId) {
-  await trade.declineTrade(offerId)
-  success('Пропозицію відхилено')
-  showDetail.value = null
+  try {
+    await trade.declineTrade(offerId)
+    success('Пропозицію відхилено')
+    showDetail.value = null
+  } catch (e) {
+    error(firestoreClientErrorMessage(e, 'Не вдалося відхилити пропозицію'))
+  }
 }
 
 async function cancel(offerId) {
-  await trade.cancelTrade(offerId)
-  success('Пропозицію скасовано')
+  try {
+    await trade.cancelTrade(offerId)
+    success('Пропозицію скасовано')
+  } catch (e) {
+    error(firestoreClientErrorMessage(e, 'Не вдалося скасувати пропозицію'))
+  }
 }
 
 function formatExpiry(ts) {

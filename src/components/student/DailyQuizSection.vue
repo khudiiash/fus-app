@@ -20,7 +20,7 @@ import { isPrimarySchoolGrade } from '@/lib/primaryQuizBank'
 import {
   fetchZnoSubjectBank,
   pickRandomQuizTasks,
-  shuffleAnswersForDisplay,
+  answersForDisplay,
 } from '@/lib/znoQuizLoad'
 import { gradeFromClassName } from '@/utils/schoolTier'
 
@@ -266,7 +266,7 @@ async function buildSession() {
     const picked = pickRandomQuizTasks(bank, consumedKeys.value, studentGrade.value, 5)
     decorated.value = picked.map((t) => ({
       ...t,
-      displayAnswers: shuffleAnswersForDisplay(t.answers),
+      displayAnswers: answersForDisplay(t.answers),
     }))
     await beginDailyZnoQuiz(auth.profile.id)
     phase.value = 'active'

@@ -255,26 +255,85 @@ export function pickRandomQuizTasks(bank, consumedKeys, studentGrade, need = 5) 
 
   for (const pred of qualityPredicatesForGrade(studentGrade)) {
     const pool = gradeOk.filter((t) => pred(/** @type {BankRow} */ (t)))
-    if (pool.length >= need) return shufflePick(pool, need)
+    if (pool.length >= need) return pickDiverseQuizTasks(pool, need)
   }
-  return shufflePick(gradeOk, need)
+  return pickDiverseQuizTasks(gradeOk, need)
 }
 
-function shufflePick(arr, n) {
-  const copy = [...arr]
-  for (let i = copy.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1))
-    ;[copy[i], copy[j]] = [copy[j], copy[i]]
-  }
-  return copy.slice(0, n)
+/** @param {string} taskKey */
+function testIndexFromTaskKey(taskKey) {
+  const m = String(taskKey || '').match(/#t(\d+)#/)
+  return m ? Number(m[1]) : -1
 }
 
-/** Fisher–Yates shuffle for answer rows (keeps original letter per option). */
-export function shuffleAnswersForDisplay(answers) {
-  const copy = [...answers]
-  for (let i = copy.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1))
-    ;[copy[i], copy[j]] = [copy[j], copy[i]]
+/** Перший сегмент «ТЕМА: …» для рознесення схожих питань. */
+function topicSegment(topic) {
+  const t = String(topic || '').trim().toLowerCase()
+  if (!t) return ''
+  const seg = t.split('.').map((s) => s.trim()).filter(Boolean)[0]
+  return seg || t
+}
+
+/**
+ * Жадібний підбір: кожне наступне питання максимально далеке від уже обраних
+ * (інша тема / інший варіант ЗНО-тесту в банку).
+ * @param {BankRow[]} pool
+ * @param {number} need
+ */
+function pickDiverseQuizTasks(pool, need) {
+  if (pool.length <= need) {
+    return shuffleArray([...pool])
   }
-  return copy
+
+  /** @type {BankRow[]} */
+  const picked = []
+  let remaining = [...pool]
+
+  while (picked.length < need && remaining.length > 0) {
+    let bestScore = -1
+    /** @type {BankRow[]} */
+    const tier = []
+
+    for (const row of remaining) {
+      const m = metaOf(row)
+      const seg = topicSegment(m.topic)
+      const testIdx = testIndexFromTaskKey(row.taskKey)
+      let score = 0
+      for (const p of picked) {
+        const pm = metaOf(p)
+        const pSeg = topicSegment(pm.topic)
+        if (seg && pSeg && seg !== pSeg) score += 12
+        if (testIdx >= 0 && testIdx !== testIndexFromTaskKey(p.taskKey)) score += 4
+        if (m.ql > 0 && Math.abs(m.ql - pm.ql) > 80) score += 1
+      }
+      if (picked.length === 0) score = 1
+      if (score > bestScore) {
+        bestScore = score
+        tier.length = 0
+        tier.push(row)
+      } else if (score === bestScore) {
+        tier.push(row)
+      }
+    }
+
+    const choice = tier[Math.floor(Math.random() * tier.length)]
+    picked.push(choice)
+    remaining = remaining.filter((r) => r.taskKey !== choice.taskKey)
+  }
+
+  return shuffleArray(picked)
+}
+
+/** @template T @param {T[]} arr @returns {T[]} */
+function shuffleArray(arr) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[arr[i], arr[j]] = [arr[j], arr[i]]
+  }
+  return arr
+}
+
+/** Варіанти в порядку банку ЗНО (А, Б, В, Г …) — без перемішування. */
+export function answersForDisplay(answers) {
+  return Array.isArray(answers) ? [...answers] : []
 }

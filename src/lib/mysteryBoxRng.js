@@ -18,6 +18,17 @@ export function rarityRank(r) {
 }
 
 /**
+ * Предметні значки — лише за монети з відповідного предмета ({@link purchaseItem}), не з коробок.
+ * @param {Record<string, unknown> | null | undefined} it
+ */
+export function isSubjectBadgeShopItem(it) {
+  if (!it || typeof it !== 'object') return false
+  if (it.category === 'subject_badge') return true
+  if (it.coinKind === 'subject_earned') return true
+  return false
+}
+
+/**
  * Max shop price for loot items vs box list price (keeps cheap boxes from dropping expensive skins).
  * @param {unknown} boxPrice
  */
@@ -40,7 +51,7 @@ export function buildEligibleLootPool(allItems, inv, boxRarity, boxPrice) {
   const cap = lootPriceCap(boxPrice)
   const maxR = rarityRank(boxRarity)
   /** Categories that should not drop from boxes */
-  const skip = new Set(['mystery_box', 'badge'])
+  const skip = new Set(['mystery_box', 'badge', 'subject_badge'])
 
   const out = []
   for (const it of allItems) {
@@ -48,8 +59,12 @@ export function buildEligibleLootPool(allItems, inv, boxRarity, boxPrice) {
     const id = it.id
     if (typeof id !== 'string' || !id) continue
     if (inv.has(id)) continue
+    if (isSubjectBadgeShopItem(it)) continue
     const cat = it.category
     if (typeof cat === 'string' && skip.has(cat)) continue
+    // Stock-limited shop rows are sold through the shop only. Boxes must not depend on
+    // item stock writes, otherwise stale stock/rules can block students from opening boxes.
+    if (it.stock !== null && it.stock !== undefined) continue
     if (rarityRank(it.rarity) > maxR) continue
     const price = Number(it.price)
     const effPrice = Number.isFinite(price) ? Math.max(0, price) : 0
@@ -153,6 +168,8 @@ export function canGrantShopItemFromBox(it, inv, boxRarity, boxPrice) {
   if (typeof id !== 'string' || !id) return false
   if (inv.has(id)) return false
   if (it.category === 'mystery_box') return false
+  if (isSubjectBadgeShopItem(it)) return false
+  if (it.stock !== null && it.stock !== undefined) return false
   if (rarityRank(it.rarity) > rarityRank(boxRarity)) return false
   const cap = lootPriceCap(boxPrice)
   const price = Number(it.price)
