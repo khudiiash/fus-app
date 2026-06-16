@@ -68,6 +68,7 @@ import {
 import { effectiveUserLevelFromProfile } from '@/lib/fusLabyUserLevel.js'
 import { labyDisplayNameForMobDropBwKey } from '@/lib/fusLabyMobDropLabels.js'
 import { useToast } from '@/composables/useToast'
+import { useCharacterReleaseGate } from '@/composables/useCharacterReleaseGate'
 import { FUS_LABY_FLAG_CHANNEL_MS } from '@labymc/src/js/net/minecraft/client/fus/FusLabyFlagChannel.js'
 import { installFusLabySpawnFlag } from '@/lib/fusLabySpawnFlagInstall'
 import { installFusSkinLoader } from '@/lib/fusSkinLoaderInstall'
@@ -92,6 +93,7 @@ const { user: authFbUser } = storeToRefs(auth)
 const userStore = useUserStore()
 const bwSession = useBlockWorldSession()
 const { success: toastLabySuccess, info: toastLabyInfo } = useToast()
+const { isReleased: characterReleased } = useCharacterReleaseGate()
 
 const isLabyDev = import.meta.env.DEV
 const hostId = 'laby-js-mc-canvas-host'
@@ -675,11 +677,23 @@ function goBack() {
 }
 
 /**
+ * Gate reason shown to the student when character release is still locked. Distinct from
+ * {@code error} (which is for engine boot failures) so the play button can stay enabled
+ * and the user gets the same friendly message on every tap.
+ */
+const labyGateMessage = ref('')
+
+/**
  * User gesture: immersive play (slim app header preserved — no browser fullscreen, so PWA
  * / OS notifications and toasts are not blocked).
  */
 async function labyStartPlay() {
   if (booting.value) return
+  if (!characterReleased.value) {
+    labyGateMessage.value = 'У вас немає персонажа'
+    return
+  }
+  labyGateMessage.value = ''
   bwSession.setImmersive(true)
   if (typeof document !== 'undefined') {
     document.documentElement.classList.add('fus-laby-play')
@@ -1360,6 +1374,7 @@ onMounted(async () => {
   error.value = ''
   booting.value = false
   labyPlayStarted.value = false
+  labyGateMessage.value = ''
   gameMc.value = null
   bwSession.setImmersive(false)
 
@@ -1855,6 +1870,14 @@ onBeforeUnmount(() => {
       >
         Вхід
       </button>
+      <p
+        v-if="labyGateMessage"
+        class="laby-gate-msg"
+        role="alert"
+        aria-live="polite"
+      >
+        {{ labyGateMessage }}
+      </p>
     </div>
 
     <div v-show="labyInPlay && !labyHudBlocked" class="laby-top-hud">
@@ -2222,8 +2245,10 @@ onBeforeUnmount(() => {
 .laby-lobby {
   flex: 1;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 1rem;
   padding: 1rem;
   min-height: 0;
   pointer-events: auto;
@@ -2250,6 +2275,20 @@ onBeforeUnmount(() => {
 .laby-play-gate-cta:active {
   transform: scale(0.98);
   filter: brightness(0.95);
+}
+.laby-gate-msg {
+  max-width: 22rem;
+  text-align: center;
+  color: #fecaca;
+  font-weight: 800;
+  font-size: 0.95rem;
+  line-height: 1.25;
+  margin: 0;
+  padding: 0.75rem 1rem;
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  border-radius: 12px;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.35);
 }
 
 .laby-stats {

@@ -39,6 +39,7 @@ import {
   Gift,
 } from 'lucide-vue-next'
 import { currentAccent, setAccent, ACCENT_PRESETS } from '@/composables/useAccentColor'
+import { useCharacterReleaseGate } from '@/composables/useCharacterReleaseGate'
 import {
   getUser,
   teacherMayAccessStudentProfile,
@@ -61,6 +62,7 @@ const userStore = useUserStore()
 const shop = useShopStore()
 const { success, error } = useToast()
 const { coin: hapticCoin } = useHaptic()
+const { isReleased } = useCharacterReleaseGate()
 
 const viewUid = computed(() => {
   if (route.name === 'teacher-student-profile') return String(route.params.studentId || '')
@@ -444,6 +446,7 @@ async function doFine() {
       >
         <div class="h-[min(42vw,320px)] min-h-[220px] max-h-[320px] relative">
           <CharacterScene
+            v-if="isReleased"
             :profile="profileForRoomHero"
             :owned-item-ids="viewedStudent?.inventory || []"
             :all-items="userStore.items"
@@ -453,6 +456,14 @@ async function doFine() {
             :show-room-hud="false"
             class="w-full h-full"
           />
+          <div
+            v-else
+            class="absolute inset-0 flex flex-col items-center justify-center text-center px-4 z-10"
+          >
+            <div class="text-4xl mb-2 opacity-80" aria-hidden="true">🚪</div>
+            <div class="text-sm font-extrabold text-slate-200">Кімната порожня</div>
+            <div class="text-[11px] text-slate-500 mt-1">немає персонажа</div>
+          </div>
           <div class="absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-black/80 to-transparent" />
           <div class="absolute bottom-0 inset-x-0 px-4 pb-3 flex items-end justify-between">
             <div>

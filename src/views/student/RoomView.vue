@@ -6,12 +6,14 @@ import { db } from '@/firebase/config'
 import { useAuthStore } from '@/stores/auth'
 import { useUserStore } from '@/stores/user'
 import CharacterScene from '@/components/character/CharacterScene.vue'
+import { useCharacterReleaseGate } from '@/composables/useCharacterReleaseGate'
 import { ArrowLeft, User } from 'lucide-vue-next'
 
 const route     = useRoute()
 const router    = useRouter()
 const auth      = useAuthStore()
 const userStore = useUserStore()
+const { isReleased } = useCharacterReleaseGate()
 
 const targetProfile  = ref(null)
 const targetOwnedIds = ref([])
@@ -125,24 +127,46 @@ onMounted(async () => {
       <div v-if="loading" class="absolute inset-0 flex items-center justify-center text-slate-400 font-bold z-10">
         Завантаження...
       </div>
-      <CharacterScene
+      <template v-else-if="targetProfile && isReleased">
+        <CharacterScene
+          :profile="targetProfile"
+          :owned-item-ids="targetOwnedIds"
+          :all-items="userStore.items"
+          :room-mode="true"
+          :interactive="true"
+          :readonly="!isOwnRoom"
+          class="absolute inset-0 w-full h-full min-h-0"
+        />
+        <p
+          class="absolute bottom-2 left-2 right-2 text-center text-[10px] text-slate-500 pointer-events-none z-20"
+        >
+          Потягніть щоб обертати камеру
+        </p>
+      </template>
+      <div
         v-else-if="targetProfile"
-        :profile="targetProfile"
-        :owned-item-ids="targetOwnedIds"
-        :all-items="userStore.items"
-        :room-mode="true"
-        :interactive="true"
-        :readonly="!isOwnRoom"
-        class="absolute inset-0 w-full h-full min-h-0"
-      />
+        class="absolute inset-0 flex flex-col items-center justify-center text-center px-6 z-10"
+      >
+        <div
+          class="room-empty rounded-3xl px-6 py-7 max-w-xs w-full flex flex-col items-center gap-2"
+        >
+          <div class="text-5xl mb-1 opacity-80" aria-hidden="true">🚪</div>
+          <div class="text-base font-extrabold text-slate-200">Кімната порожня</div>
+          <div class="text-xs text-slate-500">немає персонажа</div>
+        </div>
+      </div>
       <div v-else class="absolute inset-0 flex items-center justify-center text-slate-400 font-bold z-10">
         Кімнату не знайдено
       </div>
-      <p
-        class="absolute bottom-2 left-2 right-2 text-center text-[10px] text-slate-500 pointer-events-none z-20"
-      >
-        Потягніть щоб обертати камеру
-      </p>
     </div>
   </div>
 </template>
+
+<style scoped>
+.room-empty {
+  background: rgba(255, 255, 255, 0.04);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.07),
+    0 8px 32px rgba(0, 0, 0, 0.35);
+}
+</style>
